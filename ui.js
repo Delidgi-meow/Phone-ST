@@ -5263,7 +5263,7 @@ function chanAvatarSheet(ch) {
     const overlay = document.createElement('div');
     overlay.className = 'gp-member-overlay';
     overlay.innerHTML = `
-        <div class="gp-member-overlay-panel">
+        <div class="gp-member-overlay-panel gp-chan-avasheet-panel">
             <div class="gp-member-overlay-header">
                 <span>Аватарка канала</span>
                 <button class="gp-iconbtn" id="gp-chanava-close">${ic('fa-xmark')}</button>

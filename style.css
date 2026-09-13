@@ -2092,6 +2092,8 @@ body.gp-native-shell #gp-screen.gp-screen-bleed { padding-bottom: 14px; }
 }
 /* Лента каналов в минимале — сплошной список, а не колода карточек */
 #gp-phone.gp-skin-minimal .gp-chan-scroll { gap: 0; }
+#gp-phone.gp-skin-minimal .gp-chan-section { margin: 12px 0 6px 4px; }
+#gp-phone.gp-skin-minimal .gp-chan-row { border: none; border-bottom: 1px solid rgba(255,255,255,.09); background: transparent; }
 #gp-phone.gp-skin-minimal .gp-chan-post { width: 100%; padding-bottom: 2px; }
 /* Обложки приложений, у которых свой бренд-цвет (дискорд/твич), тоже гасим */
 #gp-phone.gp-skin-minimal .gp-dc-skin,
@@ -3626,7 +3628,12 @@ body.gp-theme-minimal .gp-toast-ava {
 }
 .gp-chan-composer-row { display: flex; align-items: center; gap: 8px; }
 .gp-chan-composer-row textarea { flex: 1 1 auto; }
-.gp-chan-composer-row .gp-primary { flex: 1 1 auto; }
+.gp-chan-composer-row .gp-primary {
+    flex: 0 0 auto; margin: 0 0 0 auto;
+    height: 38px; padding: 0 16px; border-radius: 12px;
+    font-size: 12.5px; box-shadow: none;
+}
+.gp-chan-composer-row .gp-iconbtn { width: 38px; height: 38px; border-radius: 12px; }
 .gp-chan-send {
     width: 44px; height: 44px; flex: 0 0 auto; border-radius: 50%;
     border: 1px solid rgba(var(--gp-accent-a-rgb), .45);
@@ -3670,8 +3677,15 @@ body.gp-theme-minimal .gp-toast-ava {
 .gp-chan-comment-foot .gp-danger { color: #ff9b9b; }
 
 /* Шторка аватарки канала */
-.gp-chan-avasheet { display: flex; flex-direction: column; gap: 7px; }
-.gp-chan-avasheet button { width: 100%; }
+.gp-chan-avasheet { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 12px; }
+.gp-chan-avasheet button {
+    width: 100%; height: 40px; margin: 0; padding: 0 12px;
+    border-radius: 12px; font-size: 12.5px; font-weight: 600;
+    display: flex; align-items: center; gap: 9px; justify-content: flex-start;
+    box-shadow: none;
+}
+.gp-chan-avasheet .gp-primary { border-color: rgba(var(--gp-accent-a-rgb), .45); }
+.gp-chan-avasheet-panel { width: 74% !important; max-width: 260px !important; }
 
 /* Скрин поста в переписке */
 .gp-shot {
