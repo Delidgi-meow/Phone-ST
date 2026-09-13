@@ -475,6 +475,9 @@ jQuery(async () => {
         const onEdit = () => {
             if (!getSettings().isEnabled) return;
             invalidateChatCache();
+            // Свайп уносит вариант ответа вместе с его деньгами: пересверяемся
+            // сразу, иначе баланс держал бы списание до следующего сообщения
+            try { harvestBankTags(); } catch (e) { /* ignore */ }
             checkNewIncoming({ silent: true });
             applyChatHiding();
         };

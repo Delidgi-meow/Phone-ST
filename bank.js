@@ -32,6 +32,9 @@ export function getBank() {
     // из журнала и повторяет — инфоблоком или тегом tel:bank. Без зачёта одна
     // покупка списывалась бы дважды.
     if (!Array.isArray(b.syncQueue)) b.syncQueue = [];
+    // Какой тег какую операцию породил: [{key, src, txId, amount, synced}].
+    // Нужно, чтобы отменить списание, когда вариант ответа ушёл свайпом.
+    if (!Array.isArray(b.txKeys)) b.txKeys = [];
     return b;
 }
 
@@ -366,6 +369,41 @@ function takeSynced(b, amount, msgIndex) {
     return true;
 }
 
+// Свайп: у каждого варианта ответа свой send_date, поэтому его теги телефон
+// считает новыми операциями, а списание прошлого варианта остаётся на балансе.
+// Отличить свайп от сдвига индексов (юзер удалила сообщение) можно надёжно:
+// send_date всех вариантов ЭТОГО ответа лежат в его swipe_info. Откатываем
+// только то, что породил другой вариант того же сообщения.
+function revertSwipedAway(b, msg, currentSrc) {
+    const info = Array.isArray(msg?.swipe_info) ? msg.swipe_info : null;
+    if (!info || info.length < 2 || !b.txKeys.length) return 0;
+    const others = new Set(
+        info.map(x => String(x?.send_date ?? '')).filter(x => x && x !== currentSrc),
+    );
+    if (!others.size) return 0;
+    let reverted = 0;
+    const keep = [];
+    for (const rec of b.txKeys) {
+        if (!others.has(rec.src)) { keep.push(rec); continue; }
+        const tx = b.transactions.find(t => t.id === rec.txId);
+        if (tx) {
+            if (!tx.synced) b.balance -= tx.amount;
+            b.transactions = b.transactions.filter(t => t.id !== tx.id);
+        }
+        // Ключ забываем: вернётся этот свайп — операция посчитается заново
+        b.seenTags = b.seenTags.filter(k => k !== rec.key);
+        reverted++;
+    }
+    b.txKeys = keep;
+    return reverted;
+}
+
+function rememberTx(b, key, src, tx) {
+    if (!tx) return;
+    b.txKeys.push({ key, src, txId: tx.id, amount: tx.amount, synced: !!tx.synced });
+    if (b.txKeys.length > 300) b.txKeys = b.txKeys.slice(-300);
+}
+
 function parseBankSms(smsJson) {
     const from = String(smsJson.from || '');
     const text = String(smsJson.text || '');
@@ -432,6 +470,13 @@ export function harvestBankTags() {
         if (msg.is_system && !/tel:(bank|sms)/i.test(msg.mes)) continue;
         const text = stripThink(msg.mes);
         const containsBankTag = /<!--\s*tel:bank:/i.test(text);
+        const msgSrc = String(msg.send_date || msg.extra?.gen_id || msgIndex);
+        // Сначала снимаем то, что принёс прошлый вариант этого же ответа
+        if (revertSwipedAway(b, msg, msgSrc)) {
+            seen.clear();
+            for (const k of b.seenTags) seen.add(k);
+            balanceSynced++;
+        }
 
         // RP-инфоблок намеренно читаем из исходного сообщения: stripThink
         // правильно скрывает reasoning от тегов телефона, но именно там sims-
@@ -497,7 +542,7 @@ export function harvestBankTags() {
         while ((m = BANK_TAG_RE.exec(text)) !== null) {
             hasBankTag = true;
             const legacyH = 'bk' + hash32(m[1]);
-            const base = `${legacyH}:${String(msg.send_date || msg.extra?.gen_id || msgIndex)}`;
+            const base = `${legacyH}:${msgSrc}`;
             const n = occ[base] = (occ[base] || 0) + 1;
             const h = `${base}#${n}`;
             if (seen.has(h)) continue;
@@ -517,7 +562,7 @@ export function harvestBankTags() {
             seen.add(h); b.seenTags.push(h);
             const j = safeJson(m[1]);
             if (!j || typeof j.amount === 'undefined' || !Number(j.amount)) continue;
-            addTransaction({
+            const tx = addTransaction({
                 amount: Number(j.amount) || 0,
                 label: j.label || j.text || 'Из ролевой',
                 category: j.category || 'ролевая',
@@ -527,6 +572,7 @@ export function harvestBankTags() {
                 // не новая операция, а её описание
                 historyOnly: takeSynced(b, Number(j.amount) || 0, msgIndex),
             });
+            rememberTx(b, h, msgSrc, tx);
             added++;
         }
 
@@ -536,7 +582,7 @@ export function harvestBankTags() {
             SMS_TAG_RE.lastIndex = 0;
             while ((m = SMS_TAG_RE.exec(text)) !== null) {
                 const legacyH = 'bs' + hash32(m[1]);
-                const base = `${legacyH}:${String(msg.send_date || msg.extra?.gen_id || msgIndex)}`;
+                const base = `${legacyH}:${msgSrc}`;
                 const n = occ[base] = (occ[base] || 0) + 1;
                 const h = `${base}#${n}`;
                 if (seen.has(h)) continue;
@@ -560,7 +606,8 @@ export function harvestBankTags() {
                     continue;
                 }
                 seen.add(h); b.seenTags.push(h);
-                addTransaction({ ...tx, silent: true, historyOnly: takeSynced(b, tx.amount, msgIndex) });
+                const smsTx = addTransaction({ ...tx, silent: true, historyOnly: takeSynced(b, tx.amount, msgIndex) });
+                rememberTx(b, h, msgSrc, smsTx);
                 added++;
             }
         }
@@ -568,7 +615,12 @@ export function harvestBankTags() {
     if (migratedLegacyKeys) {
         b.seenTags = b.seenTags.filter(k => !/^(?:bk|bs)-?\d+$/.test(k));
     }
-    if (b.seenTags.length > 400) b.seenTags = b.seenTags.slice(-400);
+    if (b.seenTags.length > 400) {
+        b.seenTags = b.seenTags.slice(-400);
+        // Ключи и записи живут парой: без чистки txKeys раздувался бы вечно
+        const alive = new Set(b.seenTags);
+        b.txKeys = b.txKeys.filter(r => alive.has(r.key));
+    }
     if (b.seenRpBalances.length > 120) b.seenRpBalances = b.seenRpBalances.slice(-120);
     // Персистим базу дельта-синка (в т.ч. миграция со старой абсолютной схемы:
     // уже-обработанные значения инфоблока становятся базой без применения)
