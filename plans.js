@@ -4,6 +4,7 @@
 // <!--tel:plan:{...}--> , когда о чём-то договорились.
 
 import { getMeta, saveMeta, getRpDateTime, stripThink } from './state.js';
+import { logSocialToChat, getUserName } from './social.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -85,6 +86,13 @@ export function addPlan({ text, date, time = '', who = 'user', source = 'user' }
     sortPlans(plans);
     if (plans.length > 200) plans.splice(0, plans.length - 200);
     saveMeta();
+    // Своя запись — событие ролевой: она достала телефон и внесла дату.
+    // Из тега ролевой не логируем: это её же собственная сцена, дубль не нужен
+    if (source === 'user') {
+        try {
+            logSocialToChat(`${getUserName()} записывает в календарь телефона: ${fmtPlanDate(plan.date)}${plan.time ? `, ${plan.time}` : ''} — ${plan.text}${plan.who === 'both' ? ' (вместе)' : plan.who === 'char' ? ' (не её дело, а его/её)' : ''}`);
+        } catch (e) { /* ignore */ }
+    }
     return plan;
 }
 
@@ -103,6 +111,11 @@ export function togglePlan(id) {
     if (p.done) p.doneDate = rpToday();
     else delete p.doneDate;
     saveMeta();
+    if (p.done) {
+        try {
+            logSocialToChat(`${getUserName()} отмечает в календаре выполненным: ${p.text}`);
+        } catch (e) { /* ignore */ }
+    }
     return p.done;
 }
 
