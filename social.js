@@ -2491,15 +2491,17 @@ function buildImagePrompt(post, { anonymous = false, allowChar = false } = {}) {
         const un = getUserName();
         negLine += ` This photo was taken and sent by ${post.author} from their own phone to ${un}. ${un} is the RECIPIENT — they are NOT in the photo. Do NOT depict them unless the description explicitly says they are in the frame.`;
     }
-    // Пост юзерки, где по описанию её самой в кадре нет: она — фотограф
+    // Снимок сделал владелец аккаунта, а в кадре по описанию его нет:
+    // он фотограф — и юзерка на своём посте, и автор канала на своём
     if (post._behindCamera) {
-        const un = getUserName();
-        negLine += ` This photo was TAKEN by ${un} for their own account — they are BEHIND the camera, NOT in the frame. Depict exactly what the description says; do NOT add ${un} themselves to the picture.`;
+        const who = post._cameraName || getUserName();
+        negLine += ` This photo was TAKEN by ${who} for their own feed — they are BEHIND the camera, NOT in the frame. Depict exactly what the description says; do NOT add ${who} themselves to the picture.`;
     }
     const body = `${framing}. ${parts.join('. ')}.${negLine}`;
     // Автор — тоже кандидат в NPC: его имя в описании часто стоит в косвенном
     // падеже либо не упоминается вовсе, хотя это его фотография
-    const whoText = anonymous ? body : `${body} ${post.author || ''}`;
+    // Автор попадает в поиск NPC-рефов, только если он в кадре
+    const whoText = (anonymous || post._behindCamera) ? body : `${body} ${post.author || ''}`;
     return body + npcNamesLine(whoText, body);
 }
 
@@ -2648,14 +2650,22 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
         !post.imgDesc || post.kind === 'of' || !!post.stream
         || textMentionsName(selfDesc, getUserName()) || SELF_RE.test(selfDesc)
     );
-    post._behindCamera = isUserPost && !userInFrame; // для buildImagePrompt/booru
+    // Канал ведёт человек, но его посты — не селфи: мишень, инструктаж, стакан
+    // на столе. В кадре он только если описание кадра его называет.
+    const blogAuthorOut = !isUserPost && !!post.blog && !!post.author && !!selfDesc
+        && !textMentionsName(selfDesc, post.author);
+    post._behindCamera = (isUserPost && !userInFrame) || blogAuthorOut; // для buildImagePrompt/booru
+    post._cameraName = isUserPost ? getUserName() : (post.author || '');
     const charName = mainCharName();
     const charKey = keyOf(charName);
     // Точное совпадение ИЛИ (для ММС/стримов) имя контакта — часть имени карточки:
     // контакт «Вадим» vs карточка «Вадим Огнев» — реф должен подтянуться
-    const isCharPost = !isUserPost && charKey && (keyOf(post.author) === charKey
+    const isCharPost = !isUserPost && !blogAuthorOut && charKey && (keyOf(post.author) === charKey
         || ((post.mms || post.stream) && !!charName && textMentionsName(charName, post.author)));
-    const mentionsChar = !!charName && textMentionsName(`${post.imgDesc || ''} ${post.caption || ''} ${post.author || ''}`, charName);
+    // Имя автора из поиска убираем, когда он за камерой: иначе «пост Вадима»
+    // сам по себе тянул его реф в каждый кадр
+    const mentionsChar = !!charName && textMentionsName(
+        `${post.imgDesc || ''} ${post.caption || ''} ${blogAuthorOut ? '' : (post.author || '')}`, charName);
     const wantChar = isCharPost || mentionsChar;
     // Анонимный рандом-аккаунт = НЕ юзер, НЕ контакт (НПС), НЕ главный персонаж.
     // Только для него ставим запрет на персону/главперсонажей.
@@ -2671,7 +2681,8 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
         // Теги — англоязычные, имён в них не остаётся: без этого NPC-реф
         // в booru-режиме не подцепился бы никогда
         if (prompt && !anonymous) {
-            prompt += npcNamesLine(`${post.imgDesc || ''} ${post.caption || ''} ${post.author || ''}`, prompt);
+            prompt += npcNamesLine(
+                `${post.imgDesc || ''} ${post.caption || ''} ${post._behindCamera ? '' : (post.author || '')}`, prompt);
         }
     } else {
         prompt = buildImagePrompt(post, { anonymous, allowChar: wantChar });

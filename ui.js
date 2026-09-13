@@ -5669,6 +5669,8 @@ function bindChanPostActions(root, ch) {
                     imgDesc,
                     // Текст поста в промпт не идёт, но по нему ищутся знакомые лица
                     caption: post.text,
+                    // Канал — не лента селфи: автор в кадре, только если описан
+                    blog: true,
                     aspect: '4:3',
                 },
                 null, post.id);
@@ -5695,18 +5697,17 @@ function renderChanPost(screen) {
     const comments = (post.comments || []).map(c => {
         const mine = c.ak === 'user';
         const quoted = c.replyTo ? (post.comments || []).find(x => keyOf(x.author) === keyOf(c.replyTo)) : null;
+        // Содержимое пузыря склеиваем без переносов: у .gp-bubble white-space
+        // pre-wrap, и отступы разметки превратились бы в пустые строки в тексте
+        const sender = mine ? '' : `<div class="gp-bubble-sender" style="color:${senderColor(c.author)}">${esc(c.author)}${c.handle ? ` <i>${esc(c.handle)}</i>` : ''}</div>`;
+        const quote = c.replyTo
+            ? `<div class="gp-chan-quote"><b>${esc(c.replyTo)}</b><span>${esc(String(quoted?.text || 'комментарий').slice(0, 70))}</span></div>`
+            : '';
+        const foot = `${esc(fmtTime(new Date(c.ts)))}${mine ? '' : `<button data-chanreply="${esc(c.author)}">Ответить</button>`}<button class="gp-danger" data-chancdel="${esc(c.id)}">Удалить</button>`;
         return `
         <div class="gp-bubble-wrap ${mine ? 'gp-out' : 'gp-in'}">
-            <div class="gp-bubble">
-                ${mine ? '' : `<div class="gp-bubble-sender" style="color:${senderColor(c.author)}">${esc(c.author)}${c.handle ? ` <i>${esc(c.handle)}</i>` : ''}</div>`}
-                ${c.replyTo ? `<div class="gp-chan-quote"><b>${esc(c.replyTo)}</b><span>${esc(String(quoted?.text || 'комментарий').slice(0, 70))}</span></div>` : ''}
-                ${esc(c.text)}
-            </div>
-            <div class="gp-bubble-time">
-                ${esc(fmtTime(new Date(c.ts)))}
-                ${mine ? '' : `<button data-chanreply="${esc(c.author)}">Ответить</button>`}
-                <button class="gp-danger" data-chancdel="${esc(c.id)}">Удалить</button>
-            </div>
+            <div class="gp-bubble">${sender}${quote}${esc(c.text)}</div>
+            <div class="gp-bubble-time">${foot}</div>
         </div>`;
     }).join('');
 
