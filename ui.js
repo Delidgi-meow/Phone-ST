@@ -5937,13 +5937,14 @@ function shotHtml(m) {
     const author = shot.author || found?.author || '';
     const text = String(found?.text || found?.caption || shot.text || found?.imgDesc || '').slice(0, 220);
     const img = found?.image || null;
-    return `
-    <div class="gp-shot${found ? ' gp-shot-live' : ''}" ${found ? `data-shot="${esc(JSON.stringify({ app: shot.app, id: found.id, chan: found._chanId || '' }))}"` : ''}>
-        <div class="gp-shot-head">${ic(meta.icon)} ${esc(meta.label)}${author ? ` · ${esc(author)}` : ''}</div>
-        ${img ? `<div class="gp-shot-img"><img src="${esc(img)}" alt="" data-zoom></div>` : ''}
-        ${text ? `<div class="gp-shot-text">${esc(text)}</div>` : ''}
-        ${found ? '' : `<div class="gp-shot-dead">${ic('fa-link-slash')} поста нет в телефоне</div>`}
-    </div>`;
+    // Карточка живёт внутри пузыря с white-space: pre-wrap — собираем её одной
+    // строкой, иначе отступы разметки станут пустыми строками в сообщении
+    const head = `<div class="gp-shot-head">${ic(meta.icon)} ${esc(meta.label)}${author ? ` · ${esc(author)}` : ''}</div>`;
+    const pic = img ? `<div class="gp-shot-img"><img src="${esc(img)}" alt="" data-zoom></div>` : '';
+    const body = text ? `<div class="gp-shot-text">${esc(text)}</div>` : '';
+    const dead = found ? '' : `<div class="gp-shot-dead">${ic('fa-link-slash')} поста нет в телефоне</div>`;
+    const link = found ? ` data-shot="${esc(JSON.stringify({ app: shot.app, id: found.id, chan: found._chanId || '' }))}"` : '';
+    return `<div class="gp-shot${found ? ' gp-shot-live' : ''}"${link}>${head}${pic}${body}${dead}</div>`;
 }
 
 function openShot(raw) {
