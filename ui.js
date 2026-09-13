@@ -42,7 +42,7 @@ import {
 import { casinoStats, spinSlots, spinRoulette, canBet } from './casino.js';
 import { getNews, refreshNews, shareNews, deleteNews } from './news.js';
 import { getDiscord, findDServer, findDChannel, refreshDiscordServers, createOwnDServer, refreshDChannel, postToDChannel, deleteDServer, addDMember, delDMember } from './discord.js';
-import { getTwitch, findStream, refreshStreams, tickStream, donateToStream, startMyStream, tickMyStream, endMyStream } from './twitch.js';
+import { getTwitch, findStream, refreshStreams, tickStream, donateToStream, startMyStream, tickMyStream, endMyStream, getTwitchNick, setTwitchNick } from './twitch.js';
 import { getNotes, addNote, updateNote, deleteNote, toggleNoteShared } from './notes.js';
 import {
     getPlans, addPlan, togglePlan, deletePlan, groupedPlans, plansBadgeCount,
@@ -4894,6 +4894,15 @@ function twChatHtml(chat) {
     }).join('');
 }
 
+// Ник правится из шапки твича и из своего эфира — имя персонажа при этом
+// не трогаем, меняется только то, как её видно на площадке.
+function editTwitchNick() {
+    const value = prompt(tr('Твой ник на Твиче'), getTwitchNick());
+    if (value === null) return;
+    setTwitchNick(value);
+    render();
+}
+
 function renderTwitch(screen) {
     currentScreen = 'twitch';
     const t = getTwitch();
@@ -4918,6 +4927,7 @@ function renderTwitch(screen) {
             <div class="gp-twch-head">
                 <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
                 <b>${brand('fa-twitch')} Twitch</b>
+                <button class="gp-twch-nick" id="gp-twch-nick" title="Изменить ник на Твиче">${esc(getTwitchNick())}</button>
                 <button class="gp-iconbtn" id="gp-twch-refresh" ${_twBusy ? 'disabled' : ''}>${ic(_twBusy ? 'fa-spinner fa-spin' : 'fa-rotate-right')}</button>
             </div>
             <div class="gp-twch-scroll">
@@ -4926,6 +4936,7 @@ function renderTwitch(screen) {
             </div>
         </div>`;
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('home'));
+    screen.querySelector('#gp-twch-nick')?.addEventListener('click', editTwitchNick);
     screen.querySelector('#gp-twch-refresh')?.addEventListener('click', async () => {
         if (_twBusy) return;
         _twBusy = true;
@@ -4992,6 +5003,7 @@ function renderStream(screen) {
                     <b>${esc(s.streamer)}</b>
                     <span>${esc(s.title)}</span>
                 </div>
+                <button class="gp-twch-nick" id="gp-st-nick" title="Изменить ник на Твиче">${esc(getTwitchNick())}</button>
                 <span class="gp-twch-eye">${ic('fa-user')} ${s.viewers}</span>
             </div>
             ${twFrameHtml(s)}
@@ -5010,6 +5022,7 @@ function renderStream(screen) {
     const chatEl = screen.querySelector('#gp-twch-chat');
     if (chatEl) chatEl.scrollTop = chatEl.scrollHeight;
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('twitch'));
+    screen.querySelector('#gp-st-nick')?.addEventListener('click', editTwitchNick);
     bindFrameRegen(screen, s, s.streamer, false);
     screen.querySelector('#gp-st-tick')?.addEventListener('click', () => _twRun(() => tickStream(s.id, null)));
     const input = screen.querySelector('#gp-st-input');
@@ -5020,7 +5033,7 @@ function renderStream(screen) {
         if (amount <= 0) { toast('Сумма доната должна быть больше нуля', 'fa-circle-exclamation'); return; }
         const text = (input?.value || '').trim() || (prompt('Сообщение к донату (можно пусто):', '') || '').trim();
         if (input) input.value = '';
-        showTwAlert({ from: getUserName(), amount, text });
+        showTwAlert({ from: getTwitchNick(), amount, text });
         _twRun(() => donateToStream(s.id, amount, text));
     });
     const send = () => {
@@ -5045,8 +5058,9 @@ function renderMyStream(screen) {
                 <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
                 <div class="gp-twch-head-title">
                     <b>${esc(my.title)}</b>
-                    <span>${esc(my.category)}${my.donTotal ? ` · донаты ${esc(fmtMoney(my.donTotal))}` : ''}</span>
+                    <span>${esc(getTwitchNick())} · ${esc(my.category)}${my.donTotal ? ` · донаты ${esc(fmtMoney(my.donTotal))}` : ''}</span>
                 </div>
+                <button class="gp-twch-nickbtn" id="gp-st-nick" title="Изменить ник на Твиче">${ic('fa-pen')}</button>
                 <span class="gp-twch-eye">${ic('fa-user')} ${my.viewers}</span>
                 <button class="gp-twch-endbtn" id="gp-st-end" title="Завершить стрим">${ic('fa-stop')}</button>
             </div>
@@ -5064,6 +5078,7 @@ function renderMyStream(screen) {
     const chatEl = screen.querySelector('#gp-twch-chat');
     if (chatEl) chatEl.scrollTop = chatEl.scrollHeight;
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('twitch'));
+    screen.querySelector('#gp-st-nick')?.addEventListener('click', editTwitchNick);
     bindFrameRegen(screen, my, getUserName(), true);
     screen.querySelector('#gp-st-end')?.addEventListener('click', () => {
         if (!confirm('Завершить стрим? Итог уйдёт в историю.')) return;

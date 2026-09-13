@@ -86,6 +86,7 @@ const DICT = {
     'Зрители заходят...': 'Viewers are joining...',
     'Отправить сообщение': 'Send a message', 'Донат': 'Donate',
     'Твич: чужой эфир': "Twitch: someone's stream", 'Твич: свой эфир': 'Twitch: your stream',
+    'Изменить ник на Твиче': 'Edit your Twitch nick', 'Твой ник на Твиче': 'Your Twitch nick',
     'Профиль картинко-расширения': 'Image extension profile', 'Как в основном чате': 'Same as the main chat',
     'Стиль картинок телефона': 'Phone image style',
     // Сторис
@@ -414,6 +415,7 @@ const RULES = [
     [/^(\d+) участ\.$/, '$1 members'], [/^(\d+) канал\.$/, '$1 channels'],
     [/^Выйти с сервера «(.+)»\?$/, 'Leave the server "$1"?'],
     [/^Участники — (\d+)$/, 'Members — $1'],
+    [/^Написать как (.+)$/, 'Post as $1'],
     [/^Сумма доната для (.+):$/, 'Donation amount for $1:'],
     [/^донаты (.+)$/, 'donations $1'],
     [/^Добро пожаловать в #(.+)!$/, 'Welcome to #$1!'],

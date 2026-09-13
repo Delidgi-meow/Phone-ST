@@ -1922,12 +1922,17 @@ Format: [{"streamer":"nick","title":"...","category":"...","viewers":1234,"scene
     return await socialGenArray(prompt, { maxTokens: 1400, prefill: '[{"streamer":"' });
 }
 
-export async function generateStreamTick(stream, chatLog = [], userComment = null, donation = null) {
+export async function generateStreamTick(stream, chatLog = [], userComment = null, donation = null, userNick = '') {
     const ex = chatLog.slice(-8).map(x => `${x.author}: ${x.text}`).join('\n');
+    // Под каким ником она сидит в чате: стример и зрители должны звать её так,
+    // а не паспортным именем (на твиче имени никто не знает)
+    const who = userNick && userNick !== getUserName()
+        ? `${getUserName()} (in the stream chat their nick is "${userNick}" — address them by that nick, not by their real name)`
+        : getUserName();
     const userEvent = donation
-        ? `${getUserName()} just DONATED ${donation.amount} to the streamer${userComment ? ` with the message: "${userComment}"` : ''} — a donation alert popped on stream. The STREAMER MUST notice it and thank/react to their on stream (in their own style); chat reacts too (hype, envy, jokes).`
+        ? `${who} just DONATED ${donation.amount} to the streamer${userComment ? ` with the message: "${userComment}"` : ''} — a donation alert popped on stream. The STREAMER MUST notice it and thank/react to their on stream (in their own style); chat reacts too (hype, envy, jokes).`
         : (userComment
-            ? `${getUserName()} just wrote in the stream chat: "${userComment}" — the STREAMER may notice and react on stream (read it aloud, answer, laugh), and chat may reply to them.`
+            ? `${who} just wrote in the stream chat: "${userComment}" — the STREAMER may notice and react on stream (read it aloud, answer, laugh), and chat may reply to them.`
             : 'Advance the stream a little: something happens on screen.');
     const prompt = `${await taskHeader(`continue the live stream «${stream.title}» by ${stream.streamer} that ${getUserName()} is watching.`)}
 Category: ${stream.category}. Current frame: ${stream.scene}
@@ -1940,10 +1945,15 @@ Format: [{"scene":"...","streamer":"...","chat":[{"author":"nick","text":"..."}]
     return Array.isArray(arr) ? arr[0] : null;
 }
 
-export async function generateMyStreamTick(myStream, chatLog = [], userLine = null) {
+export async function generateMyStreamTick(myStream, chatLog = [], userLine = null, userNick = '') {
     const ex = chatLog.slice(-8).map(x => `${x.author}: ${x.text}`).join('\n');
+    // Зрители знают её по нику канала — по нему и обращаются
+    const nickLine = userNick && userNick !== getUserName()
+        ? `Their channel nick is "${userNick}" — viewers call them that, NOT by their real name.`
+        : '';
     const prompt = `${await taskHeader(`${getUserName()} is LIVE on their own stream «${myStream.title}» — generate their audience.`)}
 Category: ${myStream.category || '—'}. Viewers now: ${myStream.viewers || 0}. On screen: ${myStream.scene || 'they just went live'}
+${nickLine}
 ${ex ? `Recent chat:\n${ex}\n` : ''}${userLine ? `They just said/did on stream: "${userLine}" — the chat REACTS to that.` : 'Chat lives its life: greetings, questions, emote spam, maybe a new follower.'}
 Return: "chat" — 4-8 viewer messages (short, twitch-style; regulars, fans, maybe a troll; story characters MAY appear under recognizable nicks if they'd plausibly watch them); "viewers" — updated count (drifts, grows if the stream is interesting); "scene" — one-sentence description of what their frame shows now${userLine ? ' (reflecting what they just did)' : ''}; "donations" — OPTIONAL 0-2 viewer donations {from, amount, text} in the story's ordinary money scale — include one only when it feels EARNED by the moment (a highlight, a milestone, a viewer moved by them), NOT every time.
 ${uiLangLine()}

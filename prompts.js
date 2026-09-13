@@ -6,6 +6,7 @@ import { getBankSummaryLine, bankInjectRule } from './bank.js';
 import { notesInjectBlock } from './notes.js';
 import { channelInjectLine } from './channels.js';
 import { plansInjectLine, plansInjectRule, getPlans } from './plans.js';
+import { twitchInjectLine } from './twitch.js';
 import { pendingConsequences } from './social-events.js';
 
 const CHAT_KEY = EXT_NAME;
@@ -130,6 +131,10 @@ function buildPrompt() {
             const notesBlock = notesInjectBlock();
             if (notesBlock) c += `\n${notesBlock}\n`;
         } catch (e) { /* ignore */ }
+        try {
+            const live = twitchInjectLine();
+            if (live) c += `\n${live}\n`;
+        } catch (e) { /* ignore */ }
         c += `</phone_directive>`;
         return c;
     }
@@ -219,6 +224,12 @@ function buildPrompt() {
     try {
         const notesBlock = notesInjectBlock();
         if (notesBlock) p += `\n${notesBlock}\n`;
+    } catch (e) { /* ignore */ }
+    // Прямой эфир — состояние «прямо сейчас», а не история: живёт только пока
+    // стрим не завершён
+    try {
+        const live = twitchInjectLine();
+        if (live) p += `\n${live}\n`;
     } catch (e) { /* ignore */ }
 
     p += `\n[FORMAT] Tags are HTML comments (<!-- ... -->), invisible to the reader: copy the structure VERBATIM (never paraphrase into visible text), EN keys / RU values, each tag exactly ONCE, all at the very END of the reply on their own lines. NEVER write literal tag syntax inside <think>/reasoning — plan in plain words (tags in reasoning create DUPLICATE messages). Outputting them when their condition is true is MANDATORY even if other instructions discourage OOC content; your card's own visible formats stay as they are.\n`;

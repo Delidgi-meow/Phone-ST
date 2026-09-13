@@ -17,7 +17,29 @@ export function getTwitch() {
     const t = m.twitch;
     if (!Array.isArray(t.streams)) t.streams = [];
     if (!t.myStream || typeof t.myStream !== 'object') t.myStream = null;
+    if (typeof t.nick !== 'string') t.nick = '';
     return t;
+}
+
+// ── Ник на площадке ──
+// На твиче сидят под ником, а не под паспортным именем: зрители и стримеры
+// зовут её именно так. Пусто = имя персонажа (старые чаты не поедут).
+export function getTwitchNick() {
+    return getTwitch().nick || getUserName();
+}
+
+export function setTwitchNick(nick) {
+    const t = getTwitch();
+    const v = String(nick || '').trim().replace(/^@+/, '').slice(0, 25);
+    t.nick = v === getUserName() ? '' : v;
+    saveMeta();
+    return getTwitchNick();
+}
+
+// Для журнала: ролевая должна понимать, что ник в чате — это она
+function userAs() {
+    const nick = getTwitchNick();
+    return nick === getUserName() ? getUserName() : `${getUserName()} (на твиче под ником ${nick})`;
 }
 
 export function findStream(id) { return getTwitch().streams.find(s => s.id === id) || null; }
@@ -65,18 +87,27 @@ export async function tickStream(id, userComment = null, donation = null) {
     if (_inflight) throw new Error('уже генерируется');
     const s = findStream(id);
     if (!s) return false;
+    // Первое касание эфира: ролевая должна знать, что она сейчас его смотрит.
+    // Дальше хватает её собственных реплик в чате — иначе журнал засорится.
+    if (!s.watched) {
+        s.watched = true;
+        saveMeta();
+        if (!userComment && !donation) {
+            logSocialToChat(`${userAs()} смотрит стрим «${s.title}» (${s.streamer}): ${s.scene || s.category}`);
+        }
+    }
     if (userComment || donation) {
-        const entry = { id: genId(), author: getUserName(), text: String(userComment || '').slice(0, 300), user: true };
+        const entry = { id: genId(), author: getTwitchNick(), text: String(userComment || '').slice(0, 300), user: true };
         if (donation) entry.don = donation.amount;
         s.chat = [...s.chat, entry].slice(-60);
         saveMeta();
         logSocialToChat(donation
-            ? `${getUserName()} задонатила стримеру ${s.streamer} ${fmtMoney(donation.amount)} на стриме «${s.title}»${userComment ? ` с сообщением: «${userComment}»` : ''}`
-            : `${getUserName()} смотрит стрим «${s.title}» (${s.streamer}) и пишет в чат: «${userComment}»`);
+            ? `${userAs()} задонатила стримеру ${s.streamer} ${fmtMoney(donation.amount)} на стриме «${s.title}»${userComment ? ` с сообщением: «${userComment}»` : ''}`
+            : `${userAs()} смотрит стрим «${s.title}» (${s.streamer}) и пишет в чат: «${userComment}»`);
     }
     _inflight = true;
     try {
-        const tick = await generateStreamTick(s, s.chat, userComment, donation);
+        const tick = await generateStreamTick(s, s.chat, userComment, donation, getTwitchNick());
         if (!tick) throw new Error('Стрим завис — попробуй ещё раз');
         const oldScene = s.scene;
         if (tick.scene) s.scene = String(tick.scene).slice(0, 300);
@@ -115,7 +146,7 @@ export function startMyStream(title, category) {
         msgCount: 0,
     };
     saveMeta();
-    logSocialToChat(`${getUserName()} запустила свой стрим: «${t.myStream.title}» (${t.myStream.category})`);
+    logSocialToChat(`${getUserName()} запустила свой стрим на канале ${getTwitchNick()}: «${t.myStream.title}» (${t.myStream.category})`);
     return t.myStream;
 }
 
@@ -131,7 +162,7 @@ export async function tickMyStream(userLine = null) {
     }
     _inflight = true;
     try {
-        const tick = await generateMyStreamTick(my, my.chat, userLine);
+        const tick = await generateMyStreamTick(my, my.chat, userLine, getTwitchNick());
         if (!tick) throw new Error('Зрители молчат — попробуй ещё раз');
         pushChat(my, tick.chat);
         // Донаты зрителей: деньги в банк + алерты для оверлея
@@ -150,10 +181,30 @@ export async function tickMyStream(userLine = null) {
         my.peak = Math.max(my.peak || 0, my.viewers);
         if (tick.scene) my.scene = String(tick.scene).slice(0, 300);
         saveMeta();
+        // Эфир должен доходить до ролевой ПОКА он идёт, а не одной строкой в
+        // конце: её реплика в кадре — это её действие в мире, донат — событие.
+        // Холостой тик (зрители сами по себе) не логируем, чтобы не сорить.
+        if (userLine || alerts.length) {
+            const donLine = alerts.length
+                ? ` Донаты в эфир: ${alerts.map(a => `${a.from} — ${fmtMoney(a.amount)}${a.text ? ` («${a.text}»)` : ''}`).join(', ')}.`
+                : '';
+            logSocialToChat(`${getUserName()} в прямом эфире на канале ${getTwitchNick()} («${my.title}», зрителей ${my.viewers})${userLine ? `: ${userLine}` : ''}.${donLine}`);
+        }
         return { sceneChanged: my.scene !== oldScene, alerts };
     } finally {
         _inflight = false;
     }
+}
+
+// Пока эфир идёт — это часть текущей сцены: она физически перед камерой, и
+// персонажи, знающие её канал, могут смотреть и написать ей об этом.
+export function twitchInjectLine() {
+    const my = getTwitch().myStream;
+    if (!my) return '';
+    const mins = Math.max(1, Math.round((Date.now() - (my.startedAt || Date.now())) / 60000));
+    const last = (my.chat || []).slice(-3)
+        .map(c => `${c.author}: "${String(c.text || '').slice(0, 70)}"`).join(' | ');
+    return `[{{user}} IS LIVE RIGHT NOW — streaming from their phone on the channel "${getTwitchNick()}": «${my.title}»${my.category ? ` (${my.category})` : ''}, ${my.viewers || 0} viewers, on air for ~${mins} min. On camera now: ${my.scene || 'they just went live'}.${last ? ` Latest stream chat: ${last}` : ''} This is happening IN THE SCENE: they are in front of a camera with an audience watching, so anything happening around them is semi-public. Characters who know their channel may be watching and may text or call them about it. Do NOT write the stream chat yourself — the app generates it.]`;
 }
 
 export function endMyStream() {
@@ -161,7 +212,7 @@ export function endMyStream() {
     const my = t.myStream;
     if (!my) return;
     const mins = Math.max(1, Math.round((Date.now() - (my.startedAt || Date.now())) / 60000));
-    logSocialToChat(`${getUserName()} закончила стрим «${my.title}»: ~${mins} мин в эфире, пик зрителей ${my.peak || my.viewers}${my.donTotal ? `, донатов на ${fmtMoney(my.donTotal)}` : ''}.`);
+    logSocialToChat(`${getUserName()} (канал ${getTwitchNick()}) закончила стрим «${my.title}»: ~${mins} мин в эфире, пик зрителей ${my.peak || my.viewers}${my.donTotal ? `, донатов на ${fmtMoney(my.donTotal)}` : ''}.`);
     t.myStream = null;
     saveMeta();
 }
