@@ -57,7 +57,7 @@
 .gp-story-loading{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:30px;text-align:center;background:rgba(7,9,18,.78);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}.gp-story-loading>div{font-size:38px;color:var(--gp-accent-a)}.gp-story-loading b{font-size:18px}.gp-story-loading span{max-width:260px;font-size:12px;opacity:.72}
 .gp-event-history button{width:100%;display:flex;align-items:center;gap:10px;border:0;background:transparent;color:inherit;text-align:left;padding:9px 4px}.gp-event-history button>span{display:flex;flex:1;min-width:0;flex-direction:column}.gp-event-history button small{opacity:.6}.gp-event-history button:disabled{opacity:.55}
 .gp-story-summary section{margin-top:18px}.gp-story-summary section h3{margin:0 0 7px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;opacity:.62}.gp-story-summary section>p{margin:0;line-height:1.55}.gp-result-reactions{display:flex;flex-direction:column;gap:8px}.gp-result-reaction,.gp-result-note{padding:11px;border:1px solid rgba(255,255,255,.1);border-radius:14px;background:rgba(255,255,255,.05)}.gp-result-reaction b,.gp-result-note b{margin-right:7px}.gp-result-reaction small,.gp-result-note small{opacity:.55}.gp-result-reaction p,.gp-result-note p{margin:6px 0 0;line-height:1.45}.gp-result-stats{display:flex;flex-wrap:wrap;gap:7px}.gp-result-stats span{padding:6px 9px;border-radius:999px;background:rgba(255,255,255,.07);font-size:11px}
-.gp-journal-screen{padding:12px}.gp-journal-info{padding:12px;margin-bottom:10px;border-radius:14px;background:rgba(var(--gp-accent-a-rgb),.12);font-size:12px;line-height:1.45}.gp-journal-info i{margin-right:6px;color:var(--gp-accent-a)}.gp-journal-entry{margin-bottom:10px;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:16px;background:rgba(255,255,255,.055)}.gp-journal-entry>div{display:flex;justify-content:space-between;gap:8px}.gp-journal-entry small{opacity:.5;font-size:9px}.gp-journal-entry p{margin:9px 0 0;white-space:pre-wrap;line-height:1.5}.gp-journal-entry img{width:100%;max-height:220px;object-fit:cover;border-radius:12px;margin-top:9px}
+.gp-journal-screen{padding:12px}.gp-journal-info{padding:12px;margin-bottom:10px;border-radius:14px;background:rgba(var(--gp-accent-a-rgb),.12);font-size:12px;line-height:1.45}.gp-journal-info i{margin-right:6px;color:var(--gp-accent-a)}.gp-journal-entry{margin-bottom:10px;padding:12px;border:1px solid rgba(255,255,255,.1);border-radius:16px;background:rgba(255,255,255,.055)}.gp-journal-entry>div{display:flex;justify-content:space-between;gap:8px}.gp-journal-entry small{opacity:.5;font-size:9px}.gp-journal-entry p{margin:9px 0 0;white-space:pre-wrap;line-height:1.5}.gp-journal-entry img{width:100%;height:auto;max-height:280px;object-fit:contain;border-radius:12px;margin-top:9px}
 /* ═══════════════════════════════════════════
    GLASSPHONE — liquid glass / glassmorphism
    ═══════════════════════════════════════════ */
@@ -511,6 +511,7 @@
 .gp-bubble-wrap.gp-in { align-self: flex-start; align-items: flex-start; }
 
 .gp-bubble {
+    min-width: 0;
     padding: 9px 13px;
     font-size: 13.5px;
     line-height: 1.42;
@@ -1275,7 +1276,10 @@
     align-items: center;
     justify-content: center;
 }
-.gp-ig-img img { width: 100%; height: 100%; object-fit: cover; }
+.gp-ig-img img { width: 100%; height: auto; max-height: 460px; object-fit: contain; }
+/* Настоящее фото показываем целиком: квадратная рамка остаётся только у
+   заглушки, иначе вертикальные и широкие снимки обрезало по краям */
+.gp-ig-img-has { aspect-ratio: auto; }
 .gp-ig-img-gen { position: relative; }
 .gp-ig-img-gen::before {
     content: "";
@@ -3660,7 +3664,7 @@ body.gp-theme-minimal .gp-toast-ava {
 .gp-chan-body { padding: 10px 13px 8px; display: flex; flex-direction: column; gap: 8px; }
 .gp-chan-text { font-size: 13.5px; line-height: 1.42; white-space: pre-wrap; word-break: break-word; }
 .gp-chan-img { position: relative; display: block; width: 100%; border: none; padding: 0; background: var(--gp-glass-strong); }
-.gp-chan-img img { display: block; width: 100%; max-height: 240px; object-fit: cover; }
+.gp-chan-img img { display: block; width: 100%; height: auto; max-height: 380px; object-fit: contain; }
 /* Заглушка ненарисованного фото: приглушённая, а не случайный яркий градиент —
    в ленте он кричал громче самих постов */
 .gp-chan-img-gen {
@@ -3748,9 +3752,12 @@ body.gp-theme-minimal .gp-toast-ava {
     padding-left: 8px; margin-bottom: 6px;
 }
 .gp-chan-quote b { display: block; font-size: 10px; opacity: .9; }
+/* Цитата переносится и обрезается по двум строкам. С nowrap её минимальная
+   ширина равнялась длине строки — пузырь не мог сжаться и вылезал за экран */
 .gp-chan-quote span {
-    display: block; font-size: 10.5px; opacity: .7; line-height: 1.35;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; font-size: 10.5px; opacity: .7; line-height: 1.35;
+    white-space: normal; overflow-wrap: anywhere;
 }
 .gp-bubble-sender i { font-style: normal; font-weight: 400; opacity: .6; }
 .gp-bubble-time { display: flex; align-items: center; gap: 9px; }
@@ -3788,7 +3795,7 @@ body.gp-theme-minimal .gp-toast-ava {
     border-bottom: 1px solid var(--gp-border-soft);
     font-size: 9.5px; opacity: .6;
 }
-.gp-shot-img img { display: block; width: 100%; max-height: 150px; object-fit: cover; }
+.gp-shot-img img { display: block; width: 100%; height: auto; max-height: 200px; object-fit: contain; }
 .gp-shot-text { padding: 6px 7px; font-size: 11px; line-height: 1.4; word-break: break-word; }
 .gp-shot-dead { padding: 0 7px 6px; font-size: 9.5px; opacity: .45; display: flex; gap: 4px; align-items: center; }
 
@@ -3804,4 +3811,57 @@ body.gp-theme-minimal .gp-toast-ava {
     width: 100%; resize: none; border-radius: 10px; padding: 8px 10px; margin-top: 6px;
     background: var(--gp-glass); border: 1px solid var(--gp-border-soft);
     color: var(--gp-text); font: inherit; font-size: 11.5px;
+}
+
+
+/* ═══ Просмотр картинки ═══ */
+#gp-zoom {
+    position: fixed; inset: 0; z-index: 2147483000;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(8, 8, 10, .93);
+    touch-action: none;
+    animation: gp-zoom-in .16s ease;
+}
+@keyframes gp-zoom-in { from { opacity: 0; } to { opacity: 1; } }
+#gp-zoom img {
+    max-width: 94vw; max-height: 92vh;
+    object-fit: contain;
+    transform-origin: center center;
+    user-select: none; -webkit-user-drag: none;
+    cursor: zoom-in;
+}
+#gp-zoom.gp-zoomed img { cursor: grab; }
+#gp-zoom.gp-zoomed img:active { cursor: grabbing; }
+.gp-zoom-close {
+    position: absolute; top: 16px; right: 16px;
+    width: 36px; height: 36px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid rgba(255,255,255,.18);
+    background: rgba(255,255,255,.08);
+    color: rgba(255,255,255,.85);
+    font-size: 14px; cursor: pointer;
+}
+.gp-zoom-close:hover { background: rgba(255,255,255,.16); }
+img[data-zoom] { cursor: zoom-in; }
+
+
+/* Перегенерация прямо на картинке — там же, где кнопка остановки */
+.gp-img-regen {
+    position: absolute; top: 8px; left: 8px;
+    width: 26px; height: 26px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    border: none; cursor: pointer; font-size: 11px;
+    color: rgba(255,255,255,.85);
+    background: rgba(10,10,14,.42);
+    backdrop-filter: blur(6px);
+    opacity: 0; transition: opacity .15s;
+}
+.gp-chan-img:hover .gp-img-regen,
+.gp-shop-item-img:hover .gp-img-regen,
+.gp-img-regen:focus { opacity: 1; }
+.gp-img-regen:hover { background: rgba(10,10,14,.7); color: #fff; }
+.gp-img-regen-sm { width: 20px; height: 20px; top: 3px; left: 3px; font-size: 9px; }
+/* На тачскрине наведения нет — кнопка видна всегда */
+@media (hover: none) {
+    .gp-img-regen { opacity: .85; }
 }

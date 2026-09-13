@@ -633,6 +633,7 @@ export function render() {
     const screen = document.getElementById('gp-screen');
     if (!screen || !isPhoneOpen()) return;
     bindStopGen(screen);
+    bindZoom(screen);
     screen.classList.toggle('gp-screen-bleed', BLEED_SCREENS.has(currentScreen));
     // «Оформление» — экран настроек: ему нечего показывать из ролевой, а
     // перерисовка приходит на каждое сообщение и сбивает прокрутку каруселей
@@ -1006,7 +1007,7 @@ function renderSocialJournal(screen) {
     const entries = getSocialJournalEntries();
     screen.innerHTML = `<div class="gp-header gp-thread-header"><button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button><div class="gp-title gp-title-app">Журнал памяти</div></div>
     <div class="gp-feed gp-journal-screen"><div class="gp-journal-info">${ic('fa-brain')} Здесь показаны скрытые записи, которые действительно добавлены в историю чата и доступны боту и саммарайзеру.</div>
-    ${entries.length ? entries.map(e => `<article class="gp-journal-entry"><div><b>Запись #${e.index + 1}</b><small>${esc(e.time)}</small></div>${e.image ? `<img src="${esc(e.image)}" alt="Фото из записи">` : ''}<p>${esc(e.text)}</p></article>`).join('') : `<div class="gp-event-empty"><b>Журнал пока пуст</b><span>Новые посты, комментарии, ответы и итоги ивентов появятся здесь после записи в чат.</span></div>`}</div>`;
+    ${entries.length ? entries.map(e => `<article class="gp-journal-entry"><div><b>Запись #${e.index + 1}</b><small>${esc(e.time)}</small></div>${e.image ? `<img src="${esc(e.image)}" alt="Фото из записи" data-zoom>` : ''}<p>${esc(e.text)}</p></article>`).join('') : `<div class="gp-event-empty"><b>Журнал пока пуст</b><span>Новые посты, комментарии, ответы и итоги ивентов появятся здесь после записи в чат.</span></div>`}</div>`;
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('socialhub'));
 }
 
@@ -1834,9 +1835,9 @@ function renderThread(screen) {
             // Переген доступен только для ММС с описанием (без описания нечего рисовать)
             const genKey = m.eventId || `${m.idx}:${m.tagStart}`;
             const busy = _mmsGenBusy.has(genKey);
-            const regenBtn = m.photoDesc && m.dir === 'in'
+            const regenBtn = m.photoDesc
                 ? `<button class="gp-mms-gen" data-mmsgen="${mi}" title="Перегенерировать фото" ${busy ? 'disabled' : ''}>${ic(busy ? 'fa-spinner fa-spin' : 'fa-rotate-right')}</button>` : '';
-            media = `<div class="gp-bubble-img"><img src="${esc(m.img)}" alt="">${regenBtn}</div>`;
+            media = `<div class="gp-bubble-img"><img src="${esc(m.img)}" alt="" data-zoom>${regenBtn}</div>`;
         } else if (m.photoDesc) {
             const genKey = m.eventId || `${m.idx}:${m.tagStart}`;
             const busy = _mmsGenBusy.has(genKey);
@@ -2157,9 +2158,12 @@ function renderThread(screen) {
         _mmsGenBusy.add(genKey);
         render();
         try {
-            const author = m.from || t.name;
+            // Своё отправленное фото снимала она сама, чужое — собеседник:
+            // от этого зависит и реф, и кто в кадре
+            const mine = m.dir === 'out';
+            const author = mine ? getUserName() : (m.from || t.name);
             const src = await generatePostImage(
-                { imgDesc: m.photoDesc, author, ak: `contact:${keyOf(author)}`, kind: 'ig', mms: true },
+                { imgDesc: m.photoDesc, author, ak: mine ? 'user' : `contact:${keyOf(author)}`, kind: 'ig', mms: !mine },
                 (status) => {
                     const el = document.querySelector(`[data-mmsdesc="${CSS.escape(genKey)}"]`);
                     if (el) el.textContent = status;
@@ -2743,7 +2747,7 @@ function igImageHtml(p) {
         // Cache-busting: если URL не data:, добавляем ?t= для принудительной перезагрузки
         const src = p.image.startsWith('data:') ? p.image : p.image + (p.image.includes('?') ? '&' : '?') + 't=' + (p._imgTs || '0');
         return `<div class="gp-ig-img gp-ig-img-has">
-            <img src="${esc(src)}" alt="">
+            <img src="${esc(src)}" alt="" data-zoom>
             ${busy
                 ? `<div class="gp-ig-regen-overlay">${ic('fa-spinner fa-spin')}<div class="gp-ig-genstatus" data-genstatus="${esc(p.id)}">Перегенерация...</div>${stopGenBtn(p.id)}</div>`
                 : `<button class="gp-ig-regenbtn" data-regenimg="${esc(p.id)}" title="Перегенерировать">${ic('fa-rotate-right')}</button>`}
@@ -3274,7 +3278,7 @@ function renderIgStory(screen) {
     const ageMin = Math.max(1, Math.round((Date.now() - st.time) / 60000));
     const ageLabel = ageMin < 60 ? `${ageMin} м` : `${Math.round(ageMin / 60)} ч`;
     const media = st.image
-        ? `<img class="gp-igst-media" src="${esc(st.image)}" alt="">`
+        ? `<img class="gp-igst-media" src="${esc(st.image)}" alt="" data-zoom>`
         : `<div class="gp-igst-media gp-igst-media-gen" style="${avatarStyle('story' + st.imgDesc)}"><span>${ic('fa-image')}</span><i>${esc(st.imgDesc)}</i></div>`;
     screen.innerHTML = `
         <div class="gp-igst-viewer">
@@ -4306,7 +4310,9 @@ export function notifyDeliveries() {
 function shopItemImage(it, storeId) {
     const busy = _imgGenBusy.has(it.id);
     if (it.image) {
-        return `<div class="gp-shop-item-img"><img src="${esc(it.image)}" alt="">${busy ? `<div class="gp-shop-item-imgbusy">${ic('fa-spinner fa-spin')}${stopGenBtn(it.id)}</div>` : ''}</div>`;
+        return `<div class="gp-shop-item-img"><img src="${esc(it.image)}" alt="" data-zoom>
+            <button class="gp-img-regen gp-img-regen-sm" data-shopimg="${esc(storeId)}|${esc(it.id)}" title="Перерисовать товар" ${busy ? 'disabled' : ''}>${ic(busy ? 'fa-spinner fa-spin' : 'fa-rotate-right')}</button>
+            ${busy ? `<div class="gp-shop-item-imgbusy">${ic('fa-spinner fa-spin')}${stopGenBtn(it.id)}</div>` : ''}</div>`;
     }
     return `<button class="gp-shop-item-img gp-shop-item-img-empty" data-shopimg="${esc(storeId)}|${esc(it.id)}" title="Нарисовать товар">
         ${busy ? `${ic('fa-spinner fa-spin')}${stopGenBtn(it.id)}` : ic('fa-image')}
@@ -4825,6 +4831,22 @@ async function drawStreamFrame(target, streamer, isMine) {
     }
 }
 
+// Кадр рисуется сам на каждом ходу стрима, но иногда хочется просто другой
+function bindFrameRegen(screen, target, streamer, isMine) {
+    screen.querySelector('#gp-tw-regen')?.addEventListener('click', async () => {
+        if (_twBusy) return;
+        _twBusy = true;
+        render();
+        try {
+            await drawStreamFrame(target, streamer, isMine);
+            toast('Кадр перерисован', 'fa-image');
+        } finally {
+            _twBusy = false;
+            render();
+        }
+    });
+}
+
 function twAlertHtml() {
     if (!_twAlert) return '';
     return `
@@ -4839,11 +4861,12 @@ function twAlertHtml() {
 
 function twFrameHtml(target) {
     const inner = target.image
-        ? `<img src="${esc(target.image)}${target.imgTs ? `?t=${target.imgTs}` : ''}" alt="">`
+        ? `<img src="${esc(target.image)}${target.imgTs ? `?t=${target.imgTs}` : ''}" alt="" data-zoom>`
         : `<div class="gp-twch-frame-gen" style="${avatarStyle('stream' + (target.title || ''))}">${ic('fa-video')}</div>`;
     return `
         <div class="gp-twch-frame">
             ${inner}
+            ${target.scene ? `<button class="gp-img-regen" id="gp-tw-regen" title="Перерисовать кадр" ${_twBusy ? 'disabled' : ''}>${ic(_twBusy ? 'fa-spinner fa-spin' : 'fa-rotate-right')}</button>` : ''}
             <span class="gp-twch-live-tag">LIVE</span>
             ${_twBusy ? `<div class="gp-twch-frame-busy">${ic('fa-spinner fa-spin')}</div>` : ''}
             ${twAlertHtml()}
@@ -4983,6 +5006,7 @@ function renderStream(screen) {
     const chatEl = screen.querySelector('#gp-twch-chat');
     if (chatEl) chatEl.scrollTop = chatEl.scrollHeight;
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('twitch'));
+    bindFrameRegen(screen, s, s.streamer, false);
     screen.querySelector('#gp-st-tick')?.addEventListener('click', () => _twRun(() => tickStream(s.id, null)));
     const input = screen.querySelector('#gp-st-input');
     screen.querySelector('#gp-st-don')?.addEventListener('click', () => {
@@ -5036,6 +5060,7 @@ function renderMyStream(screen) {
     const chatEl = screen.querySelector('#gp-twch-chat');
     if (chatEl) chatEl.scrollTop = chatEl.scrollHeight;
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('twitch'));
+    bindFrameRegen(screen, my, getUserName(), true);
     screen.querySelector('#gp-st-end')?.addEventListener('click', () => {
         if (!confirm('Завершить стрим? Итог уйдёт в историю.')) return;
         endMyStream();
@@ -5221,7 +5246,9 @@ function chanPostHtml(ch, post) {
     const busy = _imgGenBusy.has(post.id);
     let media = '';
     if (post.image) {
-        media = `<div class="gp-chan-img"><img src="${esc(post.image)}" alt=""></div>`;
+        media = `<div class="gp-chan-img"><img src="${esc(post.image)}" alt="" data-zoom>
+            <button class="gp-img-regen" data-chanimg="${esc(post.id)}" title="Перегенерировать фото" ${busy ? 'disabled' : ''}>${ic(busy ? 'fa-spinner fa-spin' : 'fa-rotate-right')}</button>
+            ${busy ? stopGenBtn(post.id) : ''}</div>`;
     } else if (post.imgDesc) {
         media = `<button class="gp-chan-img gp-chan-img-gen" data-chanimg="${esc(post.id)}" ${busy ? 'disabled' : ''}>
             <span>${ic(busy ? 'fa-spinner fa-spin' : 'fa-image')}</span><i>${esc(post.imgDesc)}</i>${busy ? stopGenBtn(post.id) : ''}</button>`;
@@ -5652,7 +5679,7 @@ function bindChanPostActions(root, ch) {
     root.querySelectorAll('[data-chanimg]').forEach(b => b.addEventListener('click', async (e) => {
         e.stopPropagation();
         const post = findChanPost(ch.id, b.getAttribute('data-chanimg'));
-        const imgDesc = post?.imgDesc || (ch.mine ? post?.text : '');
+        const imgDesc = post?.imgDesc || post?.text || '';
         if (!post || !imgDesc || _imgGenBusy.has(post.id)) return;
         if (!_imgGenReady) {
             const ready = await isImageGenAvailable();
@@ -5770,6 +5797,87 @@ function renderChanPost(screen) {
     });
 }
 
+// ═══ Просмотр картинки ═══
+// Тап по фото открывает его поверх всего: колесо и щипок приближают,
+// перетаскивание двигает, двойной тап — туда-обратно.
+function openZoom(src) {
+    if (!src) return;
+    document.getElementById('gp-zoom')?.remove();
+    const box = document.createElement('div');
+    box.id = 'gp-zoom';
+    box.innerHTML = `<button class="gp-zoom-close" title="Закрыть">${ic('fa-xmark')}</button><img src="${esc(src)}" alt="">`;
+    (document.getElementById('gp-overlay') || document.body).appendChild(box);
+
+    const img = box.querySelector('img');
+    let scale = 1, tx = 0, ty = 0, drag = null, pinch = null;
+    const apply = () => {
+        img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+        box.classList.toggle('gp-zoomed', scale > 1);
+    };
+    const setScale = (next) => {
+        scale = Math.min(6, Math.max(1, next));
+        if (scale === 1) { tx = 0; ty = 0; }
+        apply();
+    };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    function close() {
+        document.removeEventListener('keydown', onKey);
+        box.remove();
+    }
+    document.addEventListener('keydown', onKey);
+    box.addEventListener('click', (e) => { if (e.target === box) close(); });
+    box.querySelector('.gp-zoom-close')?.addEventListener('click', close);
+
+    box.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        setScale(scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
+    }, { passive: false });
+
+    img.addEventListener('dblclick', () => setScale(scale > 1 ? 1 : 2.5));
+
+    img.addEventListener('pointerdown', (e) => {
+        if (scale <= 1) return;
+        drag = { x: e.clientX - tx, y: e.clientY - ty };
+        try { img.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    });
+    img.addEventListener('pointermove', (e) => {
+        if (!drag) return;
+        tx = e.clientX - drag.x;
+        ty = e.clientY - drag.y;
+        apply();
+    });
+    const dropDrag = () => { drag = null; };
+    img.addEventListener('pointerup', dropDrag);
+    img.addEventListener('pointercancel', dropDrag);
+
+    // Щипок: на тачскрине pointer-события перекрывают друг друга, проще по touches
+    const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    box.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 2) pinch = { d: dist(e.touches), s: scale };
+    }, { passive: true });
+    box.addEventListener('touchmove', (e) => {
+        if (e.touches.length !== 2 || !pinch) return;
+        e.preventDefault();
+        setScale(pinch.s * (dist(e.touches) / pinch.d));
+    }, { passive: false });
+    box.addEventListener('touchend', () => { pinch = null; }, { passive: true });
+}
+
+// Делегат на экран: картинки перерисовываются постоянно, слушатель нужен один
+function bindZoom(screen) {
+    if (screen.dataset.zoomBound) return;
+    screen.dataset.zoomBound = '1';
+    screen.addEventListener('click', (e) => {
+        const img = e.target.closest?.('img[data-zoom]');
+        if (!img) return;
+        // Карточка ленты по клику открывает сам пост — там увеличение не нужно
+        if (img.closest('[data-open-ig]')) return;
+        e.stopPropagation();
+        e.preventDefault();
+        openZoom(img.getAttribute('src'));
+    });
+}
+
 // ═══ Скрин поста в личку ═══
 // Пересылается не картинка, а ссылка на пост: карточку телефон рисует сам,
 // тап открывает исходный пост в его приложении.
@@ -5832,7 +5940,7 @@ function shotHtml(m) {
     return `
     <div class="gp-shot${found ? ' gp-shot-live' : ''}" ${found ? `data-shot="${esc(JSON.stringify({ app: shot.app, id: found.id, chan: found._chanId || '' }))}"` : ''}>
         <div class="gp-shot-head">${ic(meta.icon)} ${esc(meta.label)}${author ? ` · ${esc(author)}` : ''}</div>
-        ${img ? `<div class="gp-shot-img"><img src="${esc(img)}" alt=""></div>` : ''}
+        ${img ? `<div class="gp-shot-img"><img src="${esc(img)}" alt="" data-zoom></div>` : ''}
         ${text ? `<div class="gp-shot-text">${esc(text)}</div>` : ''}
         ${found ? '' : `<div class="gp-shot-dead">${ic('fa-link-slash')} поста нет в телефоне</div>`}
     </div>`;
