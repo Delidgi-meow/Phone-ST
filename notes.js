@@ -3,6 +3,7 @@
 // нарратора (персонажи всё равно не знают, пока она не покажет).
 
 import { getMeta, saveMeta } from './state.js';
+import { logSocialToChat, removeJournalEntry, getUserName } from './social.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -27,13 +28,32 @@ export function updateNote(id, text) {
     n.text = String(text || '').trim().slice(0, 2000);
     n.time = Date.now();
     saveMeta();
+    // Открытую заметку правим и в истории: старая строка журнала устарела
+    if (n.shared) {
+        removeJournalEntry(noteMarker(n.id));
+        journalNote(n, 'правит');
+    }
     return true;
 }
 
 export function deleteNote(id) {
     const m = getMeta();
+    const gone = getNotes().find(x => x.id === id);
     m.notes = getNotes().filter(x => x.id !== id);
     saveMeta();
+    if (gone?.shared) removeJournalEntry(noteMarker(id));
+}
+
+// Секретная заметка в чат не попадает вовсе — в этом весь смысл секретности.
+// Открытая ложится строкой журнала: инжект живёт один ход, а история остаётся
+// и переживает саммари. Спрятала обратно — строку убираем из чата.
+function noteMarker(id) { return `note:${id}`; }
+
+function journalNote(n, verb) {
+    try {
+        logSocialToChat(`${getUserName()} ${verb} заметку в телефоне: «${String(n.text).slice(0, 400)}»`,
+            { marker: noteMarker(n.id) });
+    } catch (e) { /* ignore */ }
 }
 
 export function toggleNoteShared(id) {
@@ -41,6 +61,8 @@ export function toggleNoteShared(id) {
     if (!n) return false;
     n.shared = !n.shared;
     saveMeta();
+    if (n.shared) journalNote(n, 'открывает');
+    else removeJournalEntry(noteMarker(n.id));
     return n.shared;
 }
 

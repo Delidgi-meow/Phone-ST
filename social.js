@@ -3050,7 +3050,7 @@ async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, onStatu
 // Сам снимок в чат НЕ уходит: он уже есть в телефоне, а вторым вложением в
 // истории он бы дублировался. Модели достаётся готовое описание — его составляет
 // vision-запрос, который и так идёт на каждый пост и сторис.
-export async function logSocialToChat(text) {
+export async function logSocialToChat(text, { marker = '' } = {}) {
     if (getSettings().socialLogToChat === false) return;
     try {
         const ctx = SillyTavern.getContext();
@@ -3065,7 +3065,9 @@ export async function logSocialToChat(text) {
             is_system: false,
             is_name: true,
             send_date: new Date().toLocaleString('en-US'),
-            mes: `<!--tel:log-->\n[Событие мира — соцсети/телефон] ${String(text).slice(0, 1500)}`,
+            // Метка нужна тем записям, которые юзер может отозвать (открытая
+            // заметку снова спрятала) — по ней строка находится и удаляется
+            mes: `<!--tel:log-->${marker ? `<!--tel:mark:${String(marker).slice(0, 40)}-->` : ''}\n[Событие мира — соцсети/телефон] ${String(text).slice(0, 1500)}`,
             extra: {
                 type: 'comment',
                 gen_id: Date.now(),
@@ -3076,6 +3078,31 @@ export async function logSocialToChat(text) {
         if (typeof ctx.saveChat === 'function') await ctx.saveChat();
     } catch (e) {
         console.warn('[GlassPhone] logSocialToChat failed:', e);
+    }
+}
+
+// Убрать из истории журнальную строку с такой меткой: заметку снова спрятали,
+// и её текст не должен оставаться в чате «навсегда».
+export async function removeJournalEntry(marker) {
+    if (!marker) return 0;
+    try {
+        const ctx = SillyTavern.getContext();
+        const chat = ctx?.chat;
+        if (!Array.isArray(chat)) return 0;
+        const needle = `<!--tel:mark:${marker}-->`;
+        let removed = 0;
+        for (let i = chat.length - 1; i >= 0; i--) {
+            if (!chat[i]?.mes || !chat[i].mes.includes(needle)) continue;
+            const drawn = !!document.querySelector(`#chat .mes[mesid="${i}"]`);
+            if (drawn && typeof ctx.deleteMessage === 'function') await ctx.deleteMessage(i);
+            else chat.splice(i, 1);
+            removed++;
+        }
+        if (removed && typeof ctx.saveChat === 'function') await ctx.saveChat();
+        return removed;
+    } catch (e) {
+        console.warn('[GlassPhone] removeJournalEntry failed:', e);
+        return 0;
     }
 }
 
