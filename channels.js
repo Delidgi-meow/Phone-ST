@@ -175,6 +175,24 @@ export function addPersonChannel(person, gen) {
     return ch;
 }
 
+// Аватарка канала живёт на самом канале: у чужого она может отличаться
+// от аватарки автора — это разные вещи.
+export function setChannelAvatar(id, src) {
+    const ch = findChannel(id);
+    if (!ch || !src) return false;
+    ch.avatar = String(src);
+    saveMeta();
+    return true;
+}
+
+export function clearChannelAvatar(id) {
+    const ch = findChannel(id);
+    if (!ch) return false;
+    delete ch.avatar;
+    saveMeta();
+    return true;
+}
+
 // ── Свой пост ──
 export function publishToMyChannel({ text = '', image = null, imgDesc = '', commentsOn = true }) {
     const ch = myChannel();

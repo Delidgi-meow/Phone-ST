@@ -36,6 +36,7 @@ import {
     addFoundChannels, addPersonChannel, toggleSubscribe, deleteChannel, addChannelPosts, publishToMyChannel,
     deleteChanPost, toggleComments, toggleReact, addReacts, addComments, addMyComment,
     deleteComment, bumpViews, addSubs, matchPostByText, markChannelRead, unreadChannels,
+    setChannelAvatar, clearChannelAvatar,
     CHAN_REACTS,
 } from './channels.js';
 import { casinoStats, spinSlots, spinRoulette, canBet } from './casino.js';
@@ -5198,7 +5199,7 @@ function chanAk(ch) {
 }
 
 function chanAvatar(ch, cls = 'gp-avatar gp-avatar-sm') {
-    const src = avatarForAuthor(chanAk(ch));
+    const src = ch.avatar || avatarForAuthor(chanAk(ch));
     if (src) return avatarHtml(ch.name, src, cls);
     return `<div class="${cls} gp-chan-ava" style="${avatarStyle('ch' + ch.name)}">${esc(ch.name.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toUpperCase() || 'K')}</div>`;
 }
@@ -5208,6 +5209,12 @@ function fmtSubs(n) {
     return v >= 1000 ? `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}K` : String(v);
 }
 
+function subsLine(ch) {
+    return `${fmtSubs(ch.subs)} ${plural(ch.subs, 'подписчик', 'подписчика', 'подписчиков')}`;
+}
+
+// Пост канала — входящий пузырь: медиа сверху, реакции и просмотры в подвале,
+// обсуждение отрезано волоском и работает отдельной кнопкой.
 function chanPostHtml(ch, post) {
     bumpViews(ch, post);
     const busy = _imgGenBusy.has(post.id);
@@ -5220,28 +5227,110 @@ function chanPostHtml(ch, post) {
     }
     const reacts = (post.reacts || []).map(r => `
         <button class="gp-chan-react${r.mine ? ' gp-mine' : ''}" data-chanreact="${esc(post.id)}|${esc(r.emoji)}">${r.emoji} ${r.n}</button>`).join('');
-    const comments = post.commentsOn
-        ? `<button class="gp-chan-comments" data-chanopen="${esc(post.id)}">
-               ${ic('fa-comment')} ${post.comments?.length ? `${post.comments.length} ${plural(post.comments.length, 'комментарий', 'комментария', 'комментариев')}` : 'Обсудить'}
-               ${ic('fa-chevron-right')}
-           </button>`
-        : `<div class="gp-chan-comments gp-off">${ic('fa-comment-slash')} обсуждение выключено</div>`;
+    const n = post.comments?.length || 0;
+    const canDraw = ch.mine && !post.image && !post.imgDesc && post.text;
     return `
     <div class="gp-chan-post" data-chanpost="${esc(post.id)}">
         ${media}
-        ${post.text ? `<div class="gp-chan-text">${esc(post.text)}</div>` : ''}
-        <div class="gp-chan-foot">
-            <div class="gp-chan-reacts">${reacts}<button class="gp-chan-react gp-chan-react-add" data-chanreactadd="${esc(post.id)}">${ic('fa-plus')}</button></div>
-            <span class="gp-chan-views">${ic('fa-eye')} ${fmtSubs(post.views)} · ${esc(timeAgo(post.time))}</span>
+        <div class="gp-chan-body">
+            ${post.text ? `<div class="gp-chan-text">${esc(post.text)}</div>` : ''}
+            <div class="gp-chan-foot">
+                <div class="gp-chan-reacts">${reacts}<button class="gp-chan-react gp-chan-react-add" data-chanreactadd="${esc(post.id)}">${ic('fa-plus')}</button></div>
+                <span class="gp-chan-views">${ic('fa-eye')} ${fmtSubs(post.views)} · ${esc(timeAgo(post.time))}</span>
+            </div>
         </div>
-        <div class="gp-chan-tools">
-            ${comments}
-            <button class="gp-chan-tool" data-chanshare="${esc(post.id)}" title="Отправить в лс">${ic('fa-share')}</button>
-            ${ch.mine && !post.image && !post.imgDesc && post.text ? `<button class="gp-chan-tool" data-chanimg="${esc(post.id)}" title="Нарисовать фото" ${busy ? 'disabled' : ''}>${ic(busy ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles')}</button>` : ''}
-            ${ch.mine ? `<button class="gp-chan-tool" data-chantoggle="${esc(post.id)}" title="${post.commentsOn ? 'Выключить обсуждение' : 'Включить обсуждение'}">${ic(post.commentsOn ? 'fa-comment-slash' : 'fa-comment')}</button>
-            <button class="gp-chan-tool gp-danger" data-chandel="${esc(post.id)}" title="Удалить пост">${ic('fa-xmark')}</button>` : ''}
+        <div class="gp-chan-bar${post.commentsOn ? '' : ' gp-off'}">
+            ${post.commentsOn
+                ? `<button class="gp-chan-comments" data-chanopen="${esc(post.id)}">
+                       ${ic('fa-comment')} ${n ? `${n} ${plural(n, 'комментарий', 'комментария', 'комментариев')}` : 'Обсудить'}
+                   </button>`
+                : `<span class="gp-chan-comments">${ic('fa-comment-slash')} обсуждение выключено</span>`}
+            <span class="gp-chan-tools">
+                <button class="gp-chan-tool" data-chanshare="${esc(post.id)}" title="Отправить в лс">${ic('fa-share')}</button>
+                ${canDraw ? `<button class="gp-chan-tool" data-chanimg="${esc(post.id)}" title="Нарисовать фото" ${busy ? 'disabled' : ''}>${ic(busy ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles')}</button>` : ''}
+                ${ch.mine ? `<button class="gp-chan-tool" data-chantoggle="${esc(post.id)}" title="${post.commentsOn ? 'Выключить обсуждение' : 'Включить обсуждение'}">${ic(post.commentsOn ? 'fa-comment-slash' : 'fa-comment')}</button>
+                <button class="gp-chan-tool gp-danger" data-chandel="${esc(post.id)}" title="Удалить пост">${ic('fa-xmark')}</button>` : ''}
+            </span>
         </div>
     </div>`;
+}
+
+// Аватарка канала: своя загружается с диска, чужую можно нарисовать —
+// у канала знакомого это его портрет, у новостного — эмблема по теме.
+function chanAvatarSheet(ch) {
+    const screen = document.getElementById('gp-screen');
+    if (!screen) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'gp-member-overlay';
+    overlay.innerHTML = `
+        <div class="gp-member-overlay-panel">
+            <div class="gp-member-overlay-header">
+                <span>Аватарка канала</span>
+                <button class="gp-iconbtn" id="gp-chanava-close">${ic('fa-xmark')}</button>
+            </div>
+            <div class="gp-chan-avasheet">
+                <input type="file" id="gp-chanava-file" accept="image/*" style="display:none">
+                <button class="gp-secondary" id="gp-chanava-pick">${ic('fa-image')} Загрузить фото</button>
+                <button class="gp-primary" id="gp-chanava-draw" ${_chanBusy ? 'disabled' : ''}>${ic(_chanBusy ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles')} Нарисовать</button>
+                ${ch.avatar ? `<button class="gp-secondary gp-danger" id="gp-chanava-clear">${ic('fa-trash-can')} Убрать</button>` : ''}
+            </div>
+        </div>`;
+    screen.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.querySelector('#gp-chanava-close')?.addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+    const file = overlay.querySelector('#gp-chanava-file');
+    overlay.querySelector('#gp-chanava-pick')?.addEventListener('click', () => file?.click());
+    file?.addEventListener('change', async () => {
+        const f = file.files?.[0];
+        if (!f) return;
+        try {
+            setChannelAvatar(ch.id, await compressImage(f, 320, 0.85));
+            close();
+            render();
+            toast('Аватарка канала обновлена', 'fa-image');
+        } catch (e) { toast('Не удалось загрузить фото', 'fa-circle-exclamation'); }
+    });
+
+    overlay.querySelector('#gp-chanava-clear')?.addEventListener('click', () => {
+        clearChannelAvatar(ch.id);
+        close();
+        render();
+    });
+
+    overlay.querySelector('#gp-chanava-draw')?.addEventListener('click', async () => {
+        close();
+        if (!_imgGenReady) {
+            const ready = await isImageGenAvailable();
+            if (!ready) { toast('Картинко-расширение не установлено — генерация недоступна', 'fa-circle-exclamation'); return; }
+            _imgGenReady = true;
+        }
+        await chanBusyRun(async () => {
+            const src = await drawChannelAvatar(ch);
+            if (!src) throw new Error('Аватарка не нарисовалась');
+            setChannelAvatar(ch.id, src);
+            toast('Аватарка канала готова', 'fa-image');
+        });
+    });
+}
+
+// Канал человека рисуем портретом (реф подтянется по ak), тематический —
+// эмблемой: лицо на новостном канале выглядело бы чужим аккаунтом.
+function drawChannelAvatar(ch) {
+    const ak = chanAk(ch);
+    const person = ch.mine || !!ch.person || ak.startsWith('contact:');
+    const who = ch.mine ? getUserName() : (ch.author || '');
+    return generatePostImage({
+        ak, kind: 'ig', aspect: '1:1',
+        author: who || ch.name,
+        imgDesc: person && who
+            ? `${who}${ch.desc ? `. ${ch.desc}` : ''}`
+            : `${ch.name}${ch.desc ? ` — ${ch.desc}` : ''}`,
+        framing: person
+            ? 'square profile avatar, close-up head-and-shoulders portrait, one person, clean readable face, simple unobtrusive background, no text, no watermark'
+            : 'square avatar for a local channel: one characteristic object or a simple emblem, flat and readable at small size, no people, no text, no letters, no watermark',
+    }, null, `chanava:${ch.id}`);
 }
 
 function renderChannels(screen) {
@@ -5254,12 +5343,18 @@ function renderChannels(screen) {
 
     const row = (ch) => {
         const last = ch.posts?.[0];
+        const sub = ch.mine
+            ? subsLine(ch)
+            : (last ? (last.text || last.imgDesc || 'фото') : (ch.desc || subsLine(ch)));
         return `
         <button class="gp-chan-row${ch.mine ? ' gp-chan-row-mine' : ''}" data-chanopenrow="${esc(ch.id)}">
-            ${chanAvatar(ch, 'gp-avatar gp-avatar-sm')}
+            ${chanAvatar(ch, 'gp-avatar')}
             <span class="gp-chan-rowbody">
-                <span class="gp-chan-rowname">${esc(ch.name)}</span>
-                <span class="gp-chan-rowsub">${ch.mine ? `${fmtSubs(ch.subs)} ${plural(ch.subs, 'подписчик', 'подписчика', 'подписчиков')}` : esc(last ? (last.text || last.imgDesc || 'фото') : (ch.desc || `${fmtSubs(ch.subs)} подписчиков`))}</span>
+                <span class="gp-chan-rowtop">
+                    <span class="gp-chan-rowname">${esc(ch.name)}</span>
+                    ${last ? `<span class="gp-chan-rowtime">${esc(timeAgo(last.time))}</span>` : ''}
+                </span>
+                <span class="gp-chan-rowsub">${esc(sub)}</span>
             </span>
             ${ch.unread ? `<span class="gp-chan-unread">${ch.unread}</span>` : ''}
         </button>`;
@@ -5368,13 +5463,6 @@ function renderChannel(screen) {
     if (!ch) { goto('chans'); return; }
     currentScreen = 'chan';
     markChannelRead(ch.id);
-    const lastViews = ch.posts?.[0]?.views || 0;
-
-    const stats = ch.mine ? `
-        <div class="gp-chan-stats">
-            <div><span>подписчики</span><b>${fmtSubs(ch.subs)}</b>${ch.subsDelta ? `<i class="${ch.subsDelta > 0 ? 'gp-up' : 'gp-down'}">${ch.subsDelta > 0 ? '+' : ''}${ch.subsDelta}</i>` : ''}</div>
-            <div><span>просмотры</span><b>${fmtSubs(lastViews)}</b><i>за последний пост</i></div>
-        </div>` : '';
 
     const composer = ch.mine ? `
         <div class="gp-chan-composer">
@@ -5394,10 +5482,10 @@ function renderChannel(screen) {
     setHtmlKeepScroll(screen, '.gp-chan-scroll', `
         <div class="gp-header gp-thread-header">
             <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
-            ${chanAvatar(ch)}
+            <button class="gp-chan-avabtn" id="gp-chan-ava" title="Аватарка канала">${chanAvatar(ch)}</button>
             <div class="gp-thread-title">
                 <div class="gp-row-name">${esc(ch.name)}</div>
-                <div class="gp-thread-number">${fmtSubs(ch.subs)} ${plural(ch.subs, 'подписчик', 'подписчика', 'подписчиков')}${ch.author && !ch.mine ? ` · ${esc(ch.author)}` : ''}</div>
+                <div class="gp-thread-number">${ch.mine ? 'мой канал · ' : ''}${subsLine(ch)}${ch.author && !ch.mine ? ` · ${esc(ch.author)}` : ''}</div>
             </div>
             ${ch.mine
                 ? `<button class="gp-iconbtn gp-danger" id="gp-chan-drop" title="Удалить канал">${ic('fa-trash-can')}</button>`
@@ -5406,7 +5494,6 @@ function renderChannel(screen) {
         </div>
         <div class="gp-chan-scroll">
             ${ch.desc ? `<div class="gp-chan-desc">${esc(ch.desc)}</div>` : ''}
-            ${stats}
             ${(ch.posts || []).map(p => chanPostHtml(ch, p)).join('') || `
                 <div class="gp-empty"><div class="gp-empty-icon">${ic('fa-tower-broadcast')}</div>
                 <div class="gp-empty-text">${ch.mine ? 'Напиши первый пост — подписчики<br>отреагируют сами' : 'Нажми ↻ — канал наполнится'}</div></div>`}
@@ -5414,6 +5501,7 @@ function renderChannel(screen) {
         ${composer}`);
 
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('chans'));
+    screen.querySelector('#gp-chan-ava')?.addEventListener('click', () => chanAvatarSheet(ch));
     bindChanPostActions(screen, ch);
 
     screen.querySelector('#gp-chan-refresh')?.addEventListener('click', () => chanBusyRun(async () => {
@@ -5603,15 +5691,17 @@ function renderChanPost(screen) {
 
     const comments = (post.comments || []).map(c => {
         const mine = c.ak === 'user';
+        const quote = c.replyTo ? (post.comments || []).find(x => keyOf(x.author) === keyOf(c.replyTo)) : null;
         return `
-        <div class="gp-chan-comment${mine ? ' gp-mine' : ''}${c.replyTo ? ' gp-reply' : ''}">
-            ${avatarHtml(c.author, c.avatar || avatarForAuthor(c.ak), 'gp-avatar gp-avatar-xs')}
+        <div class="gp-chan-comment${mine ? ' gp-mine' : ''}">
+            ${mine ? '' : avatarHtml(c.author, c.avatar || avatarForAuthor(c.ak), 'gp-avatar gp-avatar-xs')}
             <div class="gp-chan-comment-body">
-                <div class="gp-chan-comment-name" style="color:${senderColor(c.author)}">${esc(c.author)}${c.replyTo ? `<span> · ответ ${esc(c.replyTo)}</span>` : ''}</div>
+                ${mine ? '' : `<div class="gp-chan-comment-name" style="color:${senderColor(c.author)}">${esc(c.author)}${c.handle ? `<span> ${esc(c.handle)}</span>` : ''}</div>`}
+                ${c.replyTo ? `<div class="gp-chan-comment-quote"><b>${esc(c.replyTo)}</b><span>${esc(quote ? quote.text : 'комментарий')}</span></div>` : ''}
                 <div class="gp-chan-comment-text">${esc(c.text)}</div>
                 <div class="gp-chan-comment-foot">
                     ${esc(fmtTime(new Date(c.ts)))}
-                    ${!mine ? `<button data-chanreply="${esc(c.author)}">Ответить</button>` : ''}
+                    ${mine ? '' : `<button data-chanreply="${esc(c.author)}">Ответить</button>`}
                     <button class="gp-danger" data-chancdel="${esc(c.id)}">Удалить</button>
                 </div>
             </div>
@@ -5632,10 +5722,10 @@ function renderChanPost(screen) {
                 <div class="gp-empty-text">Пока тихо. Напиши первой<br>или нажми ↻</div></div>`}
         </div>
         <div class="gp-chan-composer">
-            ${_chanReplyTo ? `<div class="gp-chan-replychip">${ic('fa-reply')} ${esc(_chanReplyTo)}<button id="gp-chan-replyoff">${ic('fa-xmark')}</button></div>` : ''}
+            ${_chanReplyTo ? `<div class="gp-chan-replychip">${ic('fa-reply')}<span>Ответ ${esc(_chanReplyTo)}</span><button id="gp-chan-replyoff">${ic('fa-xmark')}</button></div>` : ''}
             <div class="gp-chan-composer-row">
                 <textarea id="gp-chan-comment" rows="1" placeholder="Написать в обсуждение…"></textarea>
-                <button class="gp-primary" id="gp-chan-send" ${_chanBusy ? 'disabled' : ''}>${_chanBusy ? ic('fa-spinner fa-spin') : ic('fa-paper-plane')}</button>
+                <button class="gp-chan-send" id="gp-chan-send" ${_chanBusy ? 'disabled' : ''}>${_chanBusy ? ic('fa-spinner fa-spin') : ic('fa-paper-plane')}</button>
             </div>
         </div>`);
 
