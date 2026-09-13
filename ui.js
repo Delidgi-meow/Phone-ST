@@ -22,7 +22,7 @@ import {
     generateTweetFeed, generateTweetComments, generateAuthorReply, generateReplyToComment, generateIgFeed, generateIgComments,
     regenerateTweet, regenerateIgPost, refreshFeed,
     compressImage, setContactAvatar, getContactAvatar, avatarForAuthor, setUserAvatar, getUserAvatar,
-    timeAgo, makeHandle, getUserName, generatePostImage, cancelImageGen, isImageGenAvailable,
+    timeAgo, makeHandle, getUserName, generatePostImage, cancelImageGen, isImageGenAvailable, resolveAuthorKey,
     handleFor, setContactHandle, setUserHandle, getUserHandle, describePostImage, generateSmsPhotoReply, logSocialToChat, getSocialJournalEntries,
     settleSocialPost, maybeGenerateStoryEvent, resolveStoryEvent, generateAdvertisingOffers,
     getStories, activeStories, addStory, deleteStory, bumpStoryViews, toggleStoryLike, generateContactStories, generateStoryReactions,
@@ -5191,7 +5191,15 @@ let _chanBusy = false;
 let _chanReplyTo = null;     // имя комментатора, которому она отвечает
 let _chanDraftImage = null;  // фото к своему посту
 
+// Канал ведёт человек: если он известен телефону, у канала его лицо —
+// загруженный аватар, карточка персонажа или реф из картинко-расширения
+function chanAk(ch) {
+    return ch.mine ? 'user' : resolveAuthorKey(ch.author || ch.name);
+}
+
 function chanAvatar(ch, cls = 'gp-avatar gp-avatar-sm') {
+    const src = avatarForAuthor(chanAk(ch));
+    if (src) return avatarHtml(ch.name, src, cls);
     return `<div class="${cls} gp-chan-ava" style="${avatarStyle('ch' + ch.name)}">${esc(ch.name.replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toUpperCase() || 'K')}</div>`;
 }
 
@@ -5229,6 +5237,7 @@ function chanPostHtml(ch, post) {
         <div class="gp-chan-tools">
             ${comments}
             <button class="gp-chan-tool" data-chanshare="${esc(post.id)}" title="Отправить в лс">${ic('fa-share')}</button>
+            ${ch.mine && !post.image && !post.imgDesc && post.text ? `<button class="gp-chan-tool" data-chanimg="${esc(post.id)}" title="Нарисовать фото" ${busy ? 'disabled' : ''}>${ic(busy ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles')}</button>` : ''}
             ${ch.mine ? `<button class="gp-chan-tool" data-chantoggle="${esc(post.id)}" title="${post.commentsOn ? 'Выключить обсуждение' : 'Включить обсуждение'}">${ic(post.commentsOn ? 'fa-comment-slash' : 'fa-comment')}</button>
             <button class="gp-chan-tool gp-danger" data-chandel="${esc(post.id)}" title="Удалить пост">${ic('fa-xmark')}</button>` : ''}
         </div>
@@ -5511,7 +5520,8 @@ function bindChanPostActions(root, ch) {
     root.querySelectorAll('[data-chanimg]').forEach(b => b.addEventListener('click', async (e) => {
         e.stopPropagation();
         const post = findChanPost(ch.id, b.getAttribute('data-chanimg'));
-        if (!post || !post.imgDesc || _imgGenBusy.has(post.id)) return;
+        const imgDesc = post?.imgDesc || (ch.mine ? post?.text : '');
+        if (!post || !imgDesc || _imgGenBusy.has(post.id)) return;
         if (!_imgGenReady) {
             const ready = await isImageGenAvailable();
             if (!ready) { toast('Картинко-расширение не установлено — генерация недоступна', 'fa-circle-exclamation'); return; }
@@ -5521,7 +5531,14 @@ function bindChanPostActions(root, ch) {
         render();
         try {
             post.image = await generatePostImage(
-                { ak: ch.mine ? 'user' : 'random', kind: 'ig', author: ch.mine ? getUserName() : (ch.author || ch.name), imgDesc: post.imgDesc, aspect: '4:3' },
+                {
+                    ak: chanAk(ch), kind: 'ig',
+                    author: ch.mine ? getUserName() : (ch.author || ch.name),
+                    imgDesc,
+                    // Текст поста в промпт не идёт, но по нему ищутся знакомые лица
+                    caption: post.text,
+                    aspect: '4:3',
+                },
                 null, post.id);
             saveMeta();
             toast('Фото готово', 'fa-image');
@@ -5545,7 +5562,7 @@ function renderChanPost(screen) {
         const mine = c.ak === 'user';
         return `
         <div class="gp-chan-comment${mine ? ' gp-mine' : ''}${c.replyTo ? ' gp-reply' : ''}">
-            ${avatarHtml(c.author, avatarForAuthor(c.ak), 'gp-avatar gp-avatar-xs')}
+            ${avatarHtml(c.author, c.avatar || avatarForAuthor(c.ak), 'gp-avatar gp-avatar-xs')}
             <div class="gp-chan-comment-body">
                 <div class="gp-chan-comment-name" style="color:${senderColor(c.author)}">${esc(c.author)}${c.replyTo ? `<span> · ответ ${esc(c.replyTo)}</span>` : ''}</div>
                 <div class="gp-chan-comment-text">${esc(c.text)}</div>

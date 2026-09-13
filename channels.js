@@ -2,7 +2,7 @@
 // Данные лежат per-chat в meta; генерация — по кнопкам и после своих постов.
 
 import { getMeta, saveMeta, keyOf, stripThink } from './state.js';
-import { logSocialToChat, getUserName } from './social.js';
+import { logSocialToChat, getUserName, resolveAuthorKey } from './social.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -231,7 +231,9 @@ export function addComments(post, arr, { fromUser = false } = {}) {
             handle: String(c.handle || '').slice(0, 32),
             text: String(c.text).slice(0, 600),
             ts: Date.now(),
-            ak: fromUser ? 'user' : `contact:${keyOf(c.author)}`,
+            // Ключ автора решает, чьё лицо встанет на аватарку: знакомый
+            // подтягивает контакт/реф, незнакомый остаётся градиентом
+            ak: fromUser ? 'user' : resolveAuthorKey(c.author),
             replyTo: c.reply_to ? String(c.reply_to).slice(0, 40) : null,
             likes: Math.max(0, Math.round(Number(c.likes) || 0)),
         }));
