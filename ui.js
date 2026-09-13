@@ -46,7 +46,7 @@ import { getTwitch, findStream, refreshStreams, tickStream, donateToStream, star
 import { getNotes, addNote, updateNote, deleteNote, toggleNoteShared } from './notes.js';
 import {
     getPlans, addPlan, togglePlan, deletePlan, groupedPlans, plansBadgeCount,
-    fmtPlanDate, rpToday, PLAN_WHO,
+    fmtPlanDate, rpToday, PLAN_WHO, monthGrid, monthOf, shiftMonth, plansByDate, daysBetween,
 } from './plans.js';
 import { tr, trDom, lang, DAYS_I18N, MONTHS_I18N } from './i18n.js';
 import { logAct, logOk, logFail } from './debug-log.js';
@@ -5140,13 +5140,15 @@ let _noteEditId = null;
 // Планы и важные даты — вторая вкладка заметок. Дни считаются по ролевому
 // времени: «сегодня» — это сегодня в истории.
 let _notesTab = 'notes';
+let _planMonth = '';   // какой месяц открыт
+let _planDay = '';     // выбранный день
 
 function notesTabsHtml() {
     const due = plansBadgeCount();
     return `
         <div class="gp-notes-tabs" role="tablist">
             <button class="gp-notes-tab${_notesTab === 'notes' ? ' gp-active' : ''}" data-notestab="notes">Заметки</button>
-            <button class="gp-notes-tab${_notesTab === 'plans' ? ' gp-active' : ''}" data-notestab="plans">Планы${due ? `<i>${due}</i>` : ''}</button>
+            <button class="gp-notes-tab${_notesTab === 'plans' ? ' gp-active' : ''}" data-notestab="plans">Календарь${due ? `<i>${due}</i>` : ''}</button>
         </div>`;
 }
 
@@ -5175,10 +5177,27 @@ function planRowHtml(p) {
 
 function renderPlans(screen) {
     currentScreen = 'notes';
-    const g = groupedPlans();
     const today = rpToday();
-    const section = (title, arr) => arr.length
-        ? `<div class="gp-chan-section">${title}</div>${arr.map(planRowHtml).join('')}` : '';
+    if (!_planDay) _planDay = today;
+    if (!_planMonth) _planMonth = monthOf(_planDay);
+    const cells = monthGrid(_planMonth);
+    const [my, mm] = _planMonth.split('-').map(Number);
+    const monthName = MONTHS_I18N[lang()][mm - 1];
+    const title = `${monthName[0].toUpperCase()}${monthName.slice(1).replace(/я$/, 'ь').replace(/а$/, '')}`;
+    const dayPlans = plansByDate(_planDay);
+    const g = groupedPlans();
+    const soon = [...g.overdue, ...g.today, ...g.tomorrow, ...g.week].filter(p => p.date !== _planDay).slice(0, 6);
+
+    const week = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'];
+    const grid = cells.map(c => `
+        <button class="gp-cal-day${c.inMonth ? '' : ' gp-out'}${c.isToday ? ' gp-today' : ''}${c.iso === _planDay ? ' gp-sel' : ''}" data-calday="${c.iso}">
+            <span>${c.day}</span>
+            ${c.total ? `<i class="${c.open ? (c.past ? 'gp-late' : '') : 'gp-done'}"></i>` : ''}
+        </button>`).join('');
+
+    const planList = (arr, empty) => (arr.length
+        ? arr.map(planRowHtml).join('')
+        : `<div class="gp-cal-empty">${empty}</div>`);
 
     setHtmlKeepScroll(screen, '.gp-notes-scroll', `
         <div class="gp-header gp-thread-header">
@@ -5188,43 +5207,52 @@ function renderPlans(screen) {
         </div>
         ${notesTabsHtml()}
         <div class="gp-notes-scroll">
+            <div class="gp-cal">
+                <div class="gp-cal-head">
+                    <button class="gp-iconbtn" id="gp-cal-prev" title="Прошлый месяц">${ic('fa-chevron-left')}</button>
+                    <b>${esc(title)} ${my}</b>
+                    <button class="gp-iconbtn" id="gp-cal-next" title="Следующий месяц">${ic('fa-chevron-right')}</button>
+                </div>
+                <div class="gp-cal-week">${week.map(d => `<span>${d}</span>`).join('')}</div>
+                <div class="gp-cal-grid">${grid}</div>
+            </div>
+            <div class="gp-chan-section">${_planDay === today ? 'Сегодня' : esc(fmtPlanDate(_planDay))}</div>
+            ${planList(dayPlans, 'В этот день пусто')}
             <div class="gp-notes-editor gp-plan-editor">
-                <input type="text" id="gp-plan-text" placeholder="Что запланировано…">
+                <input type="text" id="gp-plan-text" placeholder="Что запланировано на ${esc(fmtPlanDate(_planDay))}…">
                 <div class="gp-plan-form">
-                    <input type="text" id="gp-plan-date" placeholder="${esc(fmtPlanDate(today))} / завтра" value="">
                     <input type="text" id="gp-plan-time" placeholder="19:00" value="">
                     <select id="gp-plan-who">
                         <option value="user">я</option>
                         <option value="char">он/она</option>
                         <option value="both">вместе</option>
                     </select>
-                    <button class="gp-primary" id="gp-plan-add">${ic('fa-plus')}</button>
+                    <button class="gp-primary" id="gp-plan-add">${ic('fa-plus')} Добавить</button>
                 </div>
             </div>
-            ${section('Просрочено', g.overdue)}
-            ${section('Сегодня', g.today)}
-            ${section('Завтра', g.tomorrow)}
-            ${section('На неделе', g.week)}
-            ${section('Позже', g.later)}
-            ${section('Сделано', g.done.slice(0, 12))}
-            ${getPlans().length ? '' : `
-                <div class="gp-empty"><div class="gp-empty-icon">${ic('fa-calendar-days')}</div>
-                <div class="gp-empty-text">Планы появятся сами, когда в сцене<br>о чём-то договорятся — или добавь свой</div></div>`}
+            ${soon.length ? `<div class="gp-chan-section">Ближайшее</div>${soon.map(planRowHtml).join('')}` : ''}
         </div>`);
 
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('home'));
     bindNotesTabs(screen);
+    screen.querySelector('#gp-cal-prev')?.addEventListener('click', () => { _planMonth = shiftMonth(_planMonth, -1); render(); });
+    screen.querySelector('#gp-cal-next')?.addEventListener('click', () => { _planMonth = shiftMonth(_planMonth, 1); render(); });
+    screen.querySelectorAll('[data-calday]').forEach(b => b.addEventListener('click', () => {
+        _planDay = b.getAttribute('data-calday');
+        _planMonth = monthOf(_planDay);
+        render();
+    }));
 
     const add = () => {
         const text = screen.querySelector('#gp-plan-text')?.value.trim();
         if (!text) return;
         addPlan({
             text,
-            date: screen.querySelector('#gp-plan-date')?.value,
+            date: _planDay,
             time: screen.querySelector('#gp-plan-time')?.value,
             who: screen.querySelector('#gp-plan-who')?.value,
         });
-        clearDraft('gp-plan-text'); clearDraft('gp-plan-date'); clearDraft('gp-plan-time');
+        clearDraft('gp-plan-text'); clearDraft('gp-plan-time');
         updatePhoneInjection();
         render();
     };

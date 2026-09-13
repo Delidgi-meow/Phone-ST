@@ -108,6 +108,8 @@ const DICT = {
     'Аватарка канала': 'Channel picture', 'Загрузить фото': 'Upload a photo', 'Нарисовать': 'Draw one', 'Убрать': 'Remove',
     'Аватарка канала обновлена': 'Channel picture updated', 'Аватарка канала готова': 'Channel picture is ready',
     'Аватарка не нарисовалась': 'The picture did not come out', 'Обсудить': 'Discuss', 'мой канал': 'my channel',
+    'Календарь': 'Calendar', 'Прошлый месяц': 'Previous month', 'Следующий месяц': 'Next month',
+    'В этот день пусто': 'Nothing on this day', 'Ближайшее': 'Coming up',
     'Планы': 'Plans', 'Что запланировано…': 'What is planned…', 'Просрочено': 'Overdue', 'Сегодня': 'Today', 'Завтра': 'Tomorrow',
     'На неделе': 'This week', 'Позже': 'Later', 'Сделано': 'Done', 'Из ролевой': 'From the roleplay',
     'я': 'me', 'он/она': 'them', 'вместе': 'together',

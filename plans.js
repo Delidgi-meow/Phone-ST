@@ -134,6 +134,46 @@ export function fmtPlanDate(isoDate) {
     return `${d}.${m}${y !== rpToday().slice(0, 4) ? `.${y}` : ''}`;
 }
 
+// ── Календарь ──
+export function monthOf(isoDate) { return String(isoDate).slice(0, 7); }
+
+export function shiftMonth(ym, delta) {
+    const [y, m] = ym.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1 + delta, 1));
+    return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+export function plansByDate(isoDate) {
+    return getPlans().filter(p => p.date === isoDate);
+}
+
+// Шесть недель по семь дней, неделя с понедельника: сетка не прыгает по высоте
+// при переключении месяцев, а дни соседних месяцев видны бледными.
+export function monthGrid(ym) {
+    const [y, m] = ym.split('-').map(Number);
+    const first = new Date(Date.UTC(y, m - 1, 1));
+    const shift = (first.getUTCDay() + 6) % 7;   // 0 = понедельник
+    const start = new Date(Date.UTC(y, m - 1, 1 - shift));
+    const today = rpToday();
+    const cells = [];
+    for (let i = 0; i < 42; i++) {
+        const d = new Date(start.getTime() + i * 86400000);
+        const isoDate = iso(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
+        const dayPlans = plansByDate(isoDate);
+        cells.push({
+            iso: isoDate,
+            day: d.getUTCDate(),
+            inMonth: d.getUTCMonth() + 1 === m,
+            isToday: isoDate === today,
+            past: isoDate < today,
+            total: dayPlans.length,
+            open: dayPlans.filter(x => !x.done).length,
+            who: [...new Set(dayPlans.map(x => x.who))],
+        });
+    }
+    return cells;
+}
+
 // ── Инжект ──
 // Короткий список ближайшего: модель должна помнить, о чём договорились,
 // и иметь право напомнить, сорвать или перенести.

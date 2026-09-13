@@ -3916,3 +3916,35 @@ img[data-zoom] { cursor: zoom-in; }
 .gp-plan-meta { display: flex; align-items: center; gap: 8px; margin-top: 3px; font-size: 10px; color: var(--gp-text-dim); }
 .gp-plan-who { padding: 1px 7px; border-radius: 999px; background: rgba(var(--gp-accent-a-rgb), .16); color: var(--gp-text); }
 .gp-plan-src { opacity: .6; }
+
+
+/* ═══ Календарь ═══ */
+.gp-cal {
+    flex: 0 0 auto; padding: 8px 8px 10px; border-radius: var(--gp-theme-card-radius, 14px);
+    background: var(--gp-glass); border: 1px solid var(--gp-border-soft);
+}
+.gp-cal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 2px 8px; }
+.gp-cal-head b { font-size: 13.5px; font-weight: 700; }
+.gp-cal-head .gp-iconbtn { width: 28px; height: 28px; font-size: 11px; }
+.gp-cal-week, .gp-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.gp-cal-week span {
+    text-align: center; font-size: 9px; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--gp-text-dim); padding-bottom: 4px;
+}
+.gp-cal-day {
+    position: relative; aspect-ratio: 1 / 1; min-height: 30px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 2px; border: 1px solid transparent; border-radius: 10px;
+    background: none; color: var(--gp-text); font: inherit; font-size: 12px; cursor: pointer;
+}
+.gp-cal-day:hover { background: var(--gp-glass-strong); }
+.gp-cal-day.gp-out { color: var(--gp-text-dim); opacity: .45; }
+.gp-cal-day.gp-today { border-color: rgba(var(--gp-accent-a-rgb), .55); font-weight: 700; }
+.gp-cal-day.gp-sel { background: rgba(var(--gp-accent-a-rgb), .18); border-color: rgba(var(--gp-accent-a-rgb), .5); }
+.gp-cal-day i {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--gp-accent-a);
+}
+.gp-cal-day i.gp-late { background: #ff8f8e; }
+.gp-cal-day i.gp-done { background: var(--gp-text-dim); }
+.gp-cal-empty { font-size: 11px; color: var(--gp-text-dim); padding: 2px 6px 4px; }
