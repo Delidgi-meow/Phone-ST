@@ -98,6 +98,10 @@ export function togglePlan(id) {
     const p = getPlans().find(x => x.id === id);
     if (!p) return false;
     p.done = !p.done;
+    // День отметки нужен инжекту: свежее «сделано» модель должна увидеть,
+    // иначе галочка просто убирала пункт, и ролевая считала дело незакрытым
+    if (p.done) p.doneDate = rpToday();
+    else delete p.doneDate;
     saveMeta();
     return p.done;
 }
@@ -179,16 +183,23 @@ export function monthGrid(ym) {
 // и иметь право напомнить, сорвать или перенести.
 export function plansInjectLine() {
     const g = groupedPlans();
-    const near = [...g.overdue, ...g.today, ...g.tomorrow, ...g.week].slice(0, 8);
-    if (!near.length) return '';
     const today = rpToday();
+    const near = [...g.overdue, ...g.today, ...g.tomorrow, ...g.week].slice(0, 8);
+    // Недавно закрытое: она отметила галочку — значит дело сделано, и ролевая
+    // должна это знать (не напоминать, не тянуть героя туда снова)
+    const justDone = g.done
+        .filter(p => !p.doneDate || daysBetween(p.doneDate, today) <= 3)
+        .slice(-3);
+    if (!near.length && !justDone.length) return '';
+    const whoOf = (p) => (p.who === 'char' ? 'their plan' : p.who === 'both' ? 'together' : `{{user}}'s plan`);
     const lines = near.map((p) => {
         const diff = daysBetween(today, p.date);
         const when = diff < 0 ? `overdue by ${-diff}d` : diff === 0 ? 'TODAY' : diff === 1 ? 'tomorrow' : `in ${diff}d`;
-        const who = p.who === 'char' ? 'their plan' : p.who === 'both' ? 'together' : `{{user}}'s plan`;
-        return `- ${fmtPlanDate(p.date)}${p.time ? ` ${p.time}` : ''} (${when}, ${who}): ${p.text}`;
+        return `- ${fmtPlanDate(p.date)}${p.time ? ` ${p.time}` : ''} (${when}, ${whoOf(p)}): ${p.text}`;
     }).join('\n');
-    return `[{{user}}'S CALENDAR — what has been agreed or planned. It is TRUE and binding: characters who took part in a plan remember it, may bring it up, hold {{user}} to it, be late, cancel or show up. Do not invent a different date for these.]\n${lines}`;
+    const doneLines = justDone.map(p => `- DONE ${fmtPlanDate(p.date)} (${whoOf(p)}): ${p.text}`).join('\n');
+    const body = [lines, doneLines].filter(Boolean).join('\n');
+    return `[{{user}}'S CALENDAR — what has been agreed or planned. It is TRUE and binding: characters who took part in a plan remember it, may bring it up, hold {{user}} to it, be late, cancel or show up. Do not invent a different date for these. Lines marked DONE are already finished — {{user}} ticked them off: treat them as done, do not push for them again, and you may refer to them as something that happened.]\n${body}`;
 }
 
 export function plansInjectRule() {
