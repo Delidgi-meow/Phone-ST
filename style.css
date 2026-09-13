@@ -3677,15 +3677,19 @@ body.gp-theme-minimal .gp-toast-ava {
 .gp-chan-comment-foot .gp-danger { color: #ff9b9b; }
 
 /* Шторка аватарки канала */
-.gp-chan-avasheet { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 12px; }
-.gp-chan-avasheet button {
+.gp-chan-avasheet { display: flex; flex-direction: column; gap: 6px; padding: 4px 12px 12px; }
+/* Селектор с панелью: у .gp-member-overlay-panel .gp-primary свой отступ в
+   14px, и он перевешивал — кнопка вылезала за правый край шторки */
+.gp-chan-avasheet-panel .gp-chan-avasheet button {
     width: 100%; height: 40px; margin: 0; padding: 0 12px;
     border-radius: 12px; font-size: 12.5px; font-weight: 600;
     display: flex; align-items: center; gap: 9px; justify-content: flex-start;
     box-shadow: none;
 }
 .gp-chan-avasheet .gp-primary { border-color: rgba(var(--gp-accent-a-rgb), .45); }
-.gp-chan-avasheet-panel { width: 74% !important; max-width: 260px !important; }
+.gp-chan-avasheet-panel { width: 74% !important; max-width: 250px !important; }
+/* Крестик в шапке шторки растягивало флексом по высоте заголовка */
+.gp-member-overlay-header .gp-iconbtn { flex: 0 0 auto; width: 30px; height: 30px; font-size: 12px; }
 
 /* Скрин поста в переписке */
 .gp-shot {
