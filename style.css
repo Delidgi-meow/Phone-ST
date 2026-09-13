@@ -2026,6 +2026,9 @@ body.gp-native-shell #gp-screen.gp-screen-bleed { padding-bottom: 14px; }
 #gp-phone.gp-skin-minimal .gp-app-icon,
 #gp-phone.gp-skin-minimal .gp-iconbtn,
 #gp-phone.gp-skin-minimal .gp-row,
+#gp-phone.gp-skin-minimal .gp-chan-row,
+#gp-phone.gp-skin-minimal .gp-chan-post,
+#gp-phone.gp-skin-minimal .gp-chan-comment-body,
 #gp-phone.gp-skin-minimal .gp-bubble,
 #gp-phone.gp-skin-minimal .gp-tw-card,
 #gp-phone.gp-skin-minimal .gp-ig-card { box-shadow: none; }
@@ -2081,11 +2084,15 @@ body.gp-native-shell #gp-screen.gp-screen-bleed { padding-bottom: 14px; }
 /* Ленты и карточки: разделители вместо плашек */
 #gp-phone.gp-skin-minimal .gp-tw-card,
 #gp-phone.gp-skin-minimal .gp-ig-card,
-#gp-phone.gp-skin-minimal .gp-of-card {
+#gp-phone.gp-skin-minimal .gp-of-card,
+#gp-phone.gp-skin-minimal .gp-chan-post {
     background: transparent;
     border: none;
     border-bottom: 1px solid rgba(255,255,255,.09);
 }
+/* Лента каналов в минимале — сплошной список, а не колода карточек */
+#gp-phone.gp-skin-minimal .gp-chan-scroll { gap: 0; }
+#gp-phone.gp-skin-minimal .gp-chan-post { width: 100%; padding-bottom: 2px; }
 /* Обложки приложений, у которых свой бренд-цвет (дискорд/твич), тоже гасим */
 #gp-phone.gp-skin-minimal .gp-dc-skin,
 #gp-phone.gp-skin-minimal .gp-tv-skin { background: #0e0e0f; }
@@ -3513,6 +3520,9 @@ body.gp-theme-minimal .gp-toast-ava {
     flex: 1 1 auto; min-height: 0; overflow-y: auto;
     padding: 6px 2px 10px; display: flex; flex-direction: column; gap: 10px;
 }
+/* Флекс-колонка по умолчанию сжимает детей: без этого длинная лента ужимала
+   посты по высоте и резала текст вместе с реакциями и полоской обсуждения */
+.gp-chan-scroll > * { flex: 0 0 auto; }
 .gp-chan-section {
     font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
     color: var(--gp-text-dim); margin: 6px 0 -3px 4px;
@@ -3558,11 +3568,18 @@ body.gp-theme-minimal .gp-toast-ava {
 .gp-chan-text { font-size: 13.5px; line-height: 1.42; white-space: pre-wrap; word-break: break-word; }
 .gp-chan-img { position: relative; display: block; width: 100%; border: none; padding: 0; background: var(--gp-glass-strong); }
 .gp-chan-img img { display: block; width: 100%; max-height: 240px; object-fit: cover; }
+/* Заглушка ненарисованного фото: приглушённая, а не случайный яркий градиент —
+   в ленте он кричал громче самих постов */
 .gp-chan-img-gen {
     min-height: 92px; display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 5px; color: #fff; cursor: pointer; padding: 12px;
+    gap: 6px; padding: 12px; cursor: pointer;
+    background: var(--gp-glass-strong);
+    border-bottom: 1px solid var(--gp-border-soft);
+    color: var(--gp-text-dim);
 }
-.gp-chan-img-gen i { font-style: normal; font-size: 10px; opacity: .85; text-align: center; line-height: 1.35; }
+.gp-chan-img-gen > span { font-size: 17px; }
+.gp-chan-img-gen i { font-style: normal; font-size: 10.5px; text-align: center; line-height: 1.4; max-width: 240px; }
+.gp-chan-img-gen:hover { color: var(--gp-text); }
 .gp-chan-foot { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .gp-chan-reacts { position: relative; display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
 .gp-chan-react {

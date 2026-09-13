@@ -5222,7 +5222,7 @@ function chanPostHtml(ch, post) {
     if (post.image) {
         media = `<div class="gp-chan-img"><img src="${esc(post.image)}" alt=""></div>`;
     } else if (post.imgDesc) {
-        media = `<button class="gp-chan-img gp-chan-img-gen" data-chanimg="${esc(post.id)}" style="${avatarStyle(post.imgDesc)}" ${busy ? 'disabled' : ''}>
+        media = `<button class="gp-chan-img gp-chan-img-gen" data-chanimg="${esc(post.id)}" ${busy ? 'disabled' : ''}>
             <span>${ic(busy ? 'fa-spinner fa-spin' : 'fa-image')}</span><i>${esc(post.imgDesc)}</i>${busy ? stopGenBtn(post.id) : ''}</button>`;
     }
     const reacts = (post.reacts || []).map(r => `
