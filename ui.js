@@ -5690,26 +5690,27 @@ function renderChanPost(screen) {
     if (!ch || !post) { goto('chans'); return; }
     currentScreen = 'chanpost';
 
+    // Пузыри те же, что в переписке: класс .gp-bubble тянет за собой всё
+    // оформление темы, включая ширину, хвост и контраст
     const comments = (post.comments || []).map(c => {
         const mine = c.ak === 'user';
-        const quote = c.replyTo ? (post.comments || []).find(x => keyOf(x.author) === keyOf(c.replyTo)) : null;
+        const quoted = c.replyTo ? (post.comments || []).find(x => keyOf(x.author) === keyOf(c.replyTo)) : null;
         return `
-        <div class="gp-chan-comment${mine ? ' gp-mine' : ''}">
-            ${mine ? '' : avatarHtml(c.author, c.avatar || avatarForAuthor(c.ak), 'gp-avatar gp-avatar-xs')}
-            <div class="gp-chan-comment-body">
-                ${mine ? '' : `<div class="gp-chan-comment-name" style="color:${senderColor(c.author)}">${esc(c.author)}${c.handle ? `<span> ${esc(c.handle)}</span>` : ''}</div>`}
-                ${c.replyTo ? `<div class="gp-chan-comment-quote"><b>${esc(c.replyTo)}</b><span>${esc(quote ? quote.text : 'комментарий')}</span></div>` : ''}
-                <div class="gp-chan-comment-text">${esc(c.text)}</div>
-                <div class="gp-chan-comment-foot">
-                    ${esc(fmtTime(new Date(c.ts)))}
-                    ${mine ? '' : `<button data-chanreply="${esc(c.author)}">Ответить</button>`}
-                    <button class="gp-danger" data-chancdel="${esc(c.id)}">Удалить</button>
-                </div>
+        <div class="gp-bubble-wrap ${mine ? 'gp-out' : 'gp-in'}">
+            <div class="gp-bubble">
+                ${mine ? '' : `<div class="gp-bubble-sender" style="color:${senderColor(c.author)}">${esc(c.author)}${c.handle ? ` <i>${esc(c.handle)}</i>` : ''}</div>`}
+                ${c.replyTo ? `<div class="gp-chan-quote"><b>${esc(c.replyTo)}</b><span>${esc(String(quoted?.text || 'комментарий').slice(0, 70))}</span></div>` : ''}
+                ${esc(c.text)}
+            </div>
+            <div class="gp-bubble-time">
+                ${esc(fmtTime(new Date(c.ts)))}
+                ${mine ? '' : `<button data-chanreply="${esc(c.author)}">Ответить</button>`}
+                <button class="gp-danger" data-chancdel="${esc(c.id)}">Удалить</button>
             </div>
         </div>`;
     }).join('');
 
-    setHtmlKeepScroll(screen, '.gp-chan-scroll', `
+    setHtmlKeepScroll(screen, '.gp-msgs', `
         <div class="gp-header gp-thread-header">
             <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
             <div class="gp-thread-title">
@@ -5718,7 +5719,7 @@ function renderChanPost(screen) {
             </div>
             <button class="gp-iconbtn" id="gp-chan-more" title="Ещё комментарии" ${_chanBusy ? 'disabled' : ''}>${ic(_chanBusy ? 'fa-spinner fa-spin' : 'fa-rotate')}</button>
         </div>
-        <div class="gp-chan-scroll">
+        <div class="gp-msgs">
             ${comments || `<div class="gp-empty"><div class="gp-empty-icon">${ic('fa-comment')}</div>
                 <div class="gp-empty-text">Пока тихо. Напиши первой<br>или нажми ↻</div></div>`}
         </div>

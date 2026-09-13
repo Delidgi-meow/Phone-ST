@@ -2028,7 +2028,6 @@ body.gp-native-shell #gp-screen.gp-screen-bleed { padding-bottom: 14px; }
 #gp-phone.gp-skin-minimal .gp-row,
 #gp-phone.gp-skin-minimal .gp-chan-row,
 #gp-phone.gp-skin-minimal .gp-chan-post,
-#gp-phone.gp-skin-minimal .gp-chan-comment-body,
 #gp-phone.gp-skin-minimal .gp-bubble,
 #gp-phone.gp-skin-minimal .gp-tw-card,
 #gp-phone.gp-skin-minimal .gp-ig-card { box-shadow: none; }
@@ -3742,31 +3741,25 @@ body.gp-theme-minimal .gp-toast-ava {
 .gp-chan-replychip span { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gp-chan-replychip button { border: none; background: none; color: inherit; cursor: pointer; padding: 0; }
 
-/* Обсуждение — обычная переписка */
-.gp-chan-comment { display: flex; align-items: flex-end; gap: 7px; align-self: flex-start; max-width: 86%; }
-.gp-chan-comment.gp-mine { align-self: flex-end; }
-.gp-chan-comment-body {
-    min-width: 0; padding: 8px 13px; border-radius: 19px; border-bottom-left-radius: 6px;
-    background: var(--gp-glass-strong); border: 1px solid var(--gp-border-soft);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 3px 10px rgba(0,0,0,.18);
+/* Обсуждение — та же переписка: пузыри берут оформление у .gp-bubble,
+   здесь только цитата ответа и кнопки под пузырём */
+.gp-chan-quote {
+    border-left: 2px solid rgba(255,255,255,.45);
+    padding-left: 8px; margin-bottom: 6px;
 }
-.gp-chan-comment.gp-mine .gp-chan-comment-body {
-    border-bottom-left-radius: 19px; border-bottom-right-radius: 6px;
-    background: linear-gradient(135deg, rgba(var(--gp-accent-a-rgb), .85), rgba(var(--gp-accent-b-rgb), .78));
-    border-color: rgba(var(--gp-accent-a-rgb), .45);
-    box-shadow: inset 0 1px 0 rgba(255,255,255,.35), 0 4px 14px rgba(var(--gp-accent-a-rgb), .28);
-    color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,.12);
+.gp-chan-quote b { display: block; font-size: 10px; opacity: .9; }
+.gp-chan-quote span {
+    display: block; font-size: 10.5px; opacity: .7; line-height: 1.35;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.gp-chan-comment-name { font-size: 11px; font-weight: 700; margin-bottom: 3px; }
-.gp-chan-comment-name span { font-weight: 400; color: var(--gp-text-dim); }
-.gp-chan-comment-quote { border-left: 2px solid rgba(255,255,255,.65); padding-left: 8px; margin-bottom: 6px; }
-.gp-chan-comment-quote b { display: block; font-size: 10px; opacity: .9; }
-.gp-chan-comment-quote span { display: block; font-size: 10.5px; opacity: .75; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gp-chan-comment-text { font-size: 13.5px; line-height: 1.42; word-break: break-word; }
-.gp-chan-comment-foot { display: flex; align-items: center; gap: 10px; margin-top: 5px; font-size: 9px; color: var(--gp-text-dim); }
-.gp-chan-comment.gp-mine .gp-chan-comment-foot { color: rgba(255,255,255,.75); }
-.gp-chan-comment-foot button { border: none; background: none; padding: 0; color: inherit; font: inherit; font-size: 9.5px; cursor: pointer; }
-.gp-chan-comment-foot .gp-danger { color: #ff9b9b; }
+.gp-bubble-sender i { font-style: normal; font-weight: 400; opacity: .6; }
+.gp-bubble-time { display: flex; align-items: center; gap: 9px; }
+.gp-bubble-time button {
+    border: none; background: none; padding: 0;
+    color: inherit; font: inherit; font-size: 9px; cursor: pointer;
+}
+.gp-bubble-time button:hover { color: var(--gp-text); }
+.gp-bubble-time .gp-danger { color: rgba(255,155,155,.75); }
 
 /* Шторка аватарки канала */
 .gp-chan-avasheet { display: flex; flex-direction: column; gap: 6px; padding: 4px 12px 12px; }
