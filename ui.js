@@ -372,7 +372,7 @@ function createPhone() {
 }
 
 // ═══ Скины и кастомный CSS ═══
-const SKINS = ['indigo', 'sunset', 'zephyr', 'neon', 'noir', 'fern', 'lcd', 'void', 'porcelain', 'minimal'];
+const SKINS = ['indigo', 'quiet', 'sunset', 'zephyr', 'neon', 'noir', 'fern', 'lcd', 'void', 'porcelain', 'minimal'];
 
 // Варианты уведомлений. Разметка у всех одна — отличается только оформление,
 // поэтому переключение не трогает ни один из ~40 вызовов toast().
@@ -389,6 +389,7 @@ const LEGACY_SKINS = { rose: 'sunset', emerald: 'fern', mono: 'lcd' };
 const THEME_BODY_CLASSES = [...SKINS, ...Object.values(LEGACY_SKINS)].map(sk => `gp-theme-${sk}`);
 const THEME_INFO = [
     { id: 'indigo', name: 'Индиго', note: 'Liquid glass', colors: ['#6a8dff', '#9a6aff', '#4aaaff'] },
+    { id: 'quiet', name: 'Тихий', note: 'Графит и роза', colors: ['#e79bb4', '#c9738f', '#2a2927'] },
     { id: 'sunset', name: 'Закат', note: 'Тёплое стекло', colors: ['#ff8a5f', '#ff5a8c', '#a04a45'] },
     { id: 'zephyr', name: 'Зефир', note: 'Мягкий kawaii', colors: ['#ff9ec7', '#b79bff', '#8dcfff'] },
     { id: 'neon', name: 'Neon City', note: 'Cyberpunk', colors: ['#ff2d78', '#00e5ff', '#8d42ff'] },

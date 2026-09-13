@@ -2100,6 +2100,97 @@ body.gp-native-shell #gp-screen.gp-screen-bleed { padding-bottom: 14px; }
 #gp-phone.gp-skin-minimal .gp-tv-skin { background: #0e0e0f; }
 #gp-phone.gp-skin-minimal .gp-dc-srv { background: rgba(255,255,255,.07) !important; color: rgba(255,255,255,.8); }
 
+/* Тихий: тёплый графит и роза. Минимализм не от бедности — работают отступы
+   и типографика, а не рамки: ни стекла, ни свечения, ни цветных плиток.
+   Цвет один и только там, где важно: непрочитанное, своё сообщение, действие. */
+#gp-phone.gp-skin-quiet {
+    --gp-accent-a: #e79bb4; --gp-accent-b: #c9738f;
+    --gp-accent-a-rgb: 231, 155, 180; --gp-accent-b-rgb: 201, 115, 143;
+    --gp-glass: rgba(255,255,255,.045); --gp-glass-strong: rgba(255,255,255,.075);
+    --gp-border: rgba(255,255,255,.11); --gp-border-soft: rgba(255,255,255,.065);
+    --gp-text: rgba(236,234,229,.94); --gp-text-dim: rgba(236,234,229,.44);
+    --gp-theme-card-radius: 18px;
+    --gp-radius: 36px;
+    border: 1px solid rgba(255,255,255,.10);
+    background: radial-gradient(125% 55% at 12% -8%, rgba(231,155,180,.11), transparent 62%), #191818;
+    box-shadow: 0 28px 70px rgba(0,0,0,.55), 0 6px 18px rgba(0,0,0,.35);
+}
+/* Ни одного размытия: поверхности ровные */
+#gp-phone.gp-skin-quiet *,
+#gp-phone.gp-skin-quiet *::before,
+#gp-phone.gp-skin-quiet *::after {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+}
+/* Плитки приложений одного тона — цвет на домашнем экране только у значка
+   непрочитанного (id перебивает .gp-app-tw и остальные бренд-градиенты) */
+#gp-phone.gp-skin-quiet .gp-app-icon {
+    background: rgba(255,255,255,.075);
+    border: 1px solid rgba(255,255,255,.13);
+    box-shadow: none;
+    color: rgba(236,234,229,.9);
+}
+#gp-phone.gp-skin-quiet .gp-app:hover .gp-app-icon { transform: none; background: rgba(255,255,255,.09); }
+#gp-phone.gp-skin-quiet .gp-app-name { font-weight: 400; text-shadow: none; color: var(--gp-text-dim); }
+#gp-phone.gp-skin-quiet .gp-app-badge {
+    background: var(--gp-accent-a); color: #2b1018; box-shadow: none; border: none; font-weight: 700;
+}
+/* Заголовок экрана — обычный текст, а не градиентная плашка */
+#gp-phone.gp-skin-quiet .gp-title {
+    font-size: 21px; font-weight: 400; letter-spacing: -0.2px;
+    background: none; -webkit-background-clip: border-box; background-clip: border-box;
+    color: var(--gp-text); -webkit-text-fill-color: currentColor;
+}
+#gp-phone.gp-skin-quiet .gp-header { padding: 14px 6px 14px; }
+#gp-phone.gp-skin-quiet .gp-iconbtn {
+    background: transparent; border: 1px solid var(--gp-border); box-shadow: none;
+}
+#gp-phone.gp-skin-quiet .gp-iconbtn:hover { background: rgba(255,255,255,.06); }
+/* Списки: воздух вместо коробок */
+#gp-phone.gp-skin-quiet .gp-row,
+#gp-phone.gp-skin-quiet .gp-chan-row {
+    background: transparent; border: none; box-shadow: none;
+    border-radius: 0; padding: 13px 6px; margin-bottom: 0;
+}
+#gp-phone.gp-skin-quiet .gp-row:hover,
+#gp-phone.gp-skin-quiet .gp-chan-row:hover { background: rgba(255,255,255,.04); transform: none; }
+#gp-phone.gp-skin-quiet .gp-row + .gp-row,
+#gp-phone.gp-skin-quiet .gp-chan-row + .gp-chan-row { border-top: 1px solid var(--gp-border-soft); }
+#gp-phone.gp-skin-quiet .gp-avatar { border: none; }
+/* Ленты: посты отделены волоском, а не подложкой */
+#gp-phone.gp-skin-quiet .gp-tw-card,
+#gp-phone.gp-skin-quiet .gp-ig-card,
+#gp-phone.gp-skin-quiet .gp-of-card,
+#gp-phone.gp-skin-quiet .gp-chan-post {
+    background: transparent; border: none;
+    border-bottom: 1px solid var(--gp-border-soft); box-shadow: none;
+}
+#gp-phone.gp-skin-quiet .gp-chan-scroll { gap: 2px; }
+/* Переписка: своё сообщение — розовая заливка без градиента и тени */
+#gp-phone.gp-skin-quiet .gp-in .gp-bubble {
+    background: rgba(255,255,255,.07); border: 1px solid var(--gp-border-soft); box-shadow: none;
+}
+#gp-phone.gp-skin-quiet .gp-out .gp-bubble {
+    background: rgba(var(--gp-accent-a-rgb), .22);
+    border: 1px solid rgba(var(--gp-accent-a-rgb), .42);
+    color: var(--gp-text); text-shadow: none; box-shadow: none;
+}
+/* Кнопки: заливка тоном акцента, без градиентов и свечения */
+#gp-phone.gp-skin-quiet .gp-primary,
+#gp-phone.gp-skin-quiet .gp-send,
+#gp-phone.gp-skin-quiet .gp-chan-send,
+#gp-phone.gp-skin-quiet .gp-btn,
+#gp-phone.gp-skin-quiet .gp-shop-buy,
+#gp-phone.gp-skin-quiet .gp-bank-btn {
+    background: rgba(var(--gp-accent-a-rgb), .16);
+    border: 1px solid rgba(var(--gp-accent-a-rgb), .45);
+    color: #f7dee6; box-shadow: none;
+}
+#gp-phone.gp-skin-quiet .gp-primary:hover,
+#gp-phone.gp-skin-quiet .gp-send:hover { transform: none; background: rgba(var(--gp-accent-a-rgb), .24); }
+#gp-phone.gp-skin-quiet .gp-secondary { background: transparent; border-color: var(--gp-border); }
+#gp-phone.gp-skin-quiet .gp-homebar { background: rgba(255,255,255,.24); }
+
 /* Porcelain: bright frosted daytime theme. */
 #gp-phone.gp-skin-porcelain {
     --gp-accent-a: #5a92ff; --gp-accent-b: #3a7bfd;
@@ -2120,6 +2211,7 @@ body.gp-theme-neon .gp-toast { border-radius: 8px; background: #0a0714; border-c
 body.gp-theme-noir .gp-toast { background: #171310; border-color: rgba(232,193,118,.5); }
 body.gp-theme-lcd .gp-toast { border-radius: 5px; background: #a7bd5e; border: 2px solid #242e12; color: #242e12; font-family: "Courier New", monospace; }
 body.gp-theme-void .gp-toast { background: #0a0a0a; border-color: rgba(0,255,157,.4); }
+body.gp-theme-quiet .gp-toast { background: #1f1e1e; border-color: rgba(231,155,180,.35); color: rgba(236,234,229,.94); }
 body.gp-theme-porcelain .gp-toast,
 body.gp-theme-zephyr .gp-toast { background: rgba(255,255,255,.96); color: #1c2330; border-color: rgba(28,35,48,.08); }
 /* Минимал: уведомление такое же плоское и квадратное, как сам телефон */

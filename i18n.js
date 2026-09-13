@@ -108,6 +108,7 @@ const DICT = {
     'Аватарка канала': 'Channel picture', 'Загрузить фото': 'Upload a photo', 'Нарисовать': 'Draw one', 'Убрать': 'Remove',
     'Аватарка канала обновлена': 'Channel picture updated', 'Аватарка канала готова': 'Channel picture is ready',
     'Аватарка не нарисовалась': 'The picture did not come out', 'Обсудить': 'Discuss', 'мой канал': 'my channel',
+    'Тихий': 'Quiet', 'Графит и роза': 'Graphite and rose',
     'Каналы знакомых': 'Channels of people you know', 'Канал знакомого': 'A channel of someone you know',
     'Чей канал добавить?': 'Whose channel should we add?', 'Канал этого человека уже добавлен': 'This person\u2019s channel is already here',
     'Выбери человека': 'Pick a person',
