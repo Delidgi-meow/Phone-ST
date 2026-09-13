@@ -374,7 +374,15 @@ function setupSettingsPanel() {
         } catch (e) { /* ignore */ }
         sel.innerHTML = `<option value="">Текущий API (изолированно, без пресета)</option>`
             + profiles.map(p => `<option value="${p.id}" ${p.id === cur ? 'selected' : ''}>${$('<i>').text(p.name || p.id).html()}</option>`).join('');
-        sel.value = profiles.some(p => p.id === cur) ? cur : '';
+        const alive = profiles.some(p => p.id === cur);
+        sel.value = alive ? cur : '';
+        // Профиль удалили или переименовали в Connection Manager: список
+        // показывал «Текущий API», а в настройках лежал мёртвый id — и каждая
+        // генерация падала с «профиль не найден». Сбрасываем по-настоящему.
+        if (cur && !alive) {
+            getSettings().socialProfileId = '';
+            saveSettingsDebounced();
+        }
     };
     fillProfiles();
     // Профили могли добавиться позже — обновляем список при открытии выпадашки
