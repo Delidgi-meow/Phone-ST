@@ -44,6 +44,10 @@ import { getNews, refreshNews, shareNews, deleteNews } from './news.js';
 import { getDiscord, findDServer, findDChannel, refreshDiscordServers, createOwnDServer, refreshDChannel, postToDChannel, deleteDServer, addDMember, delDMember } from './discord.js';
 import { getTwitch, findStream, refreshStreams, tickStream, donateToStream, startMyStream, tickMyStream, endMyStream } from './twitch.js';
 import { getNotes, addNote, updateNote, deleteNote, toggleNoteShared } from './notes.js';
+import {
+    getPlans, addPlan, togglePlan, deletePlan, groupedPlans, plansBadgeCount,
+    fmtPlanDate, rpToday, PLAN_WHO,
+} from './plans.js';
 import { tr, trDom, lang, DAYS_I18N, MONTHS_I18N } from './i18n.js';
 import { logAct, logOk, logFail } from './debug-log.js';
 
@@ -1209,7 +1213,7 @@ function renderHome(screen) {
                     <div class="gp-app-name">Магазин</div>
                 </div>
                 <div class="gp-app" data-app="chans">
-                    <div class="gp-app-icon gp-app-chans">${ic('fa-tower-broadcast')}${unreadChannels() > 0 ? `<span class="gp-app-badge">${unreadChannels()}</span>` : ''}</div>
+                    <div class="gp-app-icon gp-app-chans">${ic('fa-paper-plane')}${unreadChannels() > 0 ? `<span class="gp-app-badge">${unreadChannels()}</span>` : ''}</div>
                     <div class="gp-app-name">Каналы</div>
                 </div>
                 <div class="gp-app" data-app="casino">
@@ -1229,7 +1233,7 @@ function renderHome(screen) {
                     <div class="gp-app-name">Twitch</div>
                 </div>
                 <div class="gp-app" data-app="notes">
-                    <div class="gp-app-icon gp-app-notes">${ic('fa-note-sticky')}</div>
+                    <div class="gp-app-icon gp-app-notes">${ic('fa-note-sticky')}${plansBadgeCount() > 0 ? `<span class="gp-app-badge">${plansBadgeCount()}</span>` : ''}</div>
                     <div class="gp-app-name">Заметки</div>
                 </div>
                 <div class="gp-app" data-app="appearance">
@@ -4884,7 +4888,7 @@ function twChatHtml(chat) {
         }
         return `
             <div class="gp-twch-line${mm.host ? ' gp-twch-line-host' : ''}">
-                <b style="color:${mm.user ? 'var(--twch-purple-light)' : senderColor(mm.author)}">${mm.host ? ic('fa-tower-broadcast') + ' ' : ''}${esc(mm.author)}</b><span class="gp-twch-colon">:</span>
+                <b style="color:${mm.user ? 'var(--twch-purple-light)' : senderColor(mm.author)}">${mm.host ? ic('fa-paper-plane') + ' ' : ''}${esc(mm.author)}</b><span class="gp-twch-colon">:</span>
                 <span>${esc(mm.text)}</span>
             </div>`;
     }).join('');
@@ -4917,7 +4921,7 @@ function renderTwitch(screen) {
                 <button class="gp-iconbtn" id="gp-twch-refresh" ${_twBusy ? 'disabled' : ''}>${ic(_twBusy ? 'fa-spinner fa-spin' : 'fa-rotate-right')}</button>
             </div>
             <div class="gp-twch-scroll">
-                <button class="gp-twch-golive" id="gp-golive">${ic('fa-tower-broadcast')} ${getTwitch().myStream ? 'Ты в эфире — открыть' : 'Начать свой стрим'}</button>
+                <button class="gp-twch-golive" id="gp-golive">${ic('fa-paper-plane')} ${getTwitch().myStream ? 'Ты в эфире — открыть' : 'Начать свой стрим'}</button>
                 ${cards || `<div class="gp-empty"><div class="gp-empty-icon">${brand('fa-twitch')}</div><div class="gp-empty-text">Нажми ↻ — модель придумает,<br>кто сейчас в эфире</div></div>`}
             </div>
         </div>`;
@@ -5133,8 +5137,116 @@ function renderNews(screen) {
 // ═══ ЗАМЕТКИ ═══
 
 let _noteEditId = null;
+// Планы и важные даты — вторая вкладка заметок. Дни считаются по ролевому
+// времени: «сегодня» — это сегодня в истории.
+let _notesTab = 'notes';
+
+function notesTabsHtml() {
+    const due = plansBadgeCount();
+    return `
+        <div class="gp-notes-tabs" role="tablist">
+            <button class="gp-notes-tab${_notesTab === 'notes' ? ' gp-active' : ''}" data-notestab="notes">Заметки</button>
+            <button class="gp-notes-tab${_notesTab === 'plans' ? ' gp-active' : ''}" data-notestab="plans">Планы${due ? `<i>${due}</i>` : ''}</button>
+        </div>`;
+}
+
+function bindNotesTabs(screen) {
+    screen.querySelectorAll('[data-notestab]').forEach(b => b.addEventListener('click', () => {
+        _notesTab = b.getAttribute('data-notestab');
+        render();
+    }));
+}
+
+function planRowHtml(p) {
+    return `
+    <div class="gp-plan${p.done ? ' gp-done' : ''}">
+        <label class="gp-plan-check"><input type="checkbox" data-plantoggle="${esc(p.id)}" ${p.done ? 'checked' : ''}></label>
+        <div class="gp-plan-body">
+            <div class="gp-plan-text">${esc(p.text)}</div>
+            <div class="gp-plan-meta">
+                <span>${esc(fmtPlanDate(p.date))}${p.time ? ` · ${esc(p.time)}` : ''}</span>
+                <span class="gp-plan-who">${esc(PLAN_WHO[p.who] || PLAN_WHO.user)}</span>
+                ${p.source === 'rp' ? `<span class="gp-plan-src" title="Из ролевой">${ic('fa-comment')}</span>` : ''}
+            </div>
+        </div>
+        <button class="gp-bank-tx-del" data-plandel="${esc(p.id)}" title="Удалить">${ic('fa-xmark')}</button>
+    </div>`;
+}
+
+function renderPlans(screen) {
+    currentScreen = 'notes';
+    const g = groupedPlans();
+    const today = rpToday();
+    const section = (title, arr) => arr.length
+        ? `<div class="gp-chan-section">${title}</div>${arr.map(planRowHtml).join('')}` : '';
+
+    setHtmlKeepScroll(screen, '.gp-notes-scroll', `
+        <div class="gp-header gp-thread-header">
+            <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
+            <div class="gp-title gp-title-app gp-notes-title">Заметки</div>
+            <span style="width:32px"></span>
+        </div>
+        ${notesTabsHtml()}
+        <div class="gp-notes-scroll">
+            <div class="gp-notes-editor gp-plan-editor">
+                <input type="text" id="gp-plan-text" placeholder="Что запланировано…">
+                <div class="gp-plan-form">
+                    <input type="text" id="gp-plan-date" placeholder="${esc(fmtPlanDate(today))} / завтра" value="">
+                    <input type="text" id="gp-plan-time" placeholder="19:00" value="">
+                    <select id="gp-plan-who">
+                        <option value="user">я</option>
+                        <option value="char">он/она</option>
+                        <option value="both">вместе</option>
+                    </select>
+                    <button class="gp-primary" id="gp-plan-add">${ic('fa-plus')}</button>
+                </div>
+            </div>
+            ${section('Просрочено', g.overdue)}
+            ${section('Сегодня', g.today)}
+            ${section('Завтра', g.tomorrow)}
+            ${section('На неделе', g.week)}
+            ${section('Позже', g.later)}
+            ${section('Сделано', g.done.slice(0, 12))}
+            ${getPlans().length ? '' : `
+                <div class="gp-empty"><div class="gp-empty-icon">${ic('fa-calendar-days')}</div>
+                <div class="gp-empty-text">Планы появятся сами, когда в сцене<br>о чём-то договорятся — или добавь свой</div></div>`}
+        </div>`);
+
+    screen.querySelector('#gp-back')?.addEventListener('click', () => goto('home'));
+    bindNotesTabs(screen);
+
+    const add = () => {
+        const text = screen.querySelector('#gp-plan-text')?.value.trim();
+        if (!text) return;
+        addPlan({
+            text,
+            date: screen.querySelector('#gp-plan-date')?.value,
+            time: screen.querySelector('#gp-plan-time')?.value,
+            who: screen.querySelector('#gp-plan-who')?.value,
+        });
+        clearDraft('gp-plan-text'); clearDraft('gp-plan-date'); clearDraft('gp-plan-time');
+        updatePhoneInjection();
+        render();
+    };
+    screen.querySelector('#gp-plan-add')?.addEventListener('click', add);
+    screen.querySelector('#gp-plan-text')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); add(); }
+    });
+    screen.querySelectorAll('[data-plantoggle]').forEach(b => b.addEventListener('change', () => {
+        togglePlan(b.getAttribute('data-plantoggle'));
+        updatePhoneInjection();
+        render();
+    }));
+    screen.querySelectorAll('[data-plandel]').forEach(b => b.addEventListener('click', () => {
+        deletePlan(b.getAttribute('data-plandel'));
+        updatePhoneInjection();
+        render();
+    }));
+}
+
 function renderNotes(screen) {
     currentScreen = 'notes';
+    if (_notesTab === 'plans') { renderPlans(screen); return; }
     const notes = getNotes();
     const editing = _noteEditId ? notes.find(n => n.id === _noteEditId) : null;
     setHtmlKeepScroll(screen, '.gp-notes-scroll', `
@@ -5143,6 +5255,7 @@ function renderNotes(screen) {
             <div class="gp-title gp-title-app gp-notes-title">Заметки</div>
             <span style="width:32px"></span>
         </div>
+        ${notesTabsHtml()}
         <div class="gp-notes-scroll">
             <div class="gp-notes-editor">
                 <textarea id="gp-note-text" rows="3" placeholder="Новая заметка..."></textarea>
@@ -5163,6 +5276,7 @@ function renderNotes(screen) {
     const area = screen.querySelector('#gp-note-text');
     if (editing && area) area.value = editing.text;
     screen.querySelector('#gp-back')?.addEventListener('click', () => { _noteEditId = null; goto('home'); });
+    bindNotesTabs(screen);
     screen.querySelector('#gp-note-save')?.addEventListener('click', () => {
         const text = area?.value.trim();
         if (!text) return;
@@ -5391,7 +5505,7 @@ function renderChannels(screen) {
     setHtmlKeepScroll(screen, '.gp-chan-scroll', `
         <div class="gp-header gp-thread-header">
             <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
-            <div class="gp-title gp-title-app">${ic('fa-tower-broadcast')} Каналы</div>
+            <div class="gp-title gp-title-app">${ic('fa-paper-plane')} Каналы</div>
             <button class="gp-iconbtn" id="gp-chan-person" title="Канал знакомого" ${_chanBusy ? 'disabled' : ''}>${ic('fa-user-plus')}</button>
             <button class="gp-iconbtn" id="gp-chan-find" title="Найти каналы" ${_chanBusy ? 'disabled' : ''}>${ic(_chanBusy ? 'fa-spinner fa-spin' : 'fa-magnifying-glass')}</button>
         </div>
@@ -5405,7 +5519,7 @@ function renderChannels(screen) {
             ${subs.length ? `<div class="gp-chan-section">Подписки</div>${subs.map(row).join('')}` : ''}
             ${found.length ? `<div class="gp-chan-section">Можно подписаться</div>${found.map(row).join('')}` : ''}
             ${!subs.length && !found.length && !people.length ? `
-                <div class="gp-empty"><div class="gp-empty-icon">${ic('fa-tower-broadcast')}</div>
+                <div class="gp-empty"><div class="gp-empty-icon">${ic('fa-paper-plane')}</div>
                 <div class="gp-empty-text">Поиск соберёт каналы этого города и мира,<br>а ${ic('fa-user-plus')} заведёт канал знакомого</div></div>` : ''}
         </div>`);
 
@@ -5425,7 +5539,7 @@ function renderChannels(screen) {
             updatePhoneInjection();
             applyChatHiding();
             goto('chan');
-            toast('Канал создан', 'fa-tower-broadcast');
+            toast('Канал создан', 'fa-paper-plane');
         } catch (e) {
             toast(String(e?.message || e).slice(0, 60), 'fa-circle-exclamation');
         }
@@ -5465,7 +5579,7 @@ function renderChannels(screen) {
                 updatePhoneInjection();
                 applyChatHiding();
                 goto('chan');
-                toast(`Канал ${who} добавлен`, 'fa-tower-broadcast');
+                toast(`Канал ${who} добавлен`, 'fa-paper-plane');
             });
         }));
     });
@@ -5473,7 +5587,7 @@ function renderChannels(screen) {
         const arr = await generateChannels(allChannels().map(x => x.name));
         const n = addFoundChannels(arr);
         if (!n) throw new Error('Каналов не нашлось — попробуй ещё раз');
-        toast(`Найдено каналов: ${n}`, 'fa-tower-broadcast');
+        toast(`Найдено каналов: ${n}`, 'fa-paper-plane');
     }));
 }
 
@@ -5523,7 +5637,7 @@ function renderChannel(screen) {
         <div class="gp-chan-scroll">
             ${ch.desc ? `<div class="gp-chan-desc">${esc(ch.desc)}</div>` : ''}
             ${(ch.posts || []).map(p => chanPostHtml(ch, p)).join('') || `
-                <div class="gp-empty"><div class="gp-empty-icon">${ic('fa-tower-broadcast')}</div>
+                <div class="gp-empty"><div class="gp-empty-icon">${ic('fa-paper-plane')}</div>
                 <div class="gp-empty-text">${ch.mine ? 'Напиши первый пост — подписчики<br>отреагируют сами' : 'Нажми ↻ — канал наполнится'}</div></div>`}
         </div>
         ${composer}`);
@@ -5537,7 +5651,7 @@ function renderChannel(screen) {
         const n = addChannelPosts(ch.id, arr);
         if (!n) throw new Error('Канал молчит — попробуй ещё раз');
         markChannelRead(ch.id);
-        toast(`Новых постов: ${n}`, 'fa-tower-broadcast');
+        toast(`Новых постов: ${n}`, 'fa-paper-plane');
     }));
 
     screen.querySelector('#gp-chan-sub')?.addEventListener('click', () => {
@@ -5623,7 +5737,7 @@ function renderChannel(screen) {
                 });
             }
             updatePhoneInjection();
-            toast(`Пост опубликован${delta ? ` · ${delta > 0 ? '+' : ''}${delta} подписчиков` : ''}`, 'fa-tower-broadcast');
+            toast(`Пост опубликован${delta ? ` · ${delta > 0 ? '+' : ''}${delta} подписчиков` : ''}`, 'fa-paper-plane');
         });
     });
 }
@@ -5887,7 +6001,7 @@ const SHOT_APPS = {
     ig: { icon: 'fa-instagram', label: 'инстаграм' },
     st: { icon: 'fa-circle-play', label: 'сторис' },
     of: { icon: 'fa-lock', label: 'OnlyFans' },
-    ch: { icon: 'fa-tower-broadcast', label: 'канал' },
+    ch: { icon: 'fa-paper-plane', label: 'канал' },
 };
 
 // Короткая подпись скрина для видимой строки и для промпта

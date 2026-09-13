@@ -5,6 +5,7 @@ import { updatePhoneInjection } from './prompts.js';
 import { initUI, checkNewIncoming, resetIncomingCounters, updateFabBadge, render, isPhoneOpen, closePhone, applySkin, applyWallpaper, applyChatHiding, toast, notifyBankReminders, notifyDeliveries, deliverScamSms } from './ui.js';
 import { harvestSocialTags, setUserHandle, getUserHandle, listIigProfiles, listIigStyles, listImageBuckets, currentExtModel } from './social.js';
 import { harvestBankTags } from './bank.js';
+import { harvestPlanTags } from './plans.js';
 import { harvestChannelTags } from './channels.js';
 import { maybeScamSms } from './scam.js';
 import { trDom } from './i18n.js';
@@ -452,6 +453,11 @@ jQuery(async () => {
             try {
                 const { n, names } = harvestChannelTags();
                 if (n > 0) toast(`Каналы: ${names.slice(0, 2).join(', ')}${names.length > 2 ? '…' : ''} · ${n} ${n === 1 ? 'новый пост' : 'новых постов'}`, 'fa-tower-broadcast');
+            } catch (e) { /* ignore */ }
+            // Планы и даты, о которых договорились в сцене
+            try {
+                const n = harvestPlanTags();
+                if (n > 0) toast(`В календарь: ${n}`, 'fa-calendar-check');
             } catch (e) { /* ignore */ }
             notifyBankReminders();
             notifyDeliveries();   // курьер выехал / заказ приехал

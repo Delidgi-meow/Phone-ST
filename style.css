@@ -3868,3 +3868,51 @@ img[data-zoom] { cursor: zoom-in; }
 @media (hover: none) {
     .gp-img-regen { opacity: .85; }
 }
+
+
+/* ═══ Планы (вкладка заметок) ═══ */
+.gp-notes-tabs { flex: 0 0 auto; display: flex; gap: 6px; padding: 0 2px 8px; }
+.gp-notes-tab {
+    flex: 1; padding: 7px 10px; border-radius: 12px;
+    border: 1px solid var(--gp-border-soft); background: var(--gp-glass);
+    color: var(--gp-text-dim); font: inherit; font-size: 12px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.gp-notes-tab.gp-active {
+    color: var(--gp-text);
+    border-color: rgba(var(--gp-accent-a-rgb), .5);
+    background: rgba(var(--gp-accent-a-rgb), .14);
+}
+.gp-notes-tab i {
+    font-style: normal; font-size: 10px; font-weight: 700;
+    padding: 1px 6px; border-radius: 999px;
+    background: var(--gp-accent-a); color: #12141a;
+}
+.gp-plan-editor { gap: 7px; }
+.gp-plan-editor input[type="text"] {
+    width: 100%; border-radius: 12px; padding: 9px 12px;
+    background: var(--gp-glass); border: 1px solid var(--gp-border-soft);
+    color: var(--gp-text); font: inherit; font-size: 12.5px;
+}
+.gp-plan-form { display: flex; align-items: center; gap: 6px; }
+.gp-plan-form input { flex: 1 1 auto; min-width: 0; }
+.gp-plan-form input#gp-plan-time { flex: 0 0 64px; }
+.gp-plan-form select {
+    flex: 0 0 auto; border-radius: 12px; padding: 8px 6px;
+    background: var(--gp-glass); border: 1px solid var(--gp-border-soft);
+    color: var(--gp-text); font: inherit; font-size: 12px;
+}
+.gp-plan-form .gp-primary { flex: 0 0 auto; margin: 0; height: 36px; padding: 0 14px; border-radius: 12px; }
+.gp-plan {
+    display: flex; align-items: flex-start; gap: 9px;
+    padding: 9px 10px; border-radius: var(--gp-theme-card-radius, 12px);
+    background: var(--gp-glass); border: 1px solid var(--gp-border-soft);
+}
+.gp-plan.gp-done { opacity: .5; }
+.gp-plan.gp-done .gp-plan-text { text-decoration: line-through; }
+.gp-plan-check input { margin: 2px 0 0; }
+.gp-plan-body { flex: 1 1 auto; min-width: 0; }
+.gp-plan-text { font-size: 12.5px; line-height: 1.4; word-break: break-word; }
+.gp-plan-meta { display: flex; align-items: center; gap: 8px; margin-top: 3px; font-size: 10px; color: var(--gp-text-dim); }
+.gp-plan-who { padding: 1px 7px; border-radius: 999px; background: rgba(var(--gp-accent-a-rgb), .16); color: var(--gp-text); }
+.gp-plan-src { opacity: .6; }

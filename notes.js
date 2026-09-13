@@ -48,10 +48,13 @@ export function getSharedNotes() {
     return getNotes().filter(n => n.shared);
 }
 
-// Блок для инжекта — только если есть расшаренные заметки (иначе 0 токенов)
+// Блок для инжекта — только если есть расшаренные заметки (иначе 0 токенов).
+// Формулировка важна: прошлая («фоновое знание, персонажи НЕ знают») читалась
+// как «не используй», и модель заметки честно игнорировала. Открытую заметку
+// она открывает специально — значит хочет, чтобы та работала в сцене.
 export function notesInjectBlock() {
     const shared = getSharedNotes();
     if (!shared.length) return '';
     const lines = shared.slice(0, 6).map(n => `- ${n.text.slice(0, 300)}`).join('\n');
-    return `[{{user}}'S PHONE NOTES — private thoughts/plans they wrote in their notes app. Background knowledge for YOU as narrator; characters DO NOT know these unless they shows or tells them]\n${lines}`;
+    return `[{{user}}'S NOTES — what they wrote in their phone's notes app and deliberately opened to you. Treat it as TRUE and current: their plans, intentions, reminders, things they keep in mind. USE it — let it steer what {{user}} remembers and does, and let the world test it; it is not decoration. Other characters know only what {{user}} has actually told or shown them.]\n${lines}`;
 }

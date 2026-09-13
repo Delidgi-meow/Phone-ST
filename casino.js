@@ -12,6 +12,7 @@ function getCasino() {
     if (!Number.isFinite(c.won)) c.won = 0;
     if (!Number.isFinite(c.lost)) c.lost = 0;
     if (!Number.isFinite(c.bestWin)) c.bestWin = 0;
+    if (!Number.isFinite(c.wagered)) c.wagered = c.lost || 0;
     return c;
 }
 export function casinoStats() { return getCasino(); }
@@ -25,7 +26,8 @@ function settle(bet, win, label) {
         c.won += win;
         if (win > c.bestWin) c.bestWin = win;
     }
-    c.lost += bet;
+    c.wagered = (c.wagered || 0) + bet;   // всего поставлено (не «проиграно»)
+    c.lost = c.wagered;                    // старое имя оставлено для прежних чатов
     saveMeta();
 }
 
@@ -35,14 +37,17 @@ export function canBet(bet) {
 }
 
 // ── Слоты: 3 барабана, взвешенные символы ──
-// RTP ~90%: дом в плюсе, но джекпоты случаются
+// Отдача 89%: дом в плюсе, но джекпоты случаются. Считается как
+// Σ p(комбинация) × множитель — выплаты подобраны под эту сумму, менять их
+// на глаз нельзя: пара лимонов выпадает в каждом пятом спине, и любая
+// выплата за неё уводила автомат в минус (было 115% — казино дарило деньги).
 const SLOT_SYMBOLS = [
-    { icon: 'fa-lemon', w: 30, three: 4, two: 1 },
+    { icon: 'fa-lemon', w: 30, three: 4, two: 0 },
     { icon: 'fa-heart', w: 25, three: 6, two: 1 },
     { icon: 'fa-star', w: 20, three: 10, two: 2 },
-    { icon: 'fa-bolt', w: 14, three: 20, two: 3 },
-    { icon: 'fa-gem', w: 8, three: 50, two: 5 },
-    { icon: 'fa-crown', w: 3, three: 200, two: 10 },
+    { icon: 'fa-bolt', w: 14, three: 20, two: 2 },
+    { icon: 'fa-gem', w: 8, three: 50, two: 4 },
+    { icon: 'fa-crown', w: 3, three: 200, two: 8 },
 ];
 const SLOT_TOTAL_W = SLOT_SYMBOLS.reduce((s, x) => s + x.w, 0);
 function slotSymbol() {

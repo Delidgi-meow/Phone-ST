@@ -5,6 +5,7 @@ import { getSocialActivitySummary } from './social.js';
 import { getBankSummaryLine, bankInjectRule } from './bank.js';
 import { notesInjectBlock } from './notes.js';
 import { channelInjectLine } from './channels.js';
+import { plansInjectLine, plansInjectRule, getPlans } from './plans.js';
 import { pendingConsequences } from './social-events.js';
 
 const CHAT_KEY = EXT_NAME;
@@ -119,6 +120,13 @@ function buildPrompt() {
             if (chan) c += `[{{user}}'S CHANNELS] ${chan}\n5. A channel they follow publishes → <!--tel:chan:{"channel":"Name","text":"the post","photo":"what the picture shows, or omit"}-->. Never into their own channel.\n`;
         } catch (e) { /* ignore */ }
         try {
+            if (getPlans().length) {
+                c += `6. Договорились о дате/встрече → <!--tel:plan:{"date":"DD.MM.YYYY","time":"19:00","text":"...","who":"user|char|both"}-->\n`;
+                const plans = plansInjectLine();
+                if (plans) c += `\n${plans}\n`;
+            }
+        } catch (e) { /* ignore */ }
+        try {
             const notesBlock = notesInjectBlock();
             if (notesBlock) c += `\n${notesBlock}\n`;
         } catch (e) { /* ignore */ }
@@ -199,6 +207,13 @@ function buildPrompt() {
             p += `[RULE 5 — CHANNEL POST] When a channel above would really publish something about what is happening now (news, a warning, the blogger's own remark), append at the END: <!--tel:chan:{"channel":"exact channel name","text":"the post as that channel writes it","photo":"one line of what the picture shows — or omit the field"}-->\n`;
             p += `A channel not listed above may appear this way too — give it a plain "channel" name and the app adds it. NEVER post into {{user}}'s OWN channel: those are written by them in the app, and such a tag is discarded. Do not spam: at most 1-2 channel posts per reply, and only when the story gives a reason.\n`;
         }
+    } catch (e) { /* ignore */ }
+    // Календарь: правило ставим, только когда планы вообще заведены —
+    // пустой календарь не должен занимать место в директиве
+    try {
+        if (getPlans().length) p += `\n${plansInjectRule()}\n`;
+        const plans = plansInjectLine();
+        if (plans) p += `\n${plans}\n`;
     } catch (e) { /* ignore */ }
     // Заметки — только расшаренные (секретные не инжектятся никогда)
     try {
