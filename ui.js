@@ -27,13 +27,13 @@ import {
     settleSocialPost, maybeGenerateStoryEvent, resolveStoryEvent, generateAdvertisingOffers,
     getStories, activeStories, addStory, deleteStory, bumpStoryViews, toggleStoryLike, generateContactStories, generateStoryReactions,
     generateRepLabel, generateGroupChats,
-    generateChannels, generateChannelPosts, generateChannelComments, generateMyChannelFeedback,
+    generateChannels, generateChannelPosts, generateChannelComments, generateMyChannelFeedback, generatePersonChannel,
 } from './social.js';
 import { getSystemsView, deferEvent, declineEvent, selectStoryEvent, acceptAdOffer, declineAdOffer, attachActiveAd, getReputationStatus } from './social-events.js';
 import { maybeScamSms } from './scam.js';
 import {
     getChannels, allChannels, findChannel, findChanPost, createMyChannel, deleteMyChannel,
-    addFoundChannels, toggleSubscribe, deleteChannel, addChannelPosts, publishToMyChannel,
+    addFoundChannels, addPersonChannel, toggleSubscribe, deleteChannel, addChannelPosts, publishToMyChannel,
     deleteChanPost, toggleComments, toggleReact, addReacts, addComments, addMyComment,
     deleteComment, bumpViews, addSubs, matchPostByText, markChannelRead, unreadChannels,
     CHAN_REACTS,
@@ -5247,8 +5247,10 @@ function chanPostHtml(ch, post) {
 function renderChannels(screen) {
     currentScreen = 'chans';
     const c = getChannels();
-    const subs = c.list.filter(x => x.subscribed);
-    const found = c.list.filter(x => !x.subscribed);
+    // Каналы знакомых живут отдельной секцией: это люди, а не издания
+    const people = c.list.filter(x => x.person);
+    const subs = c.list.filter(x => !x.person && x.subscribed);
+    const found = c.list.filter(x => !x.person && !x.subscribed);
 
     const row = (ch) => {
         const last = ch.posts?.[0];
@@ -5267,6 +5269,7 @@ function renderChannels(screen) {
         <div class="gp-header gp-thread-header">
             <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
             <div class="gp-title gp-title-app">${ic('fa-tower-broadcast')} Каналы</div>
+            <button class="gp-iconbtn" id="gp-chan-person" title="Канал знакомого" ${_chanBusy ? 'disabled' : ''}>${ic('fa-user-plus')}</button>
             <button class="gp-iconbtn" id="gp-chan-find" title="Найти каналы" ${_chanBusy ? 'disabled' : ''}>${ic(_chanBusy ? 'fa-spinner fa-spin' : 'fa-magnifying-glass')}</button>
         </div>
         <div class="gp-chan-scroll">
@@ -5275,11 +5278,12 @@ function renderChannels(screen) {
                 <button class="gp-chan-create" id="gp-chan-create">
                     ${ic('fa-plus')}<span>Завести свой канал</span>
                 </button>`}
+            ${people.length ? `<div class="gp-chan-section">Каналы знакомых</div>${people.map(row).join('')}` : ''}
             ${subs.length ? `<div class="gp-chan-section">Подписки</div>${subs.map(row).join('')}` : ''}
             ${found.length ? `<div class="gp-chan-section">Можно подписаться</div>${found.map(row).join('')}` : ''}
-            ${!subs.length && !found.length ? `
+            ${!subs.length && !found.length && !people.length ? `
                 <div class="gp-empty"><div class="gp-empty-icon">${ic('fa-tower-broadcast')}</div>
-                <div class="gp-empty-text">Нажми поиск — модель соберёт каналы<br>этого города и мира</div></div>` : ''}
+                <div class="gp-empty-text">Поиск соберёт каналы этого города и мира,<br>а ${ic('fa-user-plus')} заведёт канал знакомого</div></div>` : ''}
         </div>`);
 
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('home'));
@@ -5302,6 +5306,45 @@ function renderChannels(screen) {
         } catch (e) {
             toast(String(e?.message || e).slice(0, 60), 'fa-circle-exclamation');
         }
+    });
+    screen.querySelector('#gp-chan-person')?.addEventListener('click', () => {
+        const contacts = getThreadList().filter(t => !t.isGroup);
+        if (!contacts.length) { toast('Сначала заведи контакты', 'fa-circle-exclamation'); return; }
+        const overlay = document.createElement('div');
+        overlay.className = 'gp-member-overlay';
+        overlay.innerHTML = `
+            <div class="gp-member-overlay-panel">
+                <div class="gp-member-overlay-header">
+                    <span>Чей канал добавить?</span>
+                    <button class="gp-iconbtn" id="gp-chan-person-close">${ic('fa-xmark')}</button>
+                </div>
+                <div class="gp-member-overlay-list">
+                    ${contacts.map(t => `
+                        <button class="gp-share-row" data-chanperson="${esc(t.name)}">
+                            ${avatarHtml(t.name, getContactAvatar(t.key), 'gp-avatar gp-avatar-xs')}
+                            <span>${esc(t.name)}</span>
+                            ${ic('fa-chevron-right')}
+                        </button>`).join('')}
+                </div>
+            </div>`;
+        screen.appendChild(overlay);
+        const close = () => overlay.remove();
+        overlay.querySelector('#gp-chan-person-close')?.addEventListener('click', close);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+        overlay.querySelectorAll('[data-chanperson]').forEach(b => b.addEventListener('click', () => {
+            const who = b.getAttribute('data-chanperson');
+            close();
+            chanBusyRun(async () => {
+                const gen = await generatePersonChannel(who);
+                if (!gen || !gen.name) throw new Error(`${who} не ведёт канал — попробуй ещё раз`);
+                const ch = addPersonChannel(who, gen);
+                _chanId = ch.id;
+                updatePhoneInjection();
+                applyChatHiding();
+                goto('chan');
+                toast(`Канал ${who} добавлен`, 'fa-tower-broadcast');
+            });
+        }));
     });
     screen.querySelector('#gp-chan-find')?.addEventListener('click', () => chanBusyRun(async () => {
         const arr = await generateChannels(allChannels().map(x => x.name));

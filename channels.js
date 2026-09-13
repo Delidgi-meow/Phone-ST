@@ -148,6 +148,33 @@ export function addChannelPosts(id, arr) {
     return fresh.length;
 }
 
+// Канал знакомого добавляется по её выбору, поэтому сразу подписан:
+// она бы не стала искать человека, чтобы потом не читать его.
+export function addPersonChannel(person, gen) {
+    const c = getChannels();
+    const who = String(person || '').trim();
+    if (!who) throw new Error('Выбери человека');
+    if (c.list.some(x => x.person && keyOf(x.author) === keyOf(who))) {
+        throw new Error('Канал этого человека уже добавлен');
+    }
+    const ch = {
+        id: genId(),
+        mine: false,
+        person: true,
+        name: String(gen?.name || who).slice(0, 60),
+        desc: String(gen?.desc || '').slice(0, 200),
+        author: who.slice(0, 40),
+        subs: Math.max(8, Math.round(Number(gen?.subs) || 120)),
+        subscribed: true,
+        unread: 0,
+        posts: normalizePosts(gen?.posts),
+    };
+    c.list = [ch, ...c.list].slice(0, 14);
+    saveMeta();
+    logSocialToChat(`${getUserName()} находит канал ${who} — «${ch.name}» — и подписывается`);
+    return ch;
+}
+
 // ── Свой пост ──
 export function publishToMyChannel({ text = '', image = null, imgDesc = '', commentsOn = true }) {
     const ch = myChannel();
@@ -335,6 +362,11 @@ function applyChannelTag(j) {
     const c = getChannels();
     if (c.mine && keyOf(c.mine.name) === keyOf(name)) return null;
     let ch = c.list.find(x => keyOf(x.name) === keyOf(name));
+    // Канал знакомого ролевая зовёт по имени человека, а не по названию канала
+    if (!ch) {
+        const who = keyOf(j.author || name);
+        ch = c.list.find(x => x.person && keyOf(x.author) === who);
+    }
     if (!ch) {
         // Канал, о котором ролевая заговорила впервые, появляется в списке
         // найденных — подписаться на него она решает сама
@@ -394,7 +426,8 @@ export function channelInjectLine() {
     if (c.mine) {
         parts.push(`Runs a channel «${c.mine.name}»${c.mine.desc ? ` (${c.mine.desc})` : ''} — ${c.mine.subs} subscribers`);
     }
-    const subs = c.list.filter(x => x.subscribed).map(x => x.name);
+    const subs = c.list.filter(x => x.subscribed)
+        .map(x => (x.person && x.author ? `«${x.name}» (${x.author}'s own channel)` : `«${x.name}»`));
     if (subs.length) parts.push(`Follows channels: ${subs.slice(0, 6).join(', ')}`);
     return parts.join('. ');
 }

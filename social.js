@@ -1751,6 +1751,18 @@ Format: [{"name":"...","desc":"...","author":"...","subs":8900,"posts":[{"text":
     return await socialGenArray(prompt, { maxTokens: 2400, prefill: '[{"name":"' });
 }
 
+// Личный канал знакомого: не новостная лента, а его собственный блог
+export async function generatePersonChannel(person) {
+    const prompt = `${await taskHeader(`invent the personal channel that ${person} keeps on their phone (Telegram-style).`)}
+${person} is someone ${getUserName()} knows personally. This is NOT a news outlet and NOT a media project — it is their own channel: what THIS person would broadcast about their life, work, obsessions and moods, in their own voice, with their own habits of writing (length, punctuation, humour or the lack of it).
+Give it: "name" — how they themselves called the channel (their wording: a nickname, an in-joke, a flat statement), "desc" — one line under the title, "subs" — how many people read it, a believable NUMBER for a private person (dozens to a few thousand, more only if they are locally famous), "posts" — 3-4 recent entries, tied to the current moment of the roleplay where it makes sense. A post may carry "photo": one sentence of what the picture shows, or "" for a text-only one.
+${uiLangLine()}
+${JSON_RULES}
+Format: [{"name":"...","desc":"...","subs":320,"posts":[{"text":"...","photo":""}]}]`;
+    const arr = await socialGenArray(prompt, { maxTokens: 1400, prefill: '[{"name":"' });
+    return Array.isArray(arr) ? arr[0] : null;
+}
+
 export async function generateChannelPosts(channel, existing = []) {
     const prompt = `${await taskHeader(`write new posts for the channel «${channel.name}» on ${getUserName()}'s phone.`)}
 Channel: «${channel.name}»${channel.desc ? ` — ${channel.desc}` : ''}${channel.author ? `, run by ${channel.author}` : ''}, ${channel.subs} subscribers.
