@@ -3385,6 +3385,11 @@ body.gp-theme-minimal .gp-toast-ava {
 }
 .gp-tin-photo { position: absolute; inset: 0; }
 .gp-tin-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Переген поверх фото. Карту свайпают — hover ненадёжен, поэтому кнопка
+   видна всегда и стоит справа, чтобы не лезть под штамп «Нравится». */
+.gp-tin-regen { left: auto; right: 10px; top: 10px; opacity: .8; z-index: 6; }
+.gp-tin-regen:hover { opacity: 1; }
+.gp-tin-myphoto { position: relative; }
 /* Фото ещё нет: показываем ту самую строку, по которой его и нарисуют */
 .gp-tin-photo-gen {
     position: absolute; inset: 0;
@@ -4191,14 +4196,21 @@ body.gp-theme-minimal .gp-toast-ava {
     position: fixed; inset: 0; z-index: 2147483000;
     display: flex; align-items: center; justify-content: center;
     background: rgba(8, 8, 10, .93);
+    /* Своя жестикуляция: браузер не должен ни скроллить, ни зумить страницу */
     touch-action: none;
+    overscroll-behavior: contain;
+    overflow: hidden;
     animation: gp-zoom-in .16s ease;
 }
 @keyframes gp-zoom-in { from { opacity: 0; } to { opacity: 1; } }
 #gp-zoom img {
+    /* dvh, а не vh: на телефоне vh считает адресную строку, картинка выходит
+       выше экрана и при увеличении «улетает» вверх */
     max-width: 94vw; max-height: 92vh;
+    max-width: 94dvw; max-height: 92dvh;
     object-fit: contain;
     transform-origin: center center;
+    touch-action: none;
     user-select: none; -webkit-user-drag: none;
     cursor: zoom-in;
 }

@@ -5168,7 +5168,15 @@ function drawTinderPhoto(p, mine = false) {
 function tinPhotoHtml(p) {
     const busy = _imgGenBusy.has(`tin:${p.id}`);
     if (p.image) {
-        return `<div class="gp-tin-photo"><img src="${esc(p.image)}" alt="" data-zoom></div>`;
+        // Перерисовать можно откуда угодно, где видно фото: с карты в колоде
+        // и из анкеты. На тачскрине кнопка видна всегда — hover там нет.
+        return `<div class="gp-tin-photo">
+            <img src="${esc(p.image)}" alt="" data-zoom>
+            <button class="gp-img-regen gp-tin-regen" data-tindraw="${esc(p.id)}" title="Перерисовать фото" ${busy ? 'disabled' : ''}>
+                ${ic(busy ? 'fa-spinner fa-spin' : 'fa-rotate-right')}
+            </button>
+            ${busy ? stopGenBtn(`tin:${p.id}`) : ''}
+        </div>`;
     }
     return `<div class="gp-tin-photo-gen">
         ${busy ? ic('fa-spinner fa-spin') : ic('fa-image')}
@@ -5374,7 +5382,7 @@ function renderTinProfile(screen) {
                     <div class="gp-row-name">${esc(p.name)}</div>
                     <div class="gp-thread-number">${p.age} · ${p.dist} км от тебя${p.known ? ' · вы знакомы' : ''}</div>
                 </div>
-                ${p.image ? `<button class="gp-iconbtn" data-tindraw="${esc(p.id)}" title="Перерисовать фото">${ic('fa-rotate-right')}</button>` : ''}
+                <span style="width:32px"></span>
             </div>
             <div class="gp-tin-sheet">
                 <div class="gp-tin-hero">
@@ -5510,7 +5518,8 @@ function renderTinMe(screen) {
             <div class="gp-tin-form">
                 <div class="gp-tin-myphoto" id="gp-tin-mypick">
                     ${_tinMePhoto || me.photo
-                        ? `<img src="${esc(_tinMePhoto || me.photo)}" alt="">`
+                        ? `<img src="${esc(_tinMePhoto || me.photo)}" alt="">
+                           <button class="gp-img-regen gp-tin-regen" id="gp-tin-myregen" title="Перерисовать фото" ${busy ? 'disabled' : ''}>${ic(busy ? 'fa-spinner fa-spin' : 'fa-rotate-right')}</button>`
                         : `${ic(busy ? 'fa-spinner fa-spin' : 'fa-camera')}<span>Загрузить фото</span>`}
                 </div>
                 <input type="file" id="gp-tin-myfile" accept="image/*" style="display:none">
@@ -5548,7 +5557,10 @@ function renderTinMe(screen) {
         goto('tinder');
     });
     const file = screen.querySelector('#gp-tin-myfile');
-    screen.querySelector('#gp-tin-mypick')?.addEventListener('click', () => file?.click());
+    screen.querySelector('#gp-tin-mypick')?.addEventListener('click', (e) => {
+        if (e.target.closest('#gp-tin-myregen')) return;
+        file?.click();
+    });
     file?.addEventListener('change', async () => {
         const f = file.files?.[0];
         if (!f) return;
@@ -5557,7 +5569,7 @@ function renderTinMe(screen) {
             render();
         } catch (e) { toast('Не удалось загрузить фото', 'fa-circle-exclamation'); }
     });
-    screen.querySelector('#gp-tin-mydraw')?.addEventListener('click', async () => {
+    const drawMine = async () => {
         const draft = saveTinderMe(collect());
         if (!draft.look) { toast('Опиши, как выглядишь', 'fa-circle-exclamation'); return; }
         if (!isImageGenAvailable()) { toast('Генерация картинок не настроена', 'fa-circle-exclamation'); return; }
@@ -5572,7 +5584,9 @@ function renderTinMe(screen) {
             _imgGenBusy.delete('tin:me');
             render();
         }
-    });
+    };
+    screen.querySelector('#gp-tin-mydraw')?.addEventListener('click', drawMine);
+    screen.querySelector('#gp-tin-myregen')?.addEventListener('click', (e) => { e.stopPropagation(); drawMine(); });
 }
 
 // ═══ НОВОСТИ ═══
@@ -6586,18 +6600,46 @@ function openZoom(src) {
 
     const img = box.querySelector('img');
     let scale = 1, tx = 0, ty = 0, drag = null, pinch = null;
+
+    // Пока смотрим картинку, страница под ней не едет
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    // Дальше краёв не оттащить: увеличенная картинка не должна улетать с экрана
+    const clamp = () => {
+        const r = img.getBoundingClientRect();
+        const w = r.width / scale, h = r.height / scale;
+        const maxX = Math.max(0, (w * scale - window.innerWidth) / 2);
+        const maxY = Math.max(0, (h * scale - (window.visualViewport?.height || window.innerHeight)) / 2);
+        tx = Math.min(maxX, Math.max(-maxX, tx));
+        ty = Math.min(maxY, Math.max(-maxY, ty));
+    };
     const apply = () => {
+        clamp();
         img.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
         box.classList.toggle('gp-zoomed', scale > 1);
     };
-    const setScale = (next) => {
+    // Увеличиваем В ТОЧКУ, куда смотрят пальцы или курсор, а не в центр:
+    // иначе на вытянутом кадре верх уезжает за экран
+    const zoomAt = (next, cx, cy) => {
+        const prev = scale;
         scale = Math.min(6, Math.max(1, next));
-        if (scale === 1) { tx = 0; ty = 0; }
+        if (scale === prev) return;
+        if (scale === 1) { tx = 0; ty = 0; apply(); return; }
+        if (cx !== undefined) {
+            const r = box.getBoundingClientRect();
+            const px = cx - r.left - r.width / 2;
+            const py = cy - r.top - r.height / 2;
+            tx = px - (px - tx) * (scale / prev);
+            ty = py - (py - ty) * (scale / prev);
+        }
         apply();
     };
+
     const onKey = (e) => { if (e.key === 'Escape') close(); };
     function close() {
         document.removeEventListener('keydown', onKey);
+        document.body.style.overflow = prevOverflow;
         box.remove();
     }
     document.addEventListener('keydown', onKey);
@@ -6606,13 +6648,18 @@ function openZoom(src) {
 
     box.addEventListener('wheel', (e) => {
         e.preventDefault();
-        setScale(scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
+        zoomAt(scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15), e.clientX, e.clientY);
     }, { passive: false });
 
-    img.addEventListener('dblclick', () => setScale(scale > 1 ? 1 : 2.5));
+    img.addEventListener('dblclick', (e) => {
+        if (scale > 1) zoomAt(1);
+        else zoomAt(2.5, e.clientX, e.clientY);
+    });
 
+    // Мышь тащит картинку; палец обрабатываем ниже своими touch-событиями,
+    // иначе одно и то же движение приедет дважды
     img.addEventListener('pointerdown', (e) => {
-        if (scale <= 1) return;
+        if (e.pointerType === 'touch' || scale <= 1) return;
         drag = { x: e.clientX - tx, y: e.clientY - ty };
         try { img.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
     });
@@ -6626,17 +6673,39 @@ function openZoom(src) {
     img.addEventListener('pointerup', dropDrag);
     img.addEventListener('pointercancel', dropDrag);
 
-    // Щипок: на тачскрине pointer-события перекрывают друг друга, проще по touches
+    // Пальцы: щипок с привязкой к середине между ними + перетаскивание одним
     const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const mid = (t) => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
+    let pan = null;
     box.addEventListener('touchstart', (e) => {
-        if (e.touches.length === 2) pinch = { d: dist(e.touches), s: scale };
-    }, { passive: true });
-    box.addEventListener('touchmove', (e) => {
-        if (e.touches.length !== 2 || !pinch) return;
-        e.preventDefault();
-        setScale(pinch.s * (dist(e.touches) / pinch.d));
+        if (e.touches.length === 2) {
+            e.preventDefault();
+            pan = null;
+            pinch = { d: dist(e.touches), s: scale };
+        } else if (e.touches.length === 1 && scale > 1) {
+            pan = { x: e.touches[0].clientX - tx, y: e.touches[0].clientY - ty };
+        }
     }, { passive: false });
-    box.addEventListener('touchend', () => { pinch = null; }, { passive: true });
+    box.addEventListener('touchmove', (e) => {
+        if (e.touches.length === 2 && pinch) {
+            e.preventDefault();
+            const m = mid(e.touches);
+            zoomAt(pinch.s * (dist(e.touches) / pinch.d), m.x, m.y);
+            return;
+        }
+        if (e.touches.length === 1 && pan) {
+            e.preventDefault();
+            tx = e.touches[0].clientX - pan.x;
+            ty = e.touches[0].clientY - pan.y;
+            apply();
+        }
+    }, { passive: false });
+    const endTouch = (e) => {
+        if (e.touches.length < 2) pinch = null;
+        if (e.touches.length === 0) pan = null;
+    };
+    box.addEventListener('touchend', endTouch, { passive: true });
+    box.addEventListener('touchcancel', endTouch, { passive: true });
 }
 
 // Делегат на экран: картинки перерисовываются постоянно, слушатель нужен один
