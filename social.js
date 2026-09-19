@@ -560,7 +560,7 @@ export function postOf({ image = null, imgDesc = '', caption = '', price = 0 }) 
     logSocialToChat(
         `${getUserName()} ${ofIsText(post) ? 'пишет' : 'выкладывает'} пост на своей закрытой странице по подписке (OnlyFans, подписчиков: ${s.ofSubs || 0}) — ${ofPostLine(post)}. `
         + `Страница анонимная и платная: её содержимое видят только подписчики. Персонаж знает про неё ТОЛЬКО если в ролевой прямо сказано, что он подписан или как-то узнал; сам по себе никто об этом не догадывается и в разговоре не упоминает.`,
-        { marker: ofMarker(post.id) },
+        { marker: ofMarker(post.id), priv: true },
     );
     return post;
 }
@@ -900,12 +900,16 @@ async function recoverGeneratedText(error, finish, prefill = '') {
 }
 
 // Компактный срез последних сообщений чата — вместо полного контекста
-export function rpContextBlock(count = 12) {
+export function rpContextBlock(count = 12, { publicOnly = false } = {}) {
     try {
         const ctx = SillyTavern.getContext();
         const chat = ctx?.chat || [];
         const name1 = ctx?.name1 || 'User';
-        const tail = chat.filter(m => m && m.mes && !m.is_system).slice(-count);
+        // publicOnly: посторонние не должны читать её переписку и приложения
+        const tail = chat
+            .filter(m => m && m.mes && !m.is_system)
+            .filter(m => !publicOnly || !/<!--\s*tel:priv\s*-->/i.test(m.mes))
+            .slice(-count);
         if (tail.length === 0) return '';
         const lines = tail.map(m => {
             const who = m.is_user ? name1 : (m.name || 'Character');
@@ -1484,7 +1488,7 @@ async function richContext() {
 }
 
 // Общая шапка задачи. rich: карточка+персона+лорбук+история; lite: только срез чата.
-async function taskHeader(what) {
+async function taskHeader(what, { publicOnly = false } = {}) {
     const st = getSettings();
     const rich = st.socialContextMode !== 'lite';
     let block = `You are a content generator for a phone app inside a text roleplay. Task: ${what}
@@ -1497,12 +1501,20 @@ This is a STANDALONE task — do NOT roleplay, do NOT write for characters outsi
         if (rc.persona) block += `\n=== ${getUserName()} (the user's persona) ===\n${rc.persona}\n`;
         if (rc.wi) block += `\n=== WORLD / LOREBOOK (relevant entries) ===\n${rc.wi}\n`;
     }
-    const rp = rpContextBlock(rich ? 16 : 12);
+    const rp = rpContextBlock(rich ? 16 : 12, { publicOnly });
     if (rp) block += `\n=== RECENT ROLEPLAY EXCERPT (current events) ===\n${rp}\n=== END OF EXCERPT ===\n`;
     const dt = getRpDateTime();
     if (dt) block += `\n=== AUTHORITATIVE RP CLOCK ===\nCurrent in-world date/time: ${String(dt.day).padStart(2, '0')}.${String(dt.month).padStart(2, '0')}.${dt.year}${dt.hours === undefined ? '' : ` ${String(dt.hours).padStart(2, '0')}:${String(dt.minutes || 0).padStart(2, '0')}`}. This overrides the computer/server date. Relative phrases in posts (today/tomorrow/tonight) must be interpreted from this clock.\n`;
     block += `\n=== SETTING: COUNTRY, PLACE, ERA ===\nInfer from WORLD/LOREBOOK, character card, persona and the RP excerpt: the country and city (or the world and region, if the setting is not our Earth), the era, the season and the kind of place the scene is in — a megalopolis, a small town, a village, a station, a fantasy realm. The UI/output language is NOT evidence of country: a story in Russian may be set anywhere.\nEverything you invent must belong to THAT place and time: names, handles and slang; shops, cafés, brands, delivery services, banks and mobile operators; streets, districts, transport and landmarks; prices and currency; weather, daylight and season; holidays, news topics, local habits and what people argue about. No cross-border props — no American chains in a Russian town, no rubles in medieval France, no Instagram in a world without electricity (there use whatever the setting has instead).\nIf the evidence is mixed or absent, stay neutral: generic names and places, no nationality guessed by default. Known characters keep their exact display names.\n`;
     return block;
+}
+
+// Шапка для всего, что пишет «город»: приватные строки журнала в срез не
+// идут, и отдельно сказано, чего посторонние знать не могут.
+async function taskHeaderPub(what) {
+    return `${await taskHeader(what, { publicOnly: true })}\nWHAT THE TOWN CANNOT KNOW — hard limit. These people are outsiders. They only know things that had a WITNESS: something that happened in a public place (a street, a shop, a cafe, a stairwell, a workplace), or at someone's home while an outsider was actually there. Ask yourself for every rumour: who saw this, and where were they standing.
+They do NOT know: the contents of ${getUserName()}'s private messages and who they text; their dating app, subscription page, notes, calendar or bank; and anything that happened at home between ${getUserName()} and the people they live with, with no outsider present. The roleplay excerpt above may show exactly such a private scene — it is INVISIBLE to the town, no matter how much of it you can read here. Never build a post or a comment on it, and never hint that you know it.
+A rumour may exist about what was SEEN in public; never about what was read on a screen or said behind a closed door.\n`;
 }
 
 const CHAN_REACT_LINE = '🔥 ❤️ 😮 😂 💔 👍';
@@ -1820,7 +1832,7 @@ Format: [{"text":"...","photo":""}]`;
 // Лента анонимки: сплетни города + вопросы лично ей. Настоящий автор ("from")
 // в телефоне не показывается — он нужен только для платного вскрытия.
 export async function generateAnonFeed(channelName, existing = [], handle = '') {
-    const prompt = `${await taskHeader(`write new anonymous submissions for «${channelName}» — the town's anonymous gossip channel that ${getUserName()} reads on their phone.`)}
+    const prompt = `${await taskHeaderPub(`write new anonymous submissions for «${channelName}» — the town's anonymous gossip channel that ${getUserName()} reads on their phone.`)}
 People send posts there WITHOUT a name: rumours about local people, things they saw, confessions, questions they would never ask to someone's face. The channel publishes them as-is.
 ${existing.length ? `Already published (do NOT repeat, do not contradict):\n${existing.slice(0, 6).map(x => `- ${x}`).join('\n')}` : ''}
 ${contactsBlock()}
@@ -1846,7 +1858,7 @@ export async function generateAnonComments(channelName, post, { userComment = nu
             ? `${getUserName()} just replied to ${replyTo}: «${userComment}». ${replyTo} answers FIRST, then 1-2 others.`
             : `${getUserName()} just commented under this post: «${userComment}». Somebody answers them.`)
         : '';
-    const prompt = `${await taskHeader(`write the comments under a post in «${channelName}» — the town's anonymous gossip channel.`)}
+    const prompt = `${await taskHeaderPub(`write the comments under a post in «${channelName}» — the town's anonymous gossip channel.`)}
 The post: ${post.text}
 ${post.to ? `It is aimed at ${post.to}.` : ''}
 ${existing ? `Comments so far (do NOT repeat):\n${existing}\n` : ''}${event}
@@ -1865,7 +1877,7 @@ Format: [{"author":"Имя или ник","handle":"","text":"...","reply_to":""
 // деньги и должен получить имя, а не «девушка из ТЦ».
 export async function resolveAnonAuthor(channelName, post) {
     const seed = String(post.realAuthor || '').trim();
-    const prompt = `${await taskHeader(`identify who anonymously sent one post to «${channelName}», the town's gossip channel.`)}
+    const prompt = `${await taskHeaderPub(`identify who anonymously sent one post to «${channelName}», the town's gossip channel.`)}
 The post: ${post.text}
 ${post.to ? `It was aimed at ${post.to}.` : ''}
 ${seed ? `What the channel's admin has on the sender: «${seed}». Turn this into a real person — keep it consistent with that.` : ''}
@@ -3206,7 +3218,7 @@ async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, onStatu
 // Сам снимок в чат НЕ уходит: он уже есть в телефоне, а вторым вложением в
 // истории он бы дублировался. Модели достаётся готовое описание — его составляет
 // vision-запрос, который и так идёт на каждый пост и сторис.
-export async function logSocialToChat(text, { marker = '' } = {}) {
+export async function logSocialToChat(text, { marker = '', priv = false } = {}) {
     if (getSettings().socialLogToChat === false) return;
     try {
         const ctx = SillyTavern.getContext();
@@ -3223,7 +3235,10 @@ export async function logSocialToChat(text, { marker = '' } = {}) {
             send_date: new Date().toLocaleString('en-US'),
             // Метка нужна тем записям, которые юзер может отозвать (открытая
             // заметку снова спрятала) — по ней строка находится и удаляется
-            mes: `<!--tel:log-->${marker ? `<!--tel:mark:${String(marker).slice(0, 40)}-->` : ''}\n[Событие мира — соцсети/телефон] ${String(text).slice(0, 1500)}`,
+            // tel:priv — то, что произошло в телефоне наедине: переписка,
+            // Тиндер, закрытая страница, заметки. Ролевая это видит, а вот
+            // генераторы «что говорит город» такие строки не получают.
+            mes: `<!--tel:log-->${priv ? '<!--tel:priv-->' : ''}${marker ? `<!--tel:mark:${String(marker).slice(0, 40)}-->` : ''}\n[Событие мира — соцсети/телефон] ${String(text).slice(0, 1500)}`,
             extra: {
                 type: 'comment',
                 gen_id: Date.now(),

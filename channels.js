@@ -143,7 +143,7 @@ export function postAnonAsUser(text, to = '') {
     ch.posts = [post, ...ch.posts].slice(0, 40);
     ch.lastPostAt = chatLen();
     saveMeta();
-    logSocialToChat(`${getUserName()} анонимно отправляет пост в «${ANON_NAME}»${post.to ? ` и адресует его ${post.to}` : ''}: «${post.text.slice(0, 400)}». В канале её имени не видно, но админ канала продаёт авторов — при желании это можно пробить.`);
+    logSocialToChat(`${getUserName()} анонимно отправляет пост в «${ANON_NAME}»${post.to ? ` и адресует его ${post.to}` : ''}: «${post.text.slice(0, 400)}». В канале её имени не видно, но админ канала продаёт авторов — при желании это можно пробить.`, { priv: true });
     return post;
 }
 
@@ -197,6 +197,7 @@ export function setAnonAuthor(postId, { name = '', who = '', why = '' } = {}) {
         `${getUserName()} платит ${fmtMoney(post.revealPrice || 0)} админу «${ANON_NAME}», чтобы узнать, кто прислал пост «${post.text.slice(0, 140)}». `
         + `Называют имя: ${post.realAuthor || 'автора так и не нашли'}.${post.realWho ? ` ${post.realWho}` : ''}${post.realWhy ? ` ${post.realWhy}` : ''} `
         + `Знает об этом только ${getUserName()} — сам автор не в курсе, что его вычислили.`,
+        { priv: true },
     );
     return post;
 }

@@ -2171,7 +2171,7 @@ function renderThread(screen) {
         m.react = removing ? null : r.id; // мгновенно, до перескана
         // В журнал — только НОВАЯ реакция на чужое сообщение (снятие — шум)
         if (!removing && m.dir === 'in') {
-            logSocialToChat(`${getUserName()} ставит реакцию «${r.ru}» на сообщение ${m.from || t.name}: «${String(m.text || (m.photoDesc ? 'фото' : m.voice ? 'голосовое' : '')).slice(0, 80)}»`);
+            logSocialToChat(`${getUserName()} ставит реакцию «${r.ru}» на сообщение ${m.from || t.name}: «${String(m.text || (m.photoDesc ? 'фото' : m.voice ? 'голосовое' : '')).slice(0, 80)}»`, { priv: true });
         }
         applyChatHiding();
         render();

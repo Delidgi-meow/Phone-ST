@@ -52,7 +52,7 @@ function noteMarker(id) { return `note:${id}`; }
 function journalNote(n, verb) {
     try {
         logSocialToChat(`${getUserName()} ${verb} заметку в телефоне: «${String(n.text).slice(0, 400)}»`,
-            { marker: noteMarker(n.id) });
+            { marker: noteMarker(n.id), priv: true });
     } catch (e) { /* ignore */ }
 }
 

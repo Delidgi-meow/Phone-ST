@@ -141,8 +141,7 @@ export function swipeTinder(id, dir) {
             `У ${getUserName()} мэтч в Тиндере: ${p.name}, ${p.age}${p.job ? `, ${p.job}` : ''}. `
             + `Они понравились друг другу и теперь могут переписываться. ${p.name} видел${/[аяь]$/i.test(p.name) ? 'а' : ''} только анкету ${getUserName()} в приложении — `
             + `где ${getUserName()} работает, с кем живёт и что было в прошлом, ${p.name} не знает, пока не расскажут. `
-            + `Переписка идёт внутри приложения — телефонами они пока не обменивались.`,
-        );
+            + `Переписка идёт внутри приложения — телефонами они пока не обменивались.`, { priv: true });
     }
     saveMeta();
     return { matched, profile: p };
@@ -188,7 +187,7 @@ export function setMatchIrl(id, v) {
     m.irl = !!v;
     saveMeta();
     if (m.irl) {
-        logSocialToChat(`${getUserName()} и ${m.name} (знакомство из Тиндера) встретились вживую — дальше ${m.name} знает ${getUserName()} как обычного человека, а не по анкете.`);
+        logSocialToChat(`${getUserName()} и ${m.name} (знакомство из Тиндера) встретились вживую — дальше ${m.name} знает ${getUserName()} как обычного человека, а не по анкете.`, { priv: true });
     }
     return m.irl;
 }
@@ -204,7 +203,7 @@ export function giveNumberTo(id) {
         addManualContact(m.name, '');
         if (m.image) setContactAvatar(keyOf(m.name), m.image);
     } catch (e) { /* ignore */ }
-    logSocialToChat(`${getUserName()} даёт ${m.name} свой номер — дальше они пишут уже не в приложении, а в обычной переписке.`);
+    logSocialToChat(`${getUserName()} даёт ${m.name} свой номер — дальше они пишут уже не в приложении, а в обычной переписке.`, { priv: true });
     return true;
 }
 
