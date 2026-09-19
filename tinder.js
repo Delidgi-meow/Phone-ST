@@ -4,7 +4,7 @@
 // «Сообщения», чтобы работали смс, ммс, голосовые и память ролевой.
 
 import { getMeta, saveMeta, keyOf, getSettings, addManualContact } from './state.js';
-import { logSocialToChat, getUserName, getUserHandle } from './social.js';
+import { logSocialToChat, getUserName, getUserHandle, setContactAvatar } from './social.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -129,13 +129,18 @@ export function swipeTinder(id, dir) {
         p.matchedAt = Date.now();
         p.irl = false;
         t.matches = [p, ...t.matches].slice(0, 40);
-        // Контакт заводится сразу: переписка живёт в «Сообщениях», а не
-        // отдельным недочатом внутри приложения
-        try { addManualContact(p.name, ''); } catch (e) { /* ignore */ }
+        // Номерами вы ещё не обменивались: переписка живёт ВНУТРИ Тиндера и
+        // в «Сообщениях» не показывается, пока номер не дадут. Движок при этом
+        // общий — те же теги, та же память ролевой.
+        p.inApp = true;
+        try {
+            if (p.image) setContactAvatar(keyOf(p.name), p.image);
+        } catch (e) { /* ignore */ }
         logSocialToChat(
             `У ${getUserName()} мэтч в Тиндере: ${p.name}, ${p.age}${p.job ? `, ${p.job}` : ''}. `
-            + `Они понравились друг другу и теперь могут переписываться. ${p.name} видел${/[аяь]$/i.test(p.name) ? 'а' : ''} только её анкету в приложении — `
-            + `ни где она работает, ни с кем живёт, ни что было в её жизни, он не знает, пока она не расскажет сама.`,
+            + `Они понравились друг другу и теперь могут переписываться. ${p.name} видел${/[аяь]$/i.test(p.name) ? 'а' : ''} только анкету ${getUserName()} в приложении — `
+            + `где ${getUserName()} работает, с кем живёт и что было в прошлом, ${p.name} не знает, пока не расскажут. `
+            + `Переписка идёт внутри приложения — телефонами они пока не обменивались.`,
         );
     }
     saveMeta();
@@ -157,6 +162,13 @@ export function undoSwipe() {
 // ── Мэтчи ──
 export function getMatches() { return getTinder().matches; }
 
+// Контакт в «Сообщениях» и анкета в Тиндере — один человек. Связь по имени:
+// номера у мэтча нет, ключ контакта строится из имени.
+export function matchByContactKey(key) {
+    if (!tinderEnabled() || !key) return null;
+    return getTinder().matches.find(m => keyOf(m.name) === key) || null;
+}
+
 export function matchBadge() {
     return getTinder().matches.filter(m => !m.opened).length;
 }
@@ -175,9 +187,29 @@ export function setMatchIrl(id, v) {
     m.irl = !!v;
     saveMeta();
     if (m.irl) {
-        logSocialToChat(`${getUserName()} и ${m.name} (знакомство из Тиндера) встретились вживую — дальше он знает её как обычного человека, а не по анкете.`);
+        logSocialToChat(`${getUserName()} и ${m.name} (знакомство из Тиндера) встретились вживую — дальше ${m.name} знает ${getUserName()} как обычного человека, а не по анкете.`);
     }
     return m.irl;
+}
+
+// Дали номер — человек переезжает в «Сообщения» и становится обычным
+// контактом. Обратной дороги нет: номер уже у него.
+export function giveNumberTo(id) {
+    const m = getMatches().find(x => x.id === id);
+    if (!m || !m.inApp) return false;
+    m.inApp = false;
+    saveMeta();
+    try {
+        addManualContact(m.name, '');
+        if (m.image) setContactAvatar(keyOf(m.name), m.image);
+    } catch (e) { /* ignore */ }
+    logSocialToChat(`${getUserName()} даёт ${m.name} свой номер — дальше они пишут уже не в приложении, а в обычной переписке.`);
+    return true;
+}
+
+export function isInAppMatch(key) {
+    const m = matchByContactKey(key);
+    return !!(m && m.inApp);
 }
 
 export function deleteMatch(id) {
@@ -190,6 +222,10 @@ export function setProfileImage(id, src) {
     const p = findProfile(id);
     if (!p) return false;
     p.image = src || null;
+    // Фото могли нарисовать уже после мэтча — контакт должен его подхватить
+    if (src && getTinder().matches.some(m => m.id === id)) {
+        try { setContactAvatar(keyOf(p.name), src); } catch (e) { /* ignore */ }
+    }
     saveMeta();
     return true;
 }
@@ -242,7 +278,7 @@ export function tinderInjectLine(texting = false) {
     const active = texting ? matches.filter(m => !m.irl).slice(0, 2) : [];
     if (active.length) {
         for (const m of active) {
-            out.push(`[MATCH {{user}} IS TEXTING — play them exactly as written, this is a real person with their own voice:\n${fullCard(m)}]`);
+            out.push(`[MATCH {{user}} IS TEXTING${m.inApp ? ' inside the dating app — they have NOT exchanged phone numbers yet, so this is app chat, not SMS' : ' (they have each other\'s numbers now)'} — play them exactly as written, this is a real person with their own voice:\n${fullCard(m)}]`);
         }
         out.push(`[WHAT THEY KNOW ABOUT {{user}}: ONLY the dating profile above and whatever {{user}} has told them in these messages. They have never met. They do NOT know where {{user}} works, who they live with, who their friends are or what happened in their life — even if that appears elsewhere in this context. Do not let them use it. Asking is fine; knowing is not.]`);
     }

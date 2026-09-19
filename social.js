@@ -163,7 +163,7 @@ export function toggleStoryLike(story) {
         story.likeLogged = true;
         try {
             const what = story.caption || story.imgDesc || 'сторис';
-            logSocialToChat(`${getUserName()} лайкнула сторис ${story.author} («${String(what).slice(0, 60)}»)`);
+            logSocialToChat(`${getUserName()} лайкает сторис ${story.author} («${String(what).slice(0, 60)}»)`);
         } catch (e) { /* ignore */ }
     }
     saveMeta();

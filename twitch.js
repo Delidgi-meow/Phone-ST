@@ -102,7 +102,7 @@ export async function tickStream(id, userComment = null, donation = null) {
         s.chat = [...s.chat, entry].slice(-60);
         saveMeta();
         logSocialToChat(donation
-            ? `${userAs()} задонатила стримеру ${s.streamer} ${fmtMoney(donation.amount)} на стриме «${s.title}»${userComment ? ` с сообщением: «${userComment}»` : ''}`
+            ? `${userAs()} донатит стримеру ${s.streamer} ${fmtMoney(donation.amount)} на стриме «${s.title}»${userComment ? ` с сообщением: «${userComment}»` : ''}`
             : `${userAs()} смотрит стрим «${s.title}» (${s.streamer}) и пишет в чат: «${userComment}»`);
     }
     _inflight = true;
@@ -146,7 +146,7 @@ export function startMyStream(title, category) {
         msgCount: 0,
     };
     saveMeta();
-    logSocialToChat(`${getUserName()} запустила свой стрим на канале ${getTwitchNick()}: «${t.myStream.title}» (${t.myStream.category})`);
+    logSocialToChat(`${getUserName()} запускает свой стрим на канале ${getTwitchNick()}: «${t.myStream.title}» (${t.myStream.category})`);
     return t.myStream;
 }
 
@@ -212,7 +212,7 @@ export function endMyStream() {
     const my = t.myStream;
     if (!my) return;
     const mins = Math.max(1, Math.round((Date.now() - (my.startedAt || Date.now())) / 60000));
-    logSocialToChat(`${getUserName()} (канал ${getTwitchNick()}) закончила стрим «${my.title}»: ~${mins} мин в эфире, пик зрителей ${my.peak || my.viewers}${my.donTotal ? `, донатов на ${fmtMoney(my.donTotal)}` : ''}.`);
+    logSocialToChat(`${getUserName()} (канал ${getTwitchNick()}) заканчивает стрим «${my.title}»: ~${mins} мин в эфире, пик зрителей ${my.peak || my.viewers}${my.donTotal ? `, донатов на ${fmtMoney(my.donTotal)}` : ''}.`);
     t.myStream = null;
     saveMeta();
 }

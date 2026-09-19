@@ -50,6 +50,7 @@ import {
     tinderEnabled, getTinder, getTinderMe, saveTinderMe, setTinderMePhoto,
     addTinderProfiles, currentCard, findProfile, swipeTinder, undoSwipe,
     getMatches, matchBadge, markMatchOpened, setMatchIrl, deleteMatch, setProfileImage,
+    matchByContactKey, isInAppMatch, giveNumberTo,
 } from './tinder.js';
 import {
     getPlans, addPlan, togglePlan, deletePlan, groupedPlans, plansBadgeCount,
@@ -1669,7 +1670,9 @@ async function genGroupChats() {
 
 function renderList(screen) {
     currentScreen = 'list';
-    const list = getThreadList();
+    // Мэтчи из Тиндера сюда не попадают, пока не обменялись номерами: их
+    // переписка живёт в самом приложении
+    const list = getThreadList().filter(t => t.isGroup || !isInAppMatch(t.key));
 
     let rows = '';
     for (const t of list) {
@@ -1680,7 +1683,7 @@ function renderList(screen) {
             : '';
         const preview = t.last
             ? `${senderPrefix}${esc(lastText.slice(0, 60))}`
-            : '<span class="gp-prev-empty">Нет сообщений — напиши первой</span>';
+            : '<span class="gp-prev-empty">Нет сообщений — напиши первым</span>';
         const time = t.last && t.last.time ? fmtTime(t.last.time) : '';
         const ava = t.isGroup
             ? `<div class="gp-avatar gp-avatar-group">${ic('fa-users')}</div>`
@@ -1889,9 +1892,14 @@ function renderThread(screen) {
         ? `<div class="gp-avatar gp-avatar-sm gp-avatar-group">${ic('fa-users')}</div>`
         : `<span id="gp-ava-btn" title="Клик — загрузить фото контакта" style="cursor:pointer">${avatarHtml(t.name, getContactAvatar(t.key), 'gp-avatar gp-avatar-sm')}</span>`;
     const blocked = !t.isGroup && isSmsBlocked(t.key);
+    // Человек из Тиндера: показываем это прямо в шапке и даём вернуться к анкете —
+    // иначе всё, что модель про него знает, для юзера невидимо
+    const tinMatch = t.isGroup ? null : matchByContactKey(t.key);
     const subLine = t.isGroup
         ? (t.members?.length ? t.members.join(', ') : 'групповой чат')
-        : `${blocked ? 'заблокирован · ' : ''}${t.number || 'номер неизвестен'} · ${handleFor(`contact:${t.key}`, t.name)}`;
+        : tinMatch
+            ? `${blocked ? 'заблокирован · ' : ''}${tinMatch.inApp ? 'чат в Тиндере' : 'из Тиндера'} · ${tinMatch.age}${tinMatch.job ? ` · ${tinMatch.job}` : ''}`
+            : `${blocked ? 'заблокирован · ' : ''}${t.number || 'номер неизвестен'} · ${handleFor(`contact:${t.key}`, t.name)}`;
 
     screen.innerHTML = `
         <div class="gp-header gp-thread-header">
@@ -1902,6 +1910,8 @@ function renderThread(screen) {
                 <div class="gp-row-name" id="gp-rename" title="Нажми, чтобы переименовать" style="cursor:pointer">${esc(t.name)} <i class="fa-solid fa-pen gp-rename-pen"></i></div>
                 <div class="gp-thread-number">${esc(subLine)}</div>
             </div>
+            ${tinMatch ? `<button class="gp-iconbtn gp-tin-openbtn" id="gp-tin-open" title="Анкета в Тиндере">${ic('fa-fire')}</button>` : ''}
+            ${tinMatch?.inApp ? `<button class="gp-iconbtn" id="gp-tin-number" title="Дать свой номер">${ic('fa-phone')}</button>` : ''}
             ${!t.isGroup ? `<button class="gp-iconbtn" id="gp-nick" title="Ник для соцсетей">${ic('fa-at')}</button>` : ''}
             ${!t.isGroup ? `<button class="gp-iconbtn${blocked ? ' gp-danger' : ''}" id="gp-sms-block" title="${blocked ? 'Разблокировать SMS' : 'Заблокировать SMS'}">${ic(blocked ? 'fa-lock-open' : 'fa-ban')}</button>` : ''}
             ${t.isGroup ? `<button class="gp-iconbtn" id="gp-add-member" title="Добавить участника">${ic('fa-user-plus')}</button>` : ''}
@@ -1955,6 +1965,20 @@ function renderThread(screen) {
         render();
     });
     // Ник контакта для соцсетей (@handle)
+    screen.querySelector('#gp-tin-number')?.addEventListener('click', () => {
+        if (!tinMatch || !confirm(`Дать ${tinMatch.name.split(' ')[0]} свой номер?\nПереписка переедет в «Сообщения».`)) return;
+        giveNumberTo(tinMatch.id);
+        applyChatHiding();
+        updatePhoneInjection();
+        toast('Номер отправлен — теперь вы в «Сообщениях»', 'fa-phone');
+        render();
+    });
+    screen.querySelector('#gp-tin-open')?.addEventListener('click', () => {
+        if (!tinMatch) return;
+        _tinProfileId = tinMatch.id;
+        _tinFromThread = t.key;
+        goto('tinprofile');
+    });
     screen.querySelector('#gp-nick')?.addEventListener('click', () => {
         const cur = handleFor(`contact:${t.key}`, t.name);
         const nick = prompt(`Ник для ${t.name} в соцсетях (без @):`, cur.replace(/^@/, ''));
@@ -2153,7 +2177,7 @@ function renderThread(screen) {
         m.react = removing ? null : r.id; // мгновенно, до перескана
         // В журнал — только НОВАЯ реакция на чужое сообщение (снятие — шум)
         if (!removing && m.dir === 'in') {
-            logSocialToChat(`${getUserName()} поставила реакцию «${r.ru}» на сообщение ${m.from || t.name}: «${String(m.text || (m.photoDesc ? 'фото' : m.voice ? 'голосовое' : '')).slice(0, 80)}»`);
+            logSocialToChat(`${getUserName()} ставит реакцию «${r.ru}» на сообщение ${m.from || t.name}: «${String(m.text || (m.photoDesc ? 'фото' : m.voice ? 'голосовое' : '')).slice(0, 80)}»`);
         }
         applyChatHiding();
         render();
@@ -3237,7 +3261,7 @@ function renderIgNewStory(screen) {
         // Журнал: в чат уходит описание, а не сам снимок. Если фото выбрано,
         // а описания нет — ждём его от vision-запроса с реакциями ниже
         const logStory = (d) => logSocialToChat(
-            `${getUserName()} выложила сторис в Instagram${d ? ` (на фото: ${d})` : ''}${caption ? `, текст: «${caption}»` : ''} — исчезнет через 24 часа`,
+            `${getUserName()} выкладывает сторис в Instagram${d ? ` (на фото: ${d})` : ''}${caption ? `, текст: «${caption}»` : ''} — исчезнет через 24 часа`,
         );
         const waitDesc = !!story.image && !desc;
         if (!waitDesc) logStory(desc);
@@ -4732,7 +4756,7 @@ function renderDChannel(screen) {
                 <button class="gp-iconbtn" id="gp-dc-refresh" ${_dBusy ? 'disabled' : ''}>${ic(_dBusy ? 'fa-spinner fa-spin' : 'fa-rotate-right')}</button>
             </div>
             <div class="gp-dcmsg-scroll" id="gp-dmsg-scroll">
-                ${msgs || `<div class="gp-dc-welcome"><span class="gp-dc-hash-big">#</span><b>Добро пожаловать в #${esc(c.name)}!</b><span>${esc(c.topic || 'Начало канала.')}</span><span class="gp-dc-welcome-hint">Нажми ↻ — канал оживёт, или напиши первой</span></div>`}
+                ${msgs || `<div class="gp-dc-welcome"><span class="gp-dc-hash-big">#</span><b>Добро пожаловать в #${esc(c.name)}!</b><span>${esc(c.topic || 'Начало канала.')}</span><span class="gp-dc-welcome-hint">Нажми ↻ — канал оживёт, или напиши первым</span></div>`}
                 ${_dBusy ? `<div class="gp-dcmsg gp-dmsg-typing"><span></span><span></span><span></span></div>` : ''}
             </div>
             ${_dReplyTo ? `<div class="gp-dc-replychip">${ic('fa-reply')} Отвечаешь <b style="color:${senderColor(_dReplyTo.author)}">${esc(_dReplyTo.author)}</b>: ${esc(_dReplyTo.text.slice(0, 60))}<button id="gp-d-reply-clear">${ic('fa-xmark')}</button></div>` : ''}
@@ -5111,6 +5135,7 @@ let _tinBusy = false;
 let _tinProfileId = null;
 let _tinMatch = null;          // кого показать в оверлее мэтча
 let _tinMePhoto = null;        // черновик своего фото
+let _tinFromThread = null;     // из какой переписки открыли анкету
 
 async function tinBusyRun(fn) {
     if (_tinBusy) return;
@@ -5371,11 +5396,16 @@ function renderTinProfile(screen) {
                     <input type="checkbox" id="gp-tin-irl" ${match.irl ? 'checked' : ''}>
                     <span>Уже знакомы вживую</span>
                 </label>
-                <button class="gp-primary" id="gp-tin-write">${ic('fa-comment-dots')} Написать в «Сообщениях»</button>
+                <button class="gp-primary" id="gp-tin-write">${ic('fa-comment-dots')} ${match.inApp ? 'Открыть переписку' : 'Написать в «Сообщениях»'}</button>
             </div>` : ''}
         </div>`;
 
-    screen.querySelector('#gp-back')?.addEventListener('click', () => goto(inDeck ? 'tinder' : 'tinmatches'));
+    // Пришли из переписки — туда и возвращаемся
+    const fromThread = _tinFromThread;
+    screen.querySelector('#gp-back')?.addEventListener('click', () => {
+        if (fromThread) { _tinFromThread = null; currentThreadKey = fromThread; goto('thread'); return; }
+        goto(inDeck ? 'tinder' : 'tinmatches');
+    });
     bindTinDraw(screen);
     screen.querySelector('#gp-tin-no')?.addEventListener('click', () => doSwipe(p.id, 'pass'));
     screen.querySelector('#gp-tin-yes')?.addEventListener('click', () => doSwipe(p.id, 'like'));
@@ -5383,7 +5413,7 @@ function renderTinProfile(screen) {
         setMatchIrl(p.id, this.checked);
         applyChatHiding();
         updatePhoneInjection();
-        toast(this.checked ? 'Теперь он знает тебя как обычного человека' : 'Снова знает только по анкете', 'fa-fire');
+        toast(this.checked ? 'Теперь знает тебя как обычного человека' : 'Снова знает только по анкете', 'fa-fire');
     });
     screen.querySelector('#gp-tin-write')?.addEventListener('click', () => openTinderThread(p));
 }
@@ -5406,9 +5436,9 @@ function tinMatchHtml(p) {
             ${avatarHtml(myName, me?.photo || avatarForAuthor('user'), 'gp-tin-match-ava')}
             ${avatarHtml(p.name, p.image, 'gp-tin-match-ava')}
         </div>
-        <div class="gp-tin-match-sub">Вы с ${esc(p.name.split(' ')[0])} понравились друг другу. Он появится в «Сообщениях» — как контакт из Тиндера.</div>
+        <div class="gp-tin-match-sub">Вы понравились друг другу. Переписка — здесь, в Тиндере: номерами вы пока не обменивались.</div>
         <div class="gp-tin-match-btns">
-            <button class="gp-tin-match-go" id="gp-tin-matchgo">${ic('fa-paper-plane')} Написать первой</button>
+            <button class="gp-tin-match-go" id="gp-tin-matchgo">${ic('fa-paper-plane')} Начать разговор</button>
             <button class="gp-tin-match-skip" id="gp-tin-matchskip">Свайпать дальше</button>
         </div>
     </div>`;
@@ -5492,7 +5522,7 @@ function renderTinMe(screen) {
                 <label class="gp-field"><span>О себе</span><input type="text" id="gp-tin-bio" maxlength="300" value="${esc(me.bio || '')}" placeholder="строчка, которую увидят первой"></label>
                 <label class="gp-field"><span>Кого ищу</span><input type="text" id="gp-tin-looking" maxlength="120" value="${esc(me.looking || '')}" placeholder="кого и зачем"></label>
                 <label class="gp-field"><span>Что мне нравится в постели</span><input type="text" id="gp-tin-bed" maxlength="300" value="${esc(me.bed || '')}" placeholder="видят только те, с кем мэтч"></label>
-                <label class="gp-field"><span>Как я выгляжу <i>(для рисования фото)</i></span><input type="text" id="gp-tin-look" maxlength="600" value="${esc(me.look || '')}" placeholder="рост, сложение, волосы, во что одета"></label>
+                <label class="gp-field"><span>Как я выгляжу <i>(для рисования фото)</i></span><input type="text" id="gp-tin-look" maxlength="600" value="${esc(me.look || '')}" placeholder="рост, сложение, волосы, как одеваешься"></label>
                 <button class="gp-secondary" id="gp-tin-mydraw" ${busy ? 'disabled' : ''}>${ic(busy ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles')} Нарисовать фото</button>
                 <div class="gp-add-hint">Это единственное, что о тебе знают до знакомства. В ролевой анкета настоящая: персонаж может на неё наткнуться.</div>
             </div>
@@ -5843,11 +5873,11 @@ function subsLine(ch) {
 
 // Пост канала — входящий пузырь: медиа сверху, реакции и просмотры в подвале,
 // обсуждение отрезано волоском и работает отдельной кнопкой.
-// Чип над анонимкой: «тебе» — обращаются к ней по @нику, «это писала ты» —
-// её собственный пост (видит только она, в канале имени нет)
+// Чип над анонимкой: «тебе» — обращаются по @нику, «твой пост» — своя же
+// анонимка (видно только владельцу телефона, в канале имени нет)
 function anonTagHtml(post) {
     if (!post?.anon) return '';
-    if (post.byUser) return `<span class="gp-chan-tag gp-chan-tag-mine">это писала ты</span><br>`;
+    if (post.byUser) return `<span class="gp-chan-tag gp-chan-tag-mine">твой пост</span><br>`;
     if (anonPostToUser(post)) return `<span class="gp-chan-tag">тебе</span><br>`;
     return '';
 }
@@ -6494,7 +6524,7 @@ function renderChanPost(screen) {
         ${anonHeadHtml(post)}
         <div class="gp-msgs">
             ${comments || `<div class="gp-empty"><div class="gp-empty-icon">${ic('fa-comment')}</div>
-                <div class="gp-empty-text">Пока тихо. Напиши первой<br>или нажми ↻</div></div>`}
+                <div class="gp-empty-text">Пока тихо. Напиши первым<br>или нажми ↻</div></div>`}
         </div>
         <div class="gp-chan-composer">
             ${_chanReplyTo ? `<div class="gp-chan-replychip">${ic('fa-reply')}<span>Ответ ${esc(_chanReplyTo)}</span><button id="gp-chan-replyoff">${ic('fa-xmark')}</button></div>` : ''}

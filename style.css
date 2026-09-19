@@ -3347,6 +3347,8 @@ body.gp-theme-minimal .gp-toast-ava {
 }
 .gp-tin-head { flex: 0 0 auto; }
 .gp-tin-matchbtn { position: relative; }
+/* Огонёк в шапке переписки: человек пришёл из Тиндера */
+.gp-tin-openbtn { color: #fd5068; }
 .gp-tin-flame {
     background: linear-gradient(135deg, var(--tin-b), var(--tin-a));
     -webkit-background-clip: text; background-clip: text; color: transparent;
