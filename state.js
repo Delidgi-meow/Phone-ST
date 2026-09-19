@@ -5,7 +5,7 @@ import { extension_settings, saveMetadataDebounced } from '../../../extensions.j
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.32.1';
+export const GP_VERSION = '2.33.0';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -570,6 +570,13 @@ const OUT_RE = /<!--\s*tel:out:(\{[\s\S]*?\})\s*-->/i;
 const SILENT_RE = /<!--\s*tel:silent\s*-->/i;
 // Журнальная запись соцсетей (скрыта из ленты, но в контексте модели)
 const LOG_RE = /<!--\s*tel:log\s*-->/i;
+// Запись журнала пишет телефон: имя GlassPhone либо сообщение НАЧИНАЕТСЯ
+// с метки и ничего кроме журнальной строки в нём нет.
+export function isAppJournal(msg) {
+    if (!msg || !msg.mes) return false;
+    if (msg.name === 'GlassPhone' || msg.extra?.model === 'GlassPhone') return true;
+    return /^\s*<!--\s*tel:log\s*-->/i.test(String(msg.mes));
+}
 // Любой наш тег (для детекта смс-only сообщений)
 const ANY_TEL_RE = /<!--\s*tel:(sms|contact|out|silent|log)/i;
 // Видимый формат исходящей смс (парсим как fallback, если JSON битый)
@@ -1280,7 +1287,11 @@ function hiddenMessageIndexesUncached() {
         if (!msg || !msg.mes) continue;
         // Журнал соцсетей всегда скрыт из визуальной ленты независимо от роли
         // записи (legacy был is_user, актуальный формат — нейтральный comment).
-        if (LOG_RE.test(msg.mes)) { out.push(i); continue; }
+        // ВАЖНО: журналом считается только запись, которую написало само
+        // приложение. Модель подсматривает формат в истории и вставляет
+        // такую строку в середину своего поста — раньше из-за этого прятался
+        // весь ответ целиком.
+        if (LOG_RE.test(msg.mes) && isAppJournal(msg)) { out.push(i); continue; }
         // Системные сообщения пропускаем, но наши SMS-ответы прячем
         if (msg.is_system && !ANY_TEL_RE.test(msg.mes) && !SILENT_RE.test(msg.mes)) continue;
         if (msg.is_user) {

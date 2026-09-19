@@ -1,7 +1,7 @@
 import { generateRaw, user_avatar, getThumbnailUrl, saveSettingsDebounced } from '../../../../script.js';
 import { saveBase64AsFile } from '../../../utils.js';
 import { extensionNames, extension_settings } from '../../../extensions.js';
-import { getMeta, saveMeta, keyOf, scanChat, getSettings, stripThink, textMentionsName, stripHandle, isBanned, displayName, getRpDateTime, extractTemporalContext, isUserName } from './state.js';
+import { getMeta, saveMeta, keyOf, scanChat, getSettings, stripThink, textMentionsName, stripHandle, isBanned, displayName, getRpDateTime, extractTemporalContext, isUserName, isAppJournal } from './state.js';
 import { lang } from './i18n.js';
 import { getBank, addTransaction } from './bank.js';
 import { logReq, logOk, logFail } from './debug-log.js';
@@ -3307,6 +3307,24 @@ export async function removeJournalEntry(marker) {
         console.warn('[GlassPhone] removeJournalEntry failed:', e);
         return 0;
     }
+}
+
+// Модель иногда копирует формат журнальной строки в свой прозаический
+// ответ — тогда телефон прятал весь пост, а в журнале появлялась подделка.
+// Вырезаем такие вставки из сообщений, которые писал НЕ телефон.
+const FAKE_LOG_RE = /<!--\s*tel:log\s*-->[^\n]*(?:\n\[Событие мира[^\n]*)?/gi;
+
+export function stripFakeJournal() {
+    let chat = [];
+    try { chat = SillyTavern.getContext()?.chat || []; } catch (e) { return 0; }
+    let fixed = 0;
+    for (const msg of chat) {
+        if (!msg?.mes || isAppJournal(msg)) continue;
+        if (!/<!--\s*tel:log\s*-->/i.test(msg.mes)) continue;
+        const next = msg.mes.replace(FAKE_LOG_RE, '').replace(/\n{3,}/g, '\n\n').trim();
+        if (next !== msg.mes) { msg.mes = next; fixed++; }
+    }
+    return fixed;
 }
 
 // Читаемая копия скрытого журнала, который реально лежит в истории чата и

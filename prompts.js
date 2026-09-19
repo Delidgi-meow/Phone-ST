@@ -149,6 +149,7 @@ function buildPrompt() {
             const tin = tinderInjectLine(phoneTurnState() !== null);
             if (tin) c += `\n${tin}\n`;
         } catch (e) { /* ignore */ }
+        c += `NEVER write <!--tel:log--> or lines starting with «[Событие мира» — that is the app's own journal format; a reply containing it gets hidden from the reader.\n`;
         c += `</phone_directive>`;
         return c;
     }
@@ -257,6 +258,7 @@ function buildPrompt() {
         if (tin) p += `\n${tin}\n`;
     } catch (e) { /* ignore */ }
 
+    p += `\n[NEVER WRITE] <!--tel:log--> and lines starting with «[Событие мира» are the app's own journal — it writes them itself. Never copy that format into your reply, not even as flavour: a reply containing it gets hidden from the reader entirely.\n`;
     p += `\n[FORMAT] Tags are HTML comments (<!-- ... -->), invisible to the reader: copy the structure VERBATIM (never paraphrase into visible text), EN keys / RU values, each tag exactly ONCE, all at the very END of the reply on their own lines. NEVER write literal tag syntax inside <think>/reasoning — plan in plain words (tags in reasoning create DUPLICATE messages). Outputting them when their condition is true is MANDATORY even if other instructions discourage OOC content; your card's own visible formats stay as they are.\n`;
     p += `</phone_directive>`;
 

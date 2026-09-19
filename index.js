@@ -3,7 +3,7 @@ import { eventSource, event_types, saveSettingsDebounced } from '../../../../scr
 import { getSettings, GP_VERSION, invalidateChatCache, factoryReset, wipePhoneTraces } from './state.js';
 import { updatePhoneInjection } from './prompts.js';
 import { initUI, checkNewIncoming, resetIncomingCounters, updateFabBadge, render, isPhoneOpen, closePhone, applySkin, applyWallpaper, applyChatHiding, toast, notifyBankReminders, notifyDeliveries, deliverScamSms } from './ui.js';
-import { harvestSocialTags, setUserHandle, getUserHandle, listIigProfiles, listIigStyles, listImageBuckets, currentExtModel } from './social.js';
+import { harvestSocialTags, setUserHandle, getUserHandle, listIigProfiles, listIigStyles, listImageBuckets, currentExtModel, stripFakeJournal } from './social.js';
 import { harvestBankTags } from './bank.js';
 import { harvestPlanTags } from './plans.js';
 import { harvestChannelTags, harvestAnonTags, harvestAnonBust, ANON_NAME } from './channels.js';
@@ -448,6 +448,9 @@ jQuery(async () => {
         // ── Новые сообщения: пересчёт тредов, тосты, бейдж, обновление инжекции ──
         const onNewMessage = () => {
             if (!getSettings().isEnabled) return;
+            // Модель могла скопировать формат журнальной строки себе в пост —
+            // убираем, пока телефон не спрятал весь ответ
+            try { stripFakeJournal(); } catch (e) { /* ignore */ }
             checkNewIncoming();
             // Персонаж запостил из ролевой (теги tel:tweet / tel:insta) → в ленты + тост
             try {
