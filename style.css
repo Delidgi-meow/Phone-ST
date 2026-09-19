@@ -3335,6 +3335,184 @@ body.gp-theme-minimal .gp-toast-ava {
     word-break: break-word;
 }
 
+/* ═══ Тиндер ═══ */
+/* Огонь горит только на лайке, мэтче и значке — остальное держит спокойный
+   фон телефона, иначе градиент сжирает весь экран. */
+.gp-app-tinder { background: linear-gradient(140deg, #ff7854, #fd5068); }
+.gp-tin-skin {
+    --tin-a: #fd5068;
+    --tin-b: #ff7854;
+    flex: 1; min-height: 0;
+    display: flex; flex-direction: column;
+}
+.gp-tin-head { flex: 0 0 auto; }
+.gp-tin-matchbtn { position: relative; }
+.gp-tin-flame {
+    background: linear-gradient(135deg, var(--tin-b), var(--tin-a));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+/* Колода: под верхней картой виден край следующей */
+.gp-tin-deck { position: relative; flex: 1 1 auto; min-height: 0; margin: 4px 14px 0; }
+.gp-tin-card {
+    position: absolute; inset: 0;
+    border-radius: 18px; overflow: hidden;
+    background: #241f20;
+    border: 1px solid var(--gp-border-soft);
+    cursor: pointer;
+}
+.gp-tin-card-under { transform: scale(.94) translateY(12px); opacity: .5; }
+.gp-tin-empty {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; padding: 26px; text-align: center;
+}
+.gp-tin-photo { position: absolute; inset: 0; }
+.gp-tin-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* Фото ещё нет: показываем ту самую строку, по которой его и нарисуют */
+.gp-tin-photo-gen {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; padding: 24px;
+    text-align: center; overflow: hidden;
+    background: radial-gradient(80% 60% at 40% 30%, #3b3134, #1d1819 75%);
+}
+.gp-tin-photo-gen > i { font-size: 24px; color: rgba(255,255,255,.35); }
+.gp-tin-photo-gen span { font-size: 11px; line-height: 1.5; color: rgba(236,234,229,.55); }
+.gp-tin-draw {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 30px; padding: 0 13px;
+    border: 0; border-radius: 999px;
+    background: linear-gradient(135deg, var(--tin-b), var(--tin-a));
+    color: #fff; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer;
+}
+.gp-tin-draw:disabled { opacity: .6; cursor: default; }
+.gp-tin-scrim {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    padding: 46px 16px 15px;
+    background: linear-gradient(to top, rgba(12,10,10,.92) 30%, transparent);
+    pointer-events: none;
+}
+.gp-tin-name { display: flex; align-items: baseline; gap: 8px; color: #fff; }
+.gp-tin-name b { font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+.gp-tin-name span { font-size: 21px; font-weight: 300; opacity: .9; }
+.gp-tin-job { margin-top: 5px; display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: rgba(255,255,255,.72); }
+.gp-tin-bio { margin-top: 7px; font-size: 12px; line-height: 1.45; color: rgba(255,255,255,.62); }
+
+.gp-tin-acts {
+    flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: center; gap: 16px;
+    padding: 14px 0 16px;
+}
+.gp-tin-act {
+    width: 52px; height: 52px;
+    display: grid; place-items: center;
+    border-radius: 50%;
+    border: 1px solid var(--gp-border);
+    background: var(--gp-glass);
+    color: var(--gp-text-dim);
+    font-size: 19px; cursor: pointer;
+}
+.gp-tin-act:disabled { opacity: .35; cursor: default; }
+.gp-tin-act-sm { width: 42px; height: 42px; font-size: 15px; }
+.gp-tin-act-no:hover:not(:disabled) { color: #ff5f6d; border-color: rgba(255,95,109,.5); }
+.gp-tin-act-yes {
+    border: 0;
+    background: linear-gradient(135deg, var(--tin-b), var(--tin-a));
+    color: #fff;
+    box-shadow: 0 6px 18px rgba(253,80,104,.35);
+}
+
+/* Досье */
+.gp-tin-sheet { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.gp-tin-hero { position: relative; aspect-ratio: 4 / 3; background: #241f20; flex: 0 0 auto; }
+.gp-tin-facts { display: flex; flex-direction: column; padding: 4px 16px 18px; }
+.gp-tin-fact { padding: 12px 0; border-bottom: 1px solid var(--gp-border-soft); }
+.gp-tin-fact:last-child { border-bottom: 0; }
+.gp-tin-fact b {
+    display: block; margin-bottom: 5px;
+    font-size: 8.5px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase;
+    color: var(--gp-text-dim);
+}
+.gp-tin-fact p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--gp-text); }
+.gp-tin-fact-hot b { color: var(--tin-a); }
+.gp-tin-composer { flex: 0 0 auto; display: flex; flex-direction: column; gap: 9px; padding: 11px 14px 14px; }
+.gp-tin-irl { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--gp-text-dim); cursor: pointer; }
+.gp-tin-irl input { width: 15px; height: 15px; margin: 0; accent-color: var(--tin-a); }
+
+/* Мэтч */
+.gp-tin-match {
+    position: absolute; inset: 0; z-index: 60;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px; padding: 30px; text-align: center;
+    background: radial-gradient(70% 45% at 50% 38%, rgba(253,80,104,.22), rgba(12,10,10,.95) 72%), rgba(12,10,10,.93);
+    animation: gp-fade-in .2s ease;
+}
+.gp-tin-match-title { font-size: 30px; font-weight: 800; letter-spacing: -.02em; }
+.gp-tin-match-sub { font-size: 12.5px; line-height: 1.5; color: var(--gp-text-dim); max-width: 240px; }
+.gp-tin-match-pair { display: flex; align-items: center; }
+.gp-tin-match-ava {
+    width: 86px; height: 86px; flex: 0 0 auto;
+    border-radius: 50%;
+    border: 2px solid rgba(255,255,255,.2);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 30px; font-weight: 700; color: #fff;
+    overflow: hidden;
+}
+.gp-tin-match-ava img { width: 100%; height: 100%; object-fit: cover; }
+.gp-tin-match-pair > *:last-child { margin-left: -16px; }
+.gp-tin-match-btns { display: flex; flex-direction: column; gap: 9px; width: 100%; max-width: 250px; }
+.gp-tin-match-go {
+    height: 42px; border: 0; border-radius: 999px;
+    background: linear-gradient(135deg, var(--tin-b), var(--tin-a));
+    color: #fff; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.gp-tin-match-skip {
+    height: 38px; border: 1px solid var(--gp-border); border-radius: 999px;
+    background: none; color: var(--gp-text-dim); font: inherit; font-size: 12px; cursor: pointer;
+}
+
+/* Список мэтчей */
+.gp-tin-matchrow { display: flex; align-items: center; gap: 11px; padding: 10px 14px; cursor: pointer; }
+.gp-tin-matchrow:hover { background: var(--gp-glass); }
+.gp-tin-matchava {
+    width: 46px; height: 46px; flex: 0 0 auto;
+    border-radius: 50%; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 17px; font-weight: 700; color: #fff;
+}
+.gp-tin-matchava img { width: 100%; height: 100%; object-fit: cover; }
+.gp-tin-matchbody { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.gp-tin-matchbody b { font-size: 13.5px; color: var(--gp-text); font-weight: 600; }
+.gp-tin-matchbody span { font-size: 10.5px; color: var(--gp-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gp-tin-new {
+    flex: 0 0 auto; height: 17px; padding: 0 7px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, var(--tin-b), var(--tin-a));
+    color: #fff; font-size: 8.5px; font-weight: 800; letter-spacing: .06em;
+    display: grid; place-items: center;
+}
+.gp-tin-sect {
+    padding: 14px 14px 5px;
+    font-size: 8.5px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase;
+    color: var(--gp-text-dim);
+}
+
+/* Своя анкета */
+.gp-tin-form { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 14px 14px 18px; }
+.gp-tin-myphoto {
+    aspect-ratio: 3 / 4; max-height: 200px; flex: 0 0 auto;
+    border-radius: 16px; overflow: hidden;
+    border: 1px dashed var(--gp-border);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+    color: var(--gp-text-dim); font-size: 11.5px; cursor: pointer;
+}
+.gp-tin-myphoto img { width: 100%; height: 100%; object-fit: cover; }
+.gp-tin-myphoto > i { font-size: 20px; }
+.gp-tin-row { display: flex; gap: 9px; }
+.gp-tin-row > * { flex: 1; min-width: 0; }
+.gp-tin-age { max-width: 92px; }
+
 /* ═══ Подслушано: городская анонимка ═══ */
 /* Чип над постом: «тебе» — обращаются к ней, «это писала ты» — её собственный.
    Ни полосок, ни рамок: пост остаётся таким же, как соседние. */

@@ -5,7 +5,7 @@ import { extension_settings, saveMetadataDebounced } from '../../../extensions.j
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.24.0';
+export const GP_VERSION = '2.25.0';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -105,6 +105,8 @@ const defaultSettings = () => ({
     compactRules: false,
     // Городская анонимка «Подслушано» в каналах
     anonChannel: true,
+    // Тиндер: анкеты, колода и мэтчи
+    tinder: true,
     // Сколько админ канала берёт за первое имя. Дальше цена растёт кратно.
     anonRevealPrice: 2500,
     // Соц-системы: подписчики, охваты, репутация, сюжетные ивенты, реклама.

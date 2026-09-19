@@ -27,7 +27,7 @@ import {
     settleSocialPost, maybeGenerateStoryEvent, resolveStoryEvent, generateAdvertisingOffers,
     getStories, activeStories, addStory, deleteStory, bumpStoryViews, toggleStoryLike, generateContactStories, generateStoryReactions,
     generateRepLabel, generateGroupChats,
-    generateChannels, generateChannelPosts, generateChannelComments, generateMyChannelFeedback, generatePersonChannel, generateAnonFeed,
+    generateChannels, generateChannelPosts, generateChannelComments, generateMyChannelFeedback, generatePersonChannel, generateAnonFeed, generateTinderDeck,
 } from './social.js';
 import { getSystemsView, deferEvent, declineEvent, selectStoryEvent, acceptAdOffer, declineAdOffer, attachActiveAd, getReputationStatus } from './social-events.js';
 import { maybeScamSms } from './scam.js';
@@ -46,6 +46,11 @@ import { getNews, refreshNews, shareNews, deleteNews } from './news.js';
 import { getDiscord, findDServer, findDChannel, refreshDiscordServers, createOwnDServer, refreshDChannel, postToDChannel, deleteDServer, addDMember, delDMember } from './discord.js';
 import { getTwitch, findStream, refreshStreams, tickStream, donateToStream, startMyStream, tickMyStream, endMyStream, getTwitchNick, setTwitchNick } from './twitch.js';
 import { getNotes, addNote, updateNote, deleteNote, toggleNoteShared } from './notes.js';
+import {
+    tinderEnabled, getTinder, getTinderMe, saveTinderMe, setTinderMePhoto,
+    addTinderProfiles, currentCard, findProfile, swipeTinder, undoSwipe,
+    getMatches, matchBadge, markMatchOpened, setMatchIrl, deleteMatch, setProfileImage,
+} from './tinder.js';
 import {
     getPlans, addPlan, togglePlan, deletePlan, groupedPlans, plansBadgeCount,
     fmtPlanDate, rpToday, PLAN_WHO, monthGrid, monthOf, shiftMonth, plansByDate, daysBetween,
@@ -678,6 +683,10 @@ export function render() {
     else if (currentScreen === 'chan') renderChannel(screen);
     else if (currentScreen === 'chanpost') renderChanPost(screen);
     else if (currentScreen === 'anonnew') renderAnonNew(screen);
+    else if (currentScreen === 'tinder') renderTinder(screen);
+    else if (currentScreen === 'tinprofile') renderTinProfile(screen);
+    else if (currentScreen === 'tinmatches') renderTinMatches(screen);
+    else if (currentScreen === 'tinme') renderTinMe(screen);
     else if (currentScreen === 'discord') renderDiscord(screen);
     else if (currentScreen === 'dchannel') renderDChannel(screen);
     else if (currentScreen === 'twitch') renderTwitch(screen);
@@ -1239,6 +1248,11 @@ function renderHome(screen) {
                     <div class="gp-app-icon gp-app-notes">${ic('fa-note-sticky')}${plansBadgeCount() > 0 ? `<span class="gp-app-badge">${plansBadgeCount()}</span>` : ''}</div>
                     <div class="gp-app-name">Заметки</div>
                 </div>
+                ${tinderEnabled() ? `
+                <div class="gp-app" data-app="tinder">
+                    <div class="gp-app-icon gp-app-tinder">${ic('fa-fire')}${matchBadge() > 0 ? `<span class="gp-app-badge">${matchBadge()}</span>` : ''}</div>
+                    <div class="gp-app-name">Tinder</div>
+                </div>` : ''}
                 <div class="gp-app" data-app="appearance">
                     <div class="gp-app-icon gp-app-appearance">${ic('fa-palette')}</div>
                     <div class="gp-app-name">Оформление</div>
@@ -5088,6 +5102,385 @@ function renderMyStream(screen) {
     screen.querySelector('#gp-st-send')?.addEventListener('click', send);
     input?.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+    });
+}
+
+// ═══ ТИНДЕР ═══
+
+let _tinBusy = false;
+let _tinProfileId = null;
+let _tinMatch = null;          // кого показать в оверлее мэтча
+let _tinMePhoto = null;        // черновик своего фото
+
+async function tinBusyRun(fn) {
+    if (_tinBusy) return;
+    _tinBusy = true;
+    render();
+    try {
+        await fn();
+    } catch (e) {
+        toast(String(e?.message || e).slice(0, 70), 'fa-circle-exclamation');
+    } finally {
+        _tinBusy = false;
+        applyChatHiding();
+        render();
+    }
+}
+
+// Фото рисуется ТОЛЬКО по полю look — плотному визуальному описанию из самой
+// анкеты. Ничего невизуального в промпт не идёт, иначе модель рисует «характер».
+function drawTinderPhoto(p, mine = false) {
+    return generatePostImage({
+        ak: mine ? 'user' : (p.known ? `contact:${keyOf(p.name)}` : 'random'),
+        kind: 'ig',
+        aspect: '9:16',
+        author: p.name,
+        imgDesc: p.look || p.bio || p.name,
+        framing: 'dating app profile photo: one person, natural candid shot, looking at the camera, upper body, everyday setting, no text, no watermark, no collage',
+    }, null, `tin:${p.id || 'me'}`);
+}
+
+function tinPhotoHtml(p) {
+    const busy = _imgGenBusy.has(`tin:${p.id}`);
+    if (p.image) {
+        return `<div class="gp-tin-photo"><img src="${esc(p.image)}" alt="" data-zoom></div>`;
+    }
+    return `<div class="gp-tin-photo-gen">
+        ${busy ? ic('fa-spinner fa-spin') : ic('fa-image')}
+        <span>${esc(p.look || p.bio || '')}</span>
+        <button class="gp-tin-draw" data-tindraw="${esc(p.id)}" ${busy ? 'disabled' : ''}>
+            ${ic(busy ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles')} ${busy ? 'Рисую…' : 'Нарисовать'}
+        </button>
+    </div>`;
+}
+
+function renderTinder(screen) {
+    currentScreen = 'tinder';
+    const t = getTinder();
+    const card = currentCard();
+    const next = t.deck[1];
+    const badge = matchBadge();
+
+    screen.innerHTML = `
+        <div class="gp-tin-skin">
+            <div class="gp-header gp-thread-header gp-tin-head">
+                <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
+                <div class="gp-title gp-title-app"><i class="fa-solid fa-fire gp-tin-flame"></i> Tinder</div>
+                <button class="gp-iconbtn" id="gp-tin-me" title="Моя анкета">${ic('fa-user-pen')}</button>
+                <button class="gp-iconbtn gp-tin-matchbtn" id="gp-tin-matches" title="Мэтчи">${ic('fa-comment-dots')}${badge ? `<span class="gp-app-badge">${badge}</span>` : ''}</button>
+                <button class="gp-iconbtn" id="gp-tin-more" title="Ещё анкеты" ${_tinBusy ? 'disabled' : ''}>${ic(_tinBusy ? 'fa-spinner fa-spin' : 'fa-rotate')}</button>
+            </div>
+            <div class="gp-tin-deck">
+                ${card ? `
+                    ${next ? '<div class="gp-tin-card gp-tin-card-under"></div>' : ''}
+                    <div class="gp-tin-card" data-tinopen="${esc(card.id)}">
+                        ${tinPhotoHtml(card)}
+                        <div class="gp-tin-scrim">
+                            <div class="gp-tin-name"><b>${esc(card.name.split(' ')[0])}</b><span>${card.age}</span></div>
+                            ${card.job ? `<div class="gp-tin-job">${ic('fa-briefcase')} ${esc(card.job)}</div>` : ''}
+                            ${card.bio ? `<div class="gp-tin-bio">${esc(card.bio)}</div>` : ''}
+                        </div>
+                    </div>` : `
+                    <div class="gp-tin-empty">
+                        <div class="gp-empty-icon"><i class="fa-solid fa-fire gp-tin-flame"></i></div>
+                        <div class="gp-empty-title">Анкеты кончились</div>
+                        <div class="gp-empty-text">Нажми ↻ — подтянутся новые люди${getTinderMe() ? '' : '.<br>Сначала лучше заполнить свою анкету'}</div>
+                    </div>`}
+            </div>
+            <div class="gp-tin-acts">
+                <button class="gp-tin-act gp-tin-act-sm" id="gp-tin-undo" title="Вернуть последнюю">${ic('fa-rotate-left')}</button>
+                <button class="gp-tin-act gp-tin-act-no" id="gp-tin-no" title="Не сегодня" ${card ? '' : 'disabled'}>${ic('fa-xmark')}</button>
+                <button class="gp-tin-act gp-tin-act-yes" id="gp-tin-yes" title="Нравится" ${card ? '' : 'disabled'}>${ic('fa-heart')}</button>
+                <button class="gp-tin-act gp-tin-act-sm" id="gp-tin-info" title="Анкета целиком" ${card ? '' : 'disabled'}>${ic('fa-circle-info')}</button>
+            </div>
+            ${_tinMatch ? tinMatchHtml(_tinMatch) : ''}
+        </div>`;
+
+    screen.querySelector('#gp-back')?.addEventListener('click', () => goto('home'));
+    screen.querySelector('#gp-tin-me')?.addEventListener('click', () => goto('tinme'));
+    screen.querySelector('#gp-tin-matches')?.addEventListener('click', () => goto('tinmatches'));
+    bindTinDraw(screen);
+    screen.querySelector('#gp-tin-more')?.addEventListener('click', () => tinBusyRun(async () => {
+        const t2 = getTinder();
+        // Знакомый из ролевой выпадает редко: это отдельный сюжет, а не норма
+        const allowKnown = Math.random() < 0.25;
+        const arr = await generateTinderDeck(getTinderMe(), t2.seen.slice(-12), allowKnown);
+        const n = addTinderProfiles(arr);
+        if (!n) throw new Error('Никто не нашёлся — попробуй ещё раз');
+        toast(`Новых анкет: ${n}`, 'fa-fire');
+    }));
+
+    const openProfile = (id) => { _tinProfileId = id; goto('tinprofile'); };
+    screen.querySelector('[data-tinopen]')?.addEventListener('click', (e) => {
+        if (e.target.closest('[data-tindraw]')) return;
+        openProfile(screen.querySelector('[data-tinopen]').getAttribute('data-tinopen'));
+    });
+    screen.querySelector('#gp-tin-info')?.addEventListener('click', () => card && openProfile(card.id));
+    screen.querySelector('#gp-tin-no')?.addEventListener('click', () => card && doSwipe(card.id, 'pass'));
+    screen.querySelector('#gp-tin-yes')?.addEventListener('click', () => card && doSwipe(card.id, 'like'));
+    screen.querySelector('#gp-tin-undo')?.addEventListener('click', () => {
+        if (!undoSwipe()) { toast('Возвращать нечего', 'fa-circle-exclamation'); return; }
+        render();
+    });
+    bindTinMatchOverlay(screen);
+}
+
+function doSwipe(id, dir) {
+    const { matched, profile } = swipeTinder(id, dir);
+    if (matched) {
+        _tinMatch = profile;
+        applyChatHiding();
+    }
+    if (currentScreen !== 'tinder') goto('tinder');
+    else render();
+}
+
+function bindTinDraw(root) {
+    root.querySelectorAll('[data-tindraw]').forEach(b => b.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = b.getAttribute('data-tindraw');
+        const prof = id === 'me' ? getTinderMe() : findProfile(id);
+        if (!prof) return;
+        if (!isImageGenAvailable()) { toast('Генерация картинок не настроена', 'fa-circle-exclamation'); return; }
+        const key = `tin:${id === 'me' ? 'me' : prof.id}`;
+        _imgGenBusy.add(key);
+        render();
+        try {
+            const src = await drawTinderPhoto(id === 'me' ? { ...prof, id: 'me' } : prof, id === 'me');
+            if (src) {
+                if (id === 'me') setTinderMePhoto(src);
+                else setProfileImage(prof.id, src);
+            }
+        } catch (err) {
+            if (!(err instanceof ImageGenCancelled)) toast(String(err?.message || err).slice(0, 70), 'fa-circle-exclamation');
+        } finally {
+            _imgGenBusy.delete(key);
+            render();
+        }
+    }));
+}
+
+// Досье: то, чем модель потом играет этого человека
+function tinFactsHtml(p) {
+    const rows = [
+        ['Кто он', p.who], ['Рост и сложение', p.build], ['Лицо и руки', p.face],
+        ['Голос и вещи', p.voice], ['Темперамент и характер', p.temper],
+        ['Быт, руки, еда', p.life], ['Как пишет', p.writes],
+        ['Когда заинтересован', p.crush],
+    ].filter(([, v]) => v);
+    const hot = p.bed ? `<div class="gp-tin-fact gp-tin-fact-hot"><b>В постели</b><p>${esc(p.bed)}</p></div>` : '';
+    const secret = p.secret ? `<div class="gp-tin-fact"><b>Что скрывает</b><p>${esc(p.secret)}</p></div>` : '';
+    return rows.map(([k, v]) => `<div class="gp-tin-fact"><b>${esc(k)}</b><p>${esc(v)}</p></div>`).join('') + hot + secret;
+}
+
+function renderTinProfile(screen) {
+    const p = findProfile(_tinProfileId);
+    if (!p) { goto('tinder'); return; }
+    currentScreen = 'tinprofile';
+    const inDeck = getTinder().deck.some(x => x.id === p.id);
+    const match = getMatches().find(x => x.id === p.id);
+
+    screen.innerHTML = `
+        <div class="gp-tin-skin">
+            <div class="gp-header gp-thread-header gp-tin-head">
+                <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
+                <div class="gp-thread-title">
+                    <div class="gp-row-name">${esc(p.name)}</div>
+                    <div class="gp-thread-number">${p.age} · ${p.dist} км от тебя${p.known ? ' · вы знакомы' : ''}</div>
+                </div>
+                ${p.image ? `<button class="gp-iconbtn" data-tindraw="${esc(p.id)}" title="Перерисовать фото">${ic('fa-rotate-right')}</button>` : ''}
+            </div>
+            <div class="gp-tin-sheet">
+                <div class="gp-tin-hero">
+                    ${tinPhotoHtml(p)}
+                    <div class="gp-tin-scrim">
+                        <div class="gp-tin-name"><b>${esc(p.name.split(' ')[0])}</b><span>${p.age}</span></div>
+                        ${p.job ? `<div class="gp-tin-job">${ic('fa-briefcase')} ${esc(p.job)}</div>` : ''}
+                    </div>
+                </div>
+                <div class="gp-tin-facts">${tinFactsHtml(p)}</div>
+            </div>
+            ${inDeck ? `
+            <div class="gp-tin-acts">
+                <button class="gp-tin-act gp-tin-act-no" id="gp-tin-no">${ic('fa-xmark')}</button>
+                <button class="gp-tin-act gp-tin-act-yes" id="gp-tin-yes">${ic('fa-heart')}</button>
+            </div>` : match ? `
+            <div class="gp-tin-composer">
+                <label class="gp-tin-irl">
+                    <input type="checkbox" id="gp-tin-irl" ${match.irl ? 'checked' : ''}>
+                    <span>Уже знакомы вживую</span>
+                </label>
+                <button class="gp-primary" id="gp-tin-write">${ic('fa-comment-dots')} Написать в «Сообщениях»</button>
+            </div>` : ''}
+        </div>`;
+
+    screen.querySelector('#gp-back')?.addEventListener('click', () => goto(inDeck ? 'tinder' : 'tinmatches'));
+    bindTinDraw(screen);
+    screen.querySelector('#gp-tin-no')?.addEventListener('click', () => doSwipe(p.id, 'pass'));
+    screen.querySelector('#gp-tin-yes')?.addEventListener('click', () => doSwipe(p.id, 'like'));
+    screen.querySelector('#gp-tin-irl')?.addEventListener('change', function () {
+        setMatchIrl(p.id, this.checked);
+        applyChatHiding();
+        updatePhoneInjection();
+        toast(this.checked ? 'Теперь он знает тебя как обычного человека' : 'Снова знает только по анкете', 'fa-fire');
+    });
+    screen.querySelector('#gp-tin-write')?.addEventListener('click', () => openTinderThread(p));
+}
+
+// Мэтч уходит в обычную переписку: там работают смс, ммс, голосовые и память
+function openTinderThread(p) {
+    markMatchOpened(p.id);
+    updatePhoneInjection();
+    currentThreadKey = keyOf(p.name);
+    goto('thread');
+}
+
+function tinMatchHtml(p) {
+    const me = getTinderMe();
+    const myName = me?.name || getUserName();
+    return `
+    <div class="gp-tin-match">
+        <div class="gp-tin-match-title gp-tin-flame">Это мэтч</div>
+        <div class="gp-tin-match-pair">
+            ${avatarHtml(myName, me?.photo || avatarForAuthor('user'), 'gp-tin-match-ava')}
+            ${avatarHtml(p.name, p.image, 'gp-tin-match-ava')}
+        </div>
+        <div class="gp-tin-match-sub">Вы с ${esc(p.name.split(' ')[0])} понравились друг другу. Он появится в «Сообщениях» — как контакт из Тиндера.</div>
+        <div class="gp-tin-match-btns">
+            <button class="gp-tin-match-go" id="gp-tin-matchgo">${ic('fa-paper-plane')} Написать первой</button>
+            <button class="gp-tin-match-skip" id="gp-tin-matchskip">Свайпать дальше</button>
+        </div>
+    </div>`;
+}
+
+function bindTinMatchOverlay(root) {
+    root.querySelector('#gp-tin-matchgo')?.addEventListener('click', () => {
+        const p = _tinMatch;
+        _tinMatch = null;
+        if (p) openTinderThread(p);
+    });
+    root.querySelector('#gp-tin-matchskip')?.addEventListener('click', () => { _tinMatch = null; render(); });
+}
+
+function renderTinMatches(screen) {
+    currentScreen = 'tinmatches';
+    const matches = getMatches();
+    const fresh = matches.filter(m => !m.opened);
+    const talked = matches.filter(m => m.opened);
+    const row = (m) => `
+        <div class="gp-tin-matchrow" data-tinmatch="${esc(m.id)}">
+            ${avatarHtml(m.name, m.image, 'gp-tin-matchava')}
+            <span class="gp-tin-matchbody">
+                <b>${esc(m.name.split(' ')[0])}, ${m.age}</b>
+                <span>${esc(m.job || '')}${m.irl ? ' · знакомы вживую' : ''}</span>
+            </span>
+            ${m.opened ? '' : '<span class="gp-tin-new">new</span>'}
+            <button class="gp-iconbtn gp-danger" data-tindel="${esc(m.id)}" title="Убрать мэтч">${ic('fa-xmark')}</button>
+        </div>`;
+    screen.innerHTML = `
+        <div class="gp-tin-skin">
+            <div class="gp-header gp-thread-header gp-tin-head">
+                <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
+                <div class="gp-title gp-title-app">Мэтчи</div>
+            </div>
+            <div class="gp-tin-sheet">
+                ${matches.length === 0
+                    ? `<div class="gp-empty"><div class="gp-empty-icon"><i class="fa-solid fa-fire gp-tin-flame"></i></div><div class="gp-empty-text">Пока пусто.<br>Лайкай — кто-то ответит взаимностью</div></div>`
+                    : `${fresh.length ? `<div class="gp-tin-sect">Новые — ещё не писали</div>${fresh.map(row).join('')}` : ''}
+                       ${talked.length ? `<div class="gp-tin-sect">Переписка</div>${talked.map(row).join('')}` : ''}`}
+            </div>
+        </div>`;
+    screen.querySelector('#gp-back')?.addEventListener('click', () => goto('tinder'));
+    screen.querySelectorAll('[data-tinmatch]').forEach(b => b.addEventListener('click', (e) => {
+        if (e.target.closest('[data-tindel]')) return;
+        _tinProfileId = b.getAttribute('data-tinmatch');
+        goto('tinprofile');
+    }));
+    screen.querySelectorAll('[data-tindel]').forEach(b => b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!confirm('Убрать мэтч? Контакт в «Сообщениях» останется.')) return;
+        deleteMatch(b.getAttribute('data-tindel'));
+        updatePhoneInjection();
+        render();
+    }));
+}
+
+function renderTinMe(screen) {
+    currentScreen = 'tinme';
+    const me = getTinderMe() || {};
+    const busy = _imgGenBusy.has('tin:me');
+    screen.innerHTML = `
+        <div class="gp-tin-skin">
+            <div class="gp-header gp-thread-header gp-tin-head">
+                <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
+                <div class="gp-title gp-title-app">Моя анкета</div>
+                <button class="gp-iconbtn" id="gp-tin-save" title="Сохранить">${ic('fa-check')}</button>
+            </div>
+            <div class="gp-tin-form">
+                <div class="gp-tin-myphoto" id="gp-tin-mypick">
+                    ${_tinMePhoto || me.photo
+                        ? `<img src="${esc(_tinMePhoto || me.photo)}" alt="">`
+                        : `${ic(busy ? 'fa-spinner fa-spin' : 'fa-camera')}<span>Загрузить фото</span>`}
+                </div>
+                <input type="file" id="gp-tin-myfile" accept="image/*" style="display:none">
+                <div class="gp-tin-row">
+                    <label class="gp-field"><span>Имя</span><input type="text" id="gp-tin-name" maxlength="40" value="${esc(me.name || getUserName())}"></label>
+                    <label class="gp-field gp-tin-age"><span>Возраст</span><input type="number" id="gp-tin-age" min="18" max="99" value="${me.age || 25}"></label>
+                </div>
+                <label class="gp-field"><span>Работа</span><input type="text" id="gp-tin-job" maxlength="80" value="${esc(me.job || '')}" placeholder="чем занимаешься"></label>
+                <label class="gp-field"><span>О себе</span><input type="text" id="gp-tin-bio" maxlength="300" value="${esc(me.bio || '')}" placeholder="строчка, которую увидят первой"></label>
+                <label class="gp-field"><span>Кого ищу</span><input type="text" id="gp-tin-looking" maxlength="120" value="${esc(me.looking || '')}" placeholder="кого и зачем"></label>
+                <label class="gp-field"><span>Что мне нравится в постели</span><input type="text" id="gp-tin-bed" maxlength="300" value="${esc(me.bed || '')}" placeholder="видят только те, с кем мэтч"></label>
+                <label class="gp-field"><span>Как я выгляжу <i>(для рисования фото)</i></span><input type="text" id="gp-tin-look" maxlength="600" value="${esc(me.look || '')}" placeholder="рост, сложение, волосы, во что одета"></label>
+                <button class="gp-secondary" id="gp-tin-mydraw" ${busy ? 'disabled' : ''}>${ic(busy ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles')} Нарисовать фото</button>
+                <div class="gp-add-hint">Это единственное, что о тебе знают до знакомства. В ролевой анкета настоящая: персонаж может на неё наткнуться.</div>
+            </div>
+        </div>`;
+
+    const collect = () => ({
+        name: screen.querySelector('#gp-tin-name')?.value || '',
+        age: screen.querySelector('#gp-tin-age')?.value || 25,
+        job: screen.querySelector('#gp-tin-job')?.value || '',
+        bio: screen.querySelector('#gp-tin-bio')?.value || '',
+        looking: screen.querySelector('#gp-tin-looking')?.value || '',
+        bed: screen.querySelector('#gp-tin-bed')?.value || '',
+        look: screen.querySelector('#gp-tin-look')?.value || '',
+        photo: _tinMePhoto || me.photo || null,
+    });
+
+    screen.querySelector('#gp-back')?.addEventListener('click', () => { _tinMePhoto = null; goto('tinder'); });
+    screen.querySelector('#gp-tin-save')?.addEventListener('click', () => {
+        saveTinderMe(collect());
+        _tinMePhoto = null;
+        updatePhoneInjection();
+        toast('Анкета сохранена', 'fa-fire');
+        goto('tinder');
+    });
+    const file = screen.querySelector('#gp-tin-myfile');
+    screen.querySelector('#gp-tin-mypick')?.addEventListener('click', () => file?.click());
+    file?.addEventListener('change', async () => {
+        const f = file.files?.[0];
+        if (!f) return;
+        try {
+            _tinMePhoto = await compressImage(f, 720, 0.82);
+            render();
+        } catch (e) { toast('Не удалось загрузить фото', 'fa-circle-exclamation'); }
+    });
+    screen.querySelector('#gp-tin-mydraw')?.addEventListener('click', async () => {
+        const draft = saveTinderMe(collect());
+        if (!draft.look) { toast('Опиши, как выглядишь', 'fa-circle-exclamation'); return; }
+        if (!isImageGenAvailable()) { toast('Генерация картинок не настроена', 'fa-circle-exclamation'); return; }
+        _imgGenBusy.add('tin:me');
+        render();
+        try {
+            const src = await drawTinderPhoto({ ...draft, id: 'me' }, true);
+            if (src) { setTinderMePhoto(src); _tinMePhoto = null; }
+        } catch (err) {
+            if (!(err instanceof ImageGenCancelled)) toast(String(err?.message || err).slice(0, 70), 'fa-circle-exclamation');
+        } finally {
+            _imgGenBusy.delete('tin:me');
+            render();
+        }
     });
 }
 

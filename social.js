@@ -1969,6 +1969,47 @@ Format: [{"text":"..."}]`;
     return t;
 }
 
+// ── Тиндер ──
+// Анкета здесь = карточка персонажа: ею потом модель играет человека в
+// переписке. Поэтому промпт давит на конкретику и запрещает общие слова —
+// «добрый» и «загадочный» превращают колоду в пять одинаковых людей.
+export async function generateTinderDeck(me = null, existing = [], allowKnown = false) {
+    const meBlock = me
+        ? `${getUserName()}'s own profile in the app (this is what these people saw before swiping): ${me.name}, ${me.age}${me.job ? `, ${me.job}` : ''}${me.bio ? `. About: "${me.bio}"` : ''}${me.looking ? `. Looking for: ${me.looking}` : ''}`
+        : `${getUserName()} has not filled in their profile yet — assume an ordinary short one with a photo.`;
+    const prompt = `${await taskHeader(`invent people who show up in ${getUserName()}'s dating app right now.`)}
+${meBlock}
+${allowKnown ? `${contactsBlock()}\nONE of these profiles MAY be a person ${getUserName()} already knows from the story (set "known": true and use their real name) — only if it is genuinely plausible that they are single and on a dating app. If nothing fits, make them all strangers.\n` : ''}${existing.length ? `Already shown (do NOT repeat these people):\n${existing.slice(0, 12).map(x => `- ${x}`).join('\n')}\n` : ''}
+Write 4-5 profiles of people who live in this world and city. Each one must be a PLAYABLE character, not a label — someone a reader would want to talk to.
+
+HARD RULES:
+- NO generic adjectives as description ("kind", "funny", "mysterious", "passionate", "loves life"). Show the trait through behaviour, a habit, a possession, a thing they say.
+- Use NUMBERS wherever numbers exist: height in cm, weight in kg, age, how many years at the job, how many kids.
+- Every person gets at least one concrete object or ritual that is theirs alone (three identical grey sweaters; hand-makes pelmeni; an old Land Cruiser; a scar they will not explain).
+- Give each of them a CONTRADICTION — something that does not fit the first impression.
+- The batch must be VARIED: different ages, body types, class, temperament, and different reasons for being on the app. Do not write five tired bearded men.
+- Write it all in the language of the roleplay.
+
+Fields:
+"name" — first name and surname. "age" — number. "job" — short line for the card. "bio" — the one line THEY wrote about themselves on the card, in their own voice, 3-12 words. "dist" — km away, number.
+"who" — what they do, money, status, 1-2 sentences.
+"build" — height in cm, weight in kg, body type, how they move.
+"face" — face, hair, eyes, beard, hands, one detail nobody else has.
+"voice" — how their voice sounds, how they dress, what they drive, what is lying in their car or bag.
+"temper" — temperament named outright (phlegmatic/choleric/...) plus 3-5 sentences: how they behave under pressure, their humour, their contradiction, what disarms them.
+"life" — home, hobbies, what they cook, how they spend a weekend, what they do with their hands.
+"writes" — exactly how they text: message length, punctuation, emoji or none, how fast they answer, whether they send voice notes or photos. This is used to write their SMS later, so be specific.
+"crush" — how this person behaves when they are into someone. A general trait, NOT a feeling towards ${getUserName()} (they have never met).
+"bed" — what they are like in bed: what they do, what gets to them, where they shut down. Concrete, adult, no euphemisms.
+"secret" — one thing that is NOT on their profile and they never bring up themselves.
+"look" — ONE dense visual paragraph for drawing their photo: age, build with numbers, face, hair, beard, eyes, hands, clothing, setting of the shot. VISUAL ONLY — no character, no history, no voice, nothing that cannot be seen.
+"likes_back" — true if this person would swipe right on ${getUserName()} too, false if not. Decide it honestly from both profiles; roughly half should be false.
+${uiLangLine()}
+${JSON_RULES}
+Format: [{"name":"Имя Фамилия","age":34,"job":"...","bio":"...","dist":3,"who":"...","build":"...","face":"...","voice":"...","temper":"...","life":"...","writes":"...","crush":"...","bed":"...","secret":"...","look":"...","likes_back":true}]`;
+    return await socialGenArray(prompt, { maxTokens: 4200, prefill: '[{"name":"' });
+}
+
 // ── Твич: список эфиров и «тики» стрима (сцена меняется от событий/комментов) ──
 export async function generateStreamList(existing = []) {
     const prompt = `${await taskHeader(`invent live streams currently online in the Twitch-like app on ${getUserName()}'s phone.`)}
