@@ -6,7 +6,7 @@ import { initUI, checkNewIncoming, resetIncomingCounters, updateFabBadge, render
 import { harvestSocialTags, setUserHandle, getUserHandle, listIigProfiles, listIigStyles, listImageBuckets, currentExtModel } from './social.js';
 import { harvestBankTags } from './bank.js';
 import { harvestPlanTags } from './plans.js';
-import { harvestChannelTags } from './channels.js';
+import { harvestChannelTags, harvestAnonTags, ANON_NAME } from './channels.js';
 import { maybeScamSms } from './scam.js';
 import { trDom } from './i18n.js';
 import { buildReport, clearLog } from './debug-log.js';
@@ -54,9 +54,11 @@ function setupSettingsPanel() {
                 <label class="gp-settings-field gp-settings-wide"><span>Профиль для соцсетей</span><span class="gp-settings-control-row"><select id="gp-set-profile" class="text_pole"></select><button class="menu_button gp-settings-icon-button" id="gp-profile-test" type="button" title="Проверить профиль (маленький запрос)" aria-label="Проверить профиль (маленький запрос)"><i class="fa-solid fa-plug-circle-check"></i></button></span></label>
                 <label class="gp-settings-field"><span>Контекст соцсетей</span><select id="gp-set-ctxmode" class="text_pole"><option value="rich" ${s.socialContextMode !== 'lite' ? 'selected' : ''}>История + лорбук + карточка бота</option><option value="lite" ${s.socialContextMode === 'lite' ? 'selected' : ''}>Изолированно (только срез чата)</option></select></label>
                 <label class="gp-settings-field"><span>Твой ник (@)</span><input type="text" id="gp-set-handle" class="text_pole" maxlength="21" placeholder="авто из имени"></label>
+                <label class="gp-settings-field"><span>Узнать автора анонимки</span><input type="number" id="gp-set-anonprice" class="text_pole gp-settings-number" min="0" step="100" value="${Number(s.anonRevealPrice) || 2500}"><small>цена первого имени, дальше растёт</small></label>
                 <div class="gp-settings-checks gp-settings-wide">
                     <label><input type="checkbox" id="gp-set-hide" ${s.hideSmsInChat !== false ? 'checked' : ''}><span>Скрывать смс-переписку из ленты чата</span></label>
                     <label><input type="checkbox" id="gp-set-scam" ${s.scamEnabled !== false ? 'checked' : ''}><span>Спам и мошенники в смс</span></label>
+                    <label><input type="checkbox" id="gp-set-anon" ${s.anonChannel !== false ? 'checked' : ''}><span>Анонимка «Подслушано» в каналах</span></label>
                     <label><input type="checkbox" id="gp-set-prefill" ${s.usePrefill ? 'checked' : ''}><span>Префилл ответа</span></label>
                     <label><input type="checkbox" id="gp-set-figspaces" ${s.useFigureSpaces ? 'checked' : ''}><span>Фигурные пробелы в ответе</span></label>
                 </div>
@@ -283,6 +285,15 @@ function setupSettingsPanel() {
         saveSettingsDebounced();
         document.body.classList.toggle('gp-native-shell', this.checked);
     });
+    $('#gp-set-anon').on('change', function () {
+        getSettings().anonChannel = this.checked;
+        saveSettingsDebounced();
+        updatePhoneInjection();
+    });
+    $('#gp-set-anonprice').on('change', function () {
+        getSettings().anonRevealPrice = Math.max(0, Math.round(Number(this.value) || 0)) || 2500;
+        saveSettingsDebounced();
+    });
     $('#gp-set-sociallog').on('change', function () {
         getSettings().socialLogToChat = this.checked;
         saveSettingsDebounced();
@@ -453,6 +464,11 @@ jQuery(async () => {
             try {
                 const { n, names } = harvestChannelTags();
                 if (n > 0) toast(`Каналы: ${names.slice(0, 2).join(', ')}${names.length > 2 ? '…' : ''} · ${n} ${n === 1 ? 'новый пост' : 'новых постов'}`, 'fa-tower-broadcast');
+            } catch (e) { /* ignore */ }
+            // Анонимки из ролевой: сплетни и вопросы к ней через @
+            try {
+                const n = harvestAnonTags();
+                if (n > 0) toast(`${ANON_NAME}: ${n} ${n === 1 ? 'новый пост' : 'новых постов'}`, 'fa-user-secret');
             } catch (e) { /* ignore */ }
             // Планы и даты, о которых договорились в сцене
             try {

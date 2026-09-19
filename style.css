@@ -3325,6 +3325,143 @@ body.gp-theme-minimal .gp-toast-ava {
 }
 .gp-dc-send:disabled { opacity: .6; }
 
+/* ═══ Подслушано: городская анонимка ═══ */
+/* Чип над постом: «тебе» — обращаются к ней, «это писала ты» — её собственный.
+   Ни полосок, ни рамок: пост остаётся таким же, как соседние. */
+.gp-chan-tag {
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    padding: 0 8px;
+    margin-bottom: 6px;
+    border-radius: 999px;
+    background: rgba(var(--gp-accent-a-rgb), .16);
+    color: var(--gp-accent-a);
+    font-size: 8.5px;
+    font-weight: 700;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+}
+.gp-chan-tag-mine { background: rgba(255,255,255,.08); color: var(--gp-text-dim); }
+.gp-chan-at { color: var(--gp-accent-a); font-weight: 600; }
+
+/* Шапка обсуждения анонимки: сам пост и платное вскрытие */
+.gp-anon-head {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 11px 13px 12px;
+    border-bottom: 1px solid var(--gp-border-soft);
+    background: rgba(255,255,255,.03);
+}
+.gp-anon-head-text { font-size: 12.5px; line-height: 1.45; color: var(--gp-text); }
+.gp-anon-head-text small {
+    display: block;
+    margin-bottom: 5px;
+    font-size: 8.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--gp-text-dim);
+}
+.gp-anon-buy {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    height: 32px;
+    border: 1px solid rgba(var(--gp-accent-a-rgb), .4);
+    border-radius: 10px;
+    background: rgba(var(--gp-accent-a-rgb), .09);
+    color: var(--gp-accent-a);
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.gp-anon-buy:hover:not(:disabled) { background: rgba(var(--gp-accent-a-rgb), .16); }
+.gp-anon-buy b { font-variant-numeric: tabular-nums; }
+.gp-anon-buy-off, .gp-anon-buy:disabled {
+    opacity: .5;
+    cursor: default;
+    color: var(--gp-text-dim);
+    border-color: var(--gp-border-soft);
+    background: none;
+}
+/* Вскрыто: имя встаёт на место кнопки и остаётся там навсегда */
+.gp-anon-known { display: flex; align-items: center; gap: 9px; }
+.gp-anon-known-ava {
+    flex: 0 0 auto;
+    width: 28px; height: 28px;
+    display: grid; place-items: center;
+    border-radius: 50%;
+    background: rgba(var(--gp-accent-a-rgb), .2);
+    color: var(--gp-accent-a);
+    font-size: 12px;
+    font-weight: 700;
+}
+.gp-anon-known-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.gp-anon-known-text b { font-size: 12.5px; color: var(--gp-text); }
+.gp-anon-known-text small { font-size: 9.5px; color: var(--gp-text-dim); }
+
+/* Своя анонимка */
+.gp-anon-write { display: flex; flex-direction: column; gap: 11px; padding: 13px 12px; overflow-y: auto; }
+.gp-anon-write textarea {
+    min-height: 130px;
+    padding: 12px 13px;
+    border: 1px solid var(--gp-border-soft);
+    border-radius: 14px;
+    background: var(--gp-glass);
+    color: var(--gp-text);
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.45;
+    resize: none;
+    outline: none;
+}
+.gp-anon-write textarea:focus { border-color: rgba(var(--gp-accent-a-rgb), .45); }
+.gp-anon-to {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    border: 1px solid var(--gp-border-soft);
+    border-radius: 12px;
+}
+.gp-anon-to > span { flex: 0 0 auto; font-size: 10.5px; color: var(--gp-text-dim); }
+.gp-anon-to input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    background: none;
+    color: var(--gp-accent-a);
+    font: inherit;
+    font-size: 12.5px;
+    outline: none;
+}
+.gp-anon-note { font-size: 9.5px; line-height: 1.45; color: var(--gp-text-dim); }
+
+/* Окно оплаты */
+.gp-anon-pay { display: flex; flex-direction: column; gap: 11px; padding: 16px 16px 14px; text-align: center; }
+.gp-anon-pay b { font-size: 14px; color: var(--gp-text); }
+.gp-anon-pay p { margin: 0; font-size: 11.5px; line-height: 1.45; color: var(--gp-text-dim); }
+.gp-anon-pay small { font-size: 10px; color: var(--gp-text-dim); }
+.gp-anon-pay-sum {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--gp-accent-a);
+    font-variant-numeric: tabular-nums;
+}
+.gp-anon-pay-row { display: flex; gap: 8px; }
+.gp-anon-pay-row button { flex: 1; height: 36px; border-radius: 11px; font: inherit; font-size: 12px; cursor: pointer; }
+.gp-anon-pay-no { border: 1px solid var(--gp-border-soft); background: none; color: var(--gp-text-dim); }
+.gp-anon-pay-yes {
+    border: 0;
+    background: linear-gradient(135deg, var(--gp-accent-a), var(--gp-accent-b));
+    color: #fff;
+    font-weight: 700;
+}
+
 /* ═══ Твич ═══ */
 /* Фирменный скин: тёмный + фиолетовый #9146ff. Темы телефона не перекрашивают. */
 .gp-app-badge.gp-live-badge { font-size: 7px; letter-spacing: .04em; background: #eb0400; }

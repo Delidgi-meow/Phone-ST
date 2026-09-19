@@ -1774,6 +1774,21 @@ Format: [{"text":"...","photo":""}]`;
     return await socialGenArray(prompt, { maxTokens: 1200, prefill: '[{"text":"' });
 }
 
+// Лента анонимки: сплетни города + вопросы лично ей. Настоящий автор ("from")
+// в телефоне не показывается — он нужен только для платного вскрытия.
+export async function generateAnonFeed(channelName, existing = [], handle = '') {
+    const prompt = `${await taskHeader(`write new anonymous submissions for «${channelName}» — the town's anonymous gossip channel that ${getUserName()} reads on their phone.`)}
+People send posts there WITHOUT a name: rumours about local people, things they saw, confessions, questions they would never ask to someone's face. The channel publishes them as-is.
+${existing.length ? `Already published (do NOT repeat, do not contradict):\n${existing.slice(0, 6).map(x => `- ${x}`).join('\n')}` : ''}
+${contactsBlock()}
+Write 4-6 new submissions rooted in what is happening in the roleplay right now and in this town. Mix them: most are about other people and everyday local life, and 1-2 are aimed at ${getUserName()} personally — those set "to" to "${handle}" and speak TO them (a question, a jab, a confession). Short, spoken, a little mean or a little tender, the way real people write anonymously. No emojis.
+"from" — who REALLY sent each one: an exact name from the contacts above when it plausibly is them, otherwise a plain description of a stranger («сосед сверху», «девушка из «Ротонды»»). This field is secret from ${getUserName()}.
+${uiLangLine()}
+${JSON_RULES}
+Format: [{"text":"...","to":"","from":"кто на самом деле"}]`;
+    return await socialGenArray(prompt, { maxTokens: 1400, prefill: '[{"text":"' });
+}
+
 export async function generateChannelComments(channel, post, { userComment = null, replyTo = null } = {}) {
     const existing = (post.comments || []).slice(-8).map(c => `${c.author}: ${c.text}`).join('\n');
     const event = userComment

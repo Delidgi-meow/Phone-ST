@@ -27,7 +27,7 @@ import {
     settleSocialPost, maybeGenerateStoryEvent, resolveStoryEvent, generateAdvertisingOffers,
     getStories, activeStories, addStory, deleteStory, bumpStoryViews, toggleStoryLike, generateContactStories, generateStoryReactions,
     generateRepLabel, generateGroupChats,
-    generateChannels, generateChannelPosts, generateChannelComments, generateMyChannelFeedback, generatePersonChannel,
+    generateChannels, generateChannelPosts, generateChannelComments, generateMyChannelFeedback, generatePersonChannel, generateAnonFeed,
 } from './social.js';
 import { getSystemsView, deferEvent, declineEvent, selectStoryEvent, acceptAdOffer, declineAdOffer, attachActiveAd, getReputationStatus } from './social-events.js';
 import { maybeScamSms } from './scam.js';
@@ -38,6 +38,8 @@ import {
     deleteComment, bumpViews, addSubs, matchPostByText, markChannelRead, unreadChannels,
     setChannelAvatar, clearChannelAvatar,
     CHAN_REACTS,
+    ANON_ID, ANON_NAME, anonEnabled, getAnonChannel, anonPostToUser, addAnonPosts,
+    postAnonAsUser, anonRevealPrice, canAffordAnonReveal, revealAnonAuthor,
 } from './channels.js';
 import { casinoStats, spinSlots, spinRoulette, canBet } from './casino.js';
 import { getNews, refreshNews, shareNews, deleteNews } from './news.js';
@@ -675,6 +677,7 @@ export function render() {
     else if (currentScreen === 'chans') renderChannels(screen);
     else if (currentScreen === 'chan') renderChannel(screen);
     else if (currentScreen === 'chanpost') renderChanPost(screen);
+    else if (currentScreen === 'anonnew') renderAnonNew(screen);
     else if (currentScreen === 'discord') renderDiscord(screen);
     else if (currentScreen === 'dchannel') renderDChannel(screen);
     else if (currentScreen === 'twitch') renderTwitch(screen);
@@ -5398,6 +5401,21 @@ function subsLine(ch) {
 
 // Пост канала — входящий пузырь: медиа сверху, реакции и просмотры в подвале,
 // обсуждение отрезано волоском и работает отдельной кнопкой.
+// Чип над анонимкой: «тебе» — обращаются к ней по @нику, «это писала ты» —
+// её собственный пост (видит только она, в канале имени нет)
+function anonTagHtml(post) {
+    if (!post?.anon) return '';
+    if (post.byUser) return `<span class="gp-chan-tag gp-chan-tag-mine">это писала ты</span><br>`;
+    if (anonPostToUser(post)) return `<span class="gp-chan-tag">тебе</span><br>`;
+    return '';
+}
+
+// @ник внутри текста подсвечиваем — иначе обращение теряется в абзаце.
+// Экранируем ДО подстановки, поэтому в разметку ничего чужого не попадёт.
+function atHtml(text) {
+    return esc(String(text || '')).replace(/@[A-Za-z0-9_.]{2,24}/g, m => `<span class="gp-chan-at">${m}</span>`);
+}
+
 function chanPostHtml(ch, post) {
     bumpViews(ch, post);
     const busy = _imgGenBusy.has(post.id);
@@ -5418,7 +5436,7 @@ function chanPostHtml(ch, post) {
     <div class="gp-chan-post" data-chanpost="${esc(post.id)}">
         ${media}
         <div class="gp-chan-body">
-            ${post.text ? `<div class="gp-chan-text">${esc(post.text)}</div>` : ''}
+            ${post.text ? `<div class="gp-chan-text">${anonTagHtml(post)}${atHtml(post.text)}</div>` : ''}
             <div class="gp-chan-foot">
                 <div class="gp-chan-reacts">${reacts}<button class="gp-chan-react gp-chan-react-add" data-chanreactadd="${esc(post.id)}">${ic('fa-plus')}</button></div>
                 <span class="gp-chan-views">${ic('fa-eye')} ${fmtSubs(post.views)} · ${esc(timeAgo(post.time))}</span>
@@ -5553,6 +5571,7 @@ function renderChannels(screen) {
             <button class="gp-iconbtn" id="gp-chan-find" title="Найти каналы" ${_chanBusy ? 'disabled' : ''}>${ic(_chanBusy ? 'fa-spinner fa-spin' : 'fa-magnifying-glass')}</button>
         </div>
         <div class="gp-chan-scroll">
+            ${anonEnabled() ? `<div class="gp-chan-section">Город</div>${row(getAnonChannel())}` : ''}
             <div class="gp-chan-section">Мой канал</div>
             ${c.mine ? row(c.mine) : `
                 <button class="gp-chan-create" id="gp-chan-create">
@@ -5649,7 +5668,11 @@ function renderChannel(screen) {
     currentScreen = 'chan';
     markChannelRead(ch.id);
 
-    const composer = ch.mine ? `
+    // Анонимка: подписки нет (канал системный), вместо неё — своя анонимка
+    const composer = ch.system ? `
+        <div class="gp-chan-composer">
+            <button class="gp-primary" id="gp-anon-new">${ic('fa-feather')} Написать анонимно</button>
+        </div>` : ch.mine ? `
         <div class="gp-chan-composer">
             ${_chanDraftImage ? `<div class="gp-sms-attach"><img src="${esc(_chanDraftImage)}" alt=""><span>Фото приложено</span><button class="gp-iconbtn gp-danger" id="gp-chan-imgclear">${ic('fa-xmark')}</button></div>` : ''}
             <textarea id="gp-chan-text" rows="2" placeholder="Написать в канал…"></textarea>
@@ -5674,14 +5697,16 @@ function renderChannel(screen) {
             </div>
             ${ch.mine
                 ? `<button class="gp-iconbtn gp-danger" id="gp-chan-drop" title="Удалить канал">${ic('fa-trash-can')}</button>`
-                : `<button class="gp-iconbtn" id="gp-chan-refresh" title="Свежие посты" ${_chanBusy ? 'disabled' : ''}>${ic(_chanBusy ? 'fa-spinner fa-spin' : 'fa-rotate')}</button>
+                : ch.system
+                    ? `<button class="gp-iconbtn" id="gp-chan-refresh" title="Что там нового" ${_chanBusy ? 'disabled' : ''}>${ic(_chanBusy ? 'fa-spinner fa-spin' : 'fa-rotate')}</button>`
+                    : `<button class="gp-iconbtn" id="gp-chan-refresh" title="Свежие посты" ${_chanBusy ? 'disabled' : ''}>${ic(_chanBusy ? 'fa-spinner fa-spin' : 'fa-rotate')}</button>
                    <button class="gp-iconbtn gp-danger" id="gp-chan-drop" title="Убрать канал">${ic('fa-trash-can')}</button>`}
         </div>
         <div class="gp-chan-scroll">
             ${ch.desc ? `<div class="gp-chan-desc">${esc(ch.desc)}</div>` : ''}
             ${(ch.posts || []).map(p => chanPostHtml(ch, p)).join('') || `
                 <div class="gp-empty"><div class="gp-empty-icon">${ic('fa-paper-plane')}</div>
-                <div class="gp-empty-text">${ch.mine ? 'Напиши первый пост — подписчики<br>отреагируют сами' : 'Нажми ↻ — канал наполнится'}</div></div>`}
+                <div class="gp-empty-text">${ch.system ? 'Нажми ↻ — город начнёт сплетничать' : ch.mine ? 'Напиши первый пост — подписчики<br>отреагируют сами' : 'Нажми ↻ — канал наполнится'}</div></div>`}
         </div>
         ${composer}`);
 
@@ -5689,7 +5714,16 @@ function renderChannel(screen) {
     screen.querySelector('#gp-chan-ava')?.addEventListener('click', () => chanAvatarSheet(ch));
     bindChanPostActions(screen, ch);
 
+    screen.querySelector('#gp-anon-new')?.addEventListener('click', () => goto('anonnew'));
     screen.querySelector('#gp-chan-refresh')?.addEventListener('click', () => chanBusyRun(async () => {
+        if (ch.system) {
+            const arr = await generateAnonFeed(ch.name, (ch.posts || []).slice(0, 6).map(x => x.text), getUserHandle());
+            const n = addAnonPosts(arr);
+            if (!n) throw new Error('Город молчит — попробуй ещё раз');
+            markChannelRead(ch.id);
+            toast(`Новых анонимок: ${n}`, 'fa-user-secret');
+            return;
+        }
         const arr = await generateChannelPosts(ch, (ch.posts || []).slice(0, 5).map(x => x.text || x.imgDesc));
         const n = addChannelPosts(ch.id, arr);
         if (!n) throw new Error('Канал молчит — попробуй ещё раз');
@@ -5870,6 +5904,117 @@ function bindChanPostActions(root, ch) {
     }));
 }
 
+// Пробить автора: деньги настоящие, поэтому спрашиваем прямо и показываем,
+// сколько на карте. Узнаёт только она — в канале ничего не меняется.
+function anonBuySheet(post) {
+    const screen = document.getElementById('gp-screen');
+    if (!screen || !post || post.revealed) return;
+    const price = anonRevealPrice();
+    const overlay = document.createElement('div');
+    overlay.className = 'gp-member-overlay';
+    overlay.innerHTML = `
+        <div class="gp-member-overlay-panel">
+            <div class="gp-anon-pay">
+                <b>Пробить автора</b>
+                <div class="gp-anon-pay-sum">${esc(fmtMoney(price))}</div>
+                <p>Админ канала сольёт, кто прислал этот пост. Узнаешь только ты — в канале ничего не изменится, и автор не поймёт, что его вычислили.</p>
+                <div class="gp-anon-pay-row">
+                    <button class="gp-anon-pay-no" id="gp-anonpay-no">Не надо</button>
+                    <button class="gp-anon-pay-yes" id="gp-anonpay-yes">Заплатить</button>
+                </div>
+                <small>На карте ${esc(fmtMoney(getBank().balance))}</small>
+            </div>
+        </div>`;
+    screen.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.querySelector('#gp-anonpay-no')?.addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    overlay.querySelector('#gp-anonpay-yes')?.addEventListener('click', () => {
+        try {
+            const done = revealAnonAuthor(post.id);
+            close();
+            applyChatHiding();
+            render();
+            toast(done.realAuthor ? `Это ${done.realAuthor}` : 'Автора не нашли', 'fa-user-secret');
+        } catch (e) {
+            toast(String(e?.message || e).slice(0, 60), 'fa-circle-exclamation');
+        }
+    });
+}
+
+// Шапка обсуждения анонимки: сам пост и платное вскрытие автора.
+// Пока не заплачено — имени нет нигде, даже в разметке.
+function anonHeadHtml(post) {
+    if (!post?.anon) return '';
+    const label = post.byUser ? 'анонимно · от тебя' : (anonPostToUser(post) ? 'анонимно · тебе' : 'анонимно');
+    let action;
+    if (post.byUser) {
+        action = `<div class="gp-anon-note">Это твой пост. Имени в канале нет — но его можно пробить за деньги, как и любой другой.</div>`;
+    } else if (post.revealed) {
+        const who = post.realAuthor || 'автор так и не найден';
+        action = `
+        <div class="gp-anon-known">
+            <span class="gp-anon-known-ava">${esc(who.slice(0, 1).toUpperCase())}</span>
+            <span class="gp-anon-known-text">
+                <b>Написал${/[аяь]$/i.test(who) ? 'а' : ''} ${esc(who)}</b>
+                <small>${post.revealPrice ? `пробито за ${esc(fmtMoney(post.revealPrice))} · ` : ''}знаешь только ты</small>
+            </span>
+        </div>`;
+    } else {
+        const price = anonRevealPrice();
+        const can = canAffordAnonReveal();
+        action = `<button class="gp-anon-buy${can ? '' : ' gp-anon-buy-off'}" data-anonbuy="${esc(post.id)}" ${can ? '' : 'disabled'}>
+            ${ic('fa-user-secret')} ${can ? 'Узнать, кто написал' : 'Не хватает денег'} — <b>${esc(fmtMoney(price))}</b>
+        </button>`;
+    }
+    return `
+    <div class="gp-anon-head">
+        <div class="gp-anon-head-text"><small>${label}</small>${atHtml(post.text)}</div>
+        ${action}
+    </div>`;
+}
+
+// Своя анонимка. Поле «кому» ставит @ — так пост адресуется человеку,
+// ровно как это делают с ней.
+function renderAnonNew(screen) {
+    currentScreen = 'anonnew';
+    const ch = getAnonChannel();
+    screen.innerHTML = `
+        <div class="gp-header gp-thread-header">
+            <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
+            <div class="gp-title gp-title-app">Написать анонимно</div>
+            <span style="width:32px"></span>
+        </div>
+        <div class="gp-anon-write">
+            <textarea id="gp-anon-text" rows="6" maxlength="900" placeholder="Что рассказать городу…"></textarea>
+            <div class="gp-anon-to">
+                <span>Кому (необязательно)</span>
+                <input type="text" id="gp-anon-to" maxlength="24" placeholder="@ник">
+            </div>
+            <button class="gp-primary" id="gp-anon-send">${ic('fa-paper-plane')} Отправить в канал</button>
+            <div class="gp-anon-note">
+                Пост выйдет от «Анонима» — ни имени, ни ника. В ролевой это правда: слух пойдёт по городу.
+                Но автора тут продают за деньги, так что при желании это могут пробить и прийти к тебе.
+            </div>
+        </div>`;
+    screen.querySelector('#gp-back')?.addEventListener('click', () => goto('chan'));
+    screen.querySelector('#gp-anon-send')?.addEventListener('click', () => {
+        const text = screen.querySelector('#gp-anon-text')?.value.trim() || '';
+        const to = screen.querySelector('#gp-anon-to')?.value.trim() || '';
+        if (!text) { toast('Напиши текст', 'fa-circle-exclamation'); return; }
+        try {
+            postAnonAsUser(text, to);
+            clearDraft('gp-anon-text');
+            _chanId = ch.id;
+            applyChatHiding();
+            goto('chan');
+            toast('Анонимка ушла в канал', 'fa-user-secret');
+        } catch (e) {
+            toast(String(e?.message || e).slice(0, 60), 'fa-circle-exclamation');
+        }
+    });
+}
+
 function renderChanPost(screen) {
     const ch = findChannel(_chanId);
     const post = ch ? findChanPost(ch.id, _chanPostId) : null;
@@ -5904,6 +6049,7 @@ function renderChanPost(screen) {
             </div>
             <button class="gp-iconbtn" id="gp-chan-more" title="Ещё комментарии" ${_chanBusy ? 'disabled' : ''}>${ic(_chanBusy ? 'fa-spinner fa-spin' : 'fa-rotate')}</button>
         </div>
+        ${anonHeadHtml(post)}
         <div class="gp-msgs">
             ${comments || `<div class="gp-empty"><div class="gp-empty-icon">${ic('fa-comment')}</div>
                 <div class="gp-empty-text">Пока тихо. Напиши первой<br>или нажми ↻</div></div>`}
@@ -5917,6 +6063,7 @@ function renderChanPost(screen) {
         </div>`);
 
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('chan'));
+    screen.querySelector('[data-anonbuy]')?.addEventListener('click', () => anonBuySheet(post));
     screen.querySelector('#gp-chan-replyoff')?.addEventListener('click', () => { _chanReplyTo = null; render(); });
     screen.querySelectorAll('[data-chanreply]').forEach(b => b.addEventListener('click', () => {
         _chanReplyTo = b.getAttribute('data-chanreply');

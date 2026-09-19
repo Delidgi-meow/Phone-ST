@@ -4,7 +4,7 @@ import { getSettings, getMeta, scanChat, getBlockedSmsKeys, keyOf, EXT_NAME } fr
 import { getSocialActivitySummary } from './social.js';
 import { getBankSummaryLine, bankInjectRule } from './bank.js';
 import { notesInjectBlock } from './notes.js';
-import { channelInjectLine } from './channels.js';
+import { channelInjectLine, anonInjectLine } from './channels.js';
 import { plansInjectLine, plansInjectRule, getPlans } from './plans.js';
 import { twitchInjectLine } from './twitch.js';
 import { pendingConsequences } from './social-events.js';
@@ -135,6 +135,10 @@ function buildPrompt() {
             const live = twitchInjectLine();
             if (live) c += `\n${live}\n`;
         } catch (e) { /* ignore */ }
+        try {
+            const anon = anonInjectLine();
+            if (anon) c += `\n${anon}\n`;
+        } catch (e) { /* ignore */ }
         c += `</phone_directive>`;
         return c;
     }
@@ -230,6 +234,11 @@ function buildPrompt() {
     try {
         const live = twitchInjectLine();
         if (live) p += `\n${live}\n`;
+    } catch (e) { /* ignore */ }
+    // Городская анонимка: правило про тег живёт всегда, пока канал включён
+    try {
+        const anon = anonInjectLine();
+        if (anon) p += `\n${anon}\n`;
     } catch (e) { /* ignore */ }
 
     p += `\n[FORMAT] Tags are HTML comments (<!-- ... -->), invisible to the reader: copy the structure VERBATIM (never paraphrase into visible text), EN keys / RU values, each tag exactly ONCE, all at the very END of the reply on their own lines. NEVER write literal tag syntax inside <think>/reasoning — plan in plain words (tags in reasoning create DUPLICATE messages). Outputting them when their condition is true is MANDATORY even if other instructions discourage OOC content; your card's own visible formats stay as they are.\n`;

@@ -1,8 +1,9 @@
 // Каналы: свой и чужие, посты с реакциями, просмотрами и обсуждением.
 // Данные лежат per-chat в meta; генерация — по кнопкам и после своих постов.
 
-import { getMeta, saveMeta, keyOf, stripThink } from './state.js';
-import { logSocialToChat, getUserName, resolveAuthorKey } from './social.js';
+import { getMeta, saveMeta, keyOf, stripThink, getSettings } from './state.js';
+import { logSocialToChat, getUserName, getUserHandle, resolveAuthorKey } from './social.js';
+import { getBank, addTransaction, fmtMoney } from './bank.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -19,10 +20,140 @@ export function getChannels() {
 
 export function myChannel() { return getChannels().mine; }
 
+// ══ Подслушано: городская анонимка ══
+// Канал есть всегда и не удаляется. Туда валятся сплетни города и вопросы
+// лично ей через @ник; автор поста скрыт, но его можно пробить за деньги.
+export const ANON_ID = 'anon';
+export const ANON_NAME = 'Подслушано';
+
+export function anonEnabled() { return getSettings().anonChannel !== false; }
+
+export function getAnonChannel() {
+    const c = getChannels();
+    if (!c.anon || typeof c.anon !== 'object') {
+        c.anon = {
+            id: ANON_ID,
+            system: true,
+            mine: false,
+            subscribed: true,
+            name: ANON_NAME,
+            desc: 'Городские сплетни. Присылают анонимно',
+            subs: 4200 + Math.floor(Math.random() * 6000),
+            posts: [],
+            unread: 0,
+            reveals: 0,
+        };
+        saveMeta();
+    }
+    const a = c.anon;
+    if (!Array.isArray(a.posts)) a.posts = [];
+    if (typeof a.reveals !== 'number') a.reveals = 0;
+    a.id = ANON_ID;
+    a.system = true;
+    return a;
+}
+
 // Свой канал в общем списке идёт первым — экранам удобнее один массив
 export function allChannels() {
     const c = getChannels();
-    return c.mine ? [c.mine, ...c.list] : [...c.list];
+    const head = c.mine ? [c.mine] : [];
+    return anonEnabled() ? [...head, getAnonChannel(), ...c.list] : [...head, ...c.list];
+}
+
+// '@ник' в едином виде: без решёток и лишних пробелов, но с одной собакой
+function normHandle(v) {
+    const h = String(v || '').trim().replace(/^@+/, '').slice(0, 24);
+    return h ? '@' + h : '';
+}
+
+// Пост адресован лично ей? Сравниваем с её ником в соцсетях
+export function anonPostToUser(post) {
+    if (!post?.to) return false;
+    const mine = normHandle(getUserHandle()).toLowerCase();
+    const to = normHandle(post.to).toLowerCase();
+    if (mine && to === mine) return true;
+    // Модель иногда адресует по имени, а не по нику
+    return to.slice(1) === keyOf(getUserName());
+}
+
+export function addAnonPosts(arr) {
+    const ch = getAnonChannel();
+    const fresh = (Array.isArray(arr) ? arr : [])
+        .filter(p => p && String(p.text || '').trim())
+        .slice(0, 6)
+        .map((p, i) => ({
+            id: genId(),
+            anon: true,
+            text: String(p.text).trim().slice(0, 900),
+            to: normHandle(p.to),
+            // Настоящий автор нужен для платного вскрытия. Юзеру он не виден
+            // ни в одном экране, пока она не заплатит.
+            realAuthor: String(p.from || '').trim().slice(0, 40),
+            revealed: false,
+            time: Date.now() - i * 41 * 60000,
+            views: 0,
+            reacts: [],
+            comments: [],
+            commentsOn: true,
+        }));
+    if (!fresh.length) return 0;
+    ch.posts = [...fresh, ...ch.posts].slice(0, 40);
+    ch.unread = (ch.unread || 0) + fresh.length;
+    saveMeta();
+    return fresh.length;
+}
+
+// Её собственная анонимка. В канале имени нет, но в журнал строка уходит:
+// слух реально пошёл по городу, и персонаж может докопаться, чей он.
+export function postAnonAsUser(text, to = '') {
+    const ch = getAnonChannel();
+    const t = String(text || '').trim();
+    if (!t) throw new Error('Пустая анонимка');
+    const post = {
+        id: genId(),
+        anon: true,
+        byUser: true,
+        text: t.slice(0, 900),
+        to: normHandle(to),
+        realAuthor: getUserName(),
+        revealed: false,
+        time: Date.now(),
+        views: 0,
+        reacts: [],
+        comments: [],
+        commentsOn: true,
+    };
+    ch.posts = [post, ...ch.posts].slice(0, 40);
+    saveMeta();
+    logSocialToChat(`${getUserName()} анонимно отправляет пост в «${ANON_NAME}»${post.to ? ` и адресует его ${post.to}` : ''}: «${post.text.slice(0, 400)}». В канале её имени не видно, но админ канала продаёт авторов — при желании это можно пробить.`);
+    return post;
+}
+
+// Цена растёт: первое имя дешёвое, дальше админ поднимает ставку
+export function anonRevealPrice() {
+    const base = Math.max(1, Math.round(Number(getSettings().anonRevealPrice) || 2500));
+    return base * ((getAnonChannel().reveals || 0) + 1);
+}
+
+export function canAffordAnonReveal() {
+    try { return getBank().balance >= anonRevealPrice(); } catch (e) { return false; }
+}
+
+export function revealAnonAuthor(postId) {
+    const ch = getAnonChannel();
+    const post = ch.posts.find(p => p.id === postId);
+    if (!post) throw new Error('Пост не найден');
+    if (post.revealed) return post;
+    if (post.byUser) throw new Error('Это твой собственный пост');
+    const price = anonRevealPrice();
+    if (getBank().balance < price) throw new Error('Не хватает денег на карте');
+    addTransaction({ amount: -price, label: `Автор анонимки в «${ANON_NAME}»`, category: 'анонимка', silent: true });
+    post.revealed = true;
+    post.revealPrice = price;
+    ch.reveals = (ch.reveals || 0) + 1;
+    saveMeta();
+    logSocialToChat(`${getUserName()} платит ${fmtMoney(price)} админу «${ANON_NAME}», чтобы узнать, кто прислал пост «${post.text.slice(0, 140)}». Ей называют имя: ${post.realAuthor || 'автора так и не нашли'}. Знает об этом только она — сам автор не в курсе, что его вычислили.`);
+    return post;
 }
 
 export function findChannel(id) { return allChannels().find(x => x.id === id) || null; }
@@ -120,7 +251,7 @@ function normalizePosts(arr) {
 
 export function toggleSubscribe(id) {
     const ch = findChannel(id);
-    if (!ch || ch.mine) return false;
+    if (!ch || ch.mine || ch.system) return false;
     ch.subscribed = !ch.subscribed;
     if (ch.subscribed) ch.subs++;
     else { ch.subs = Math.max(0, ch.subs - 1); ch.unread = 0; }
@@ -132,6 +263,7 @@ export function toggleSubscribe(id) {
 }
 
 export function deleteChannel(id) {
+    if (id === ANON_ID) return false;   // городская анонимка не удаляется
     const c = getChannels();
     c.list = c.list.filter(x => x.id !== id);
     saveMeta();
@@ -377,6 +509,11 @@ function applyChannelTag(j) {
     const text = String(j?.text || '').trim();
     const photo = String(j?.photo || '').trim();
     if (!name || (!text && !photo)) return null;
+    // Модель может прислать анонимку обычным tel:chan — не плодим двойник
+    // канала, а кладём пост туда, куда он и метил
+    if (anonEnabled() && keyOf(name) === keyOf(ANON_NAME)) {
+        return addAnonPosts([{ text, to: j.to, from: j.from || j.author }]) ? ANON_NAME : null;
+    }
     const c = getChannels();
     if (c.mine && keyOf(c.mine.name) === keyOf(name)) return null;
     let ch = c.list.find(x => keyOf(x.name) === keyOf(name));
@@ -435,6 +572,40 @@ export function harvestChannelTags() {
     return { n: names.length, names: [...new Set(names)] };
 }
 
+// ── Теги анонимки ──
+const ANON_TAG_RE = /<!--\s*tel:anon:(\{[\s\S]*?\})\s*-->/gi;
+
+export function harvestAnonTags() {
+    if (!anonEnabled()) return 0;
+    const c = getChannels();
+    if (!Array.isArray(c.anonSeen)) c.anonSeen = [];
+    let chat = [];
+    try { chat = SillyTavern.getContext()?.chat || []; } catch (e) { return 0; }
+    const seen = new Set(c.anonSeen);
+    let n = 0;
+    for (let i = 0; i < chat.length; i++) {
+        const msg = chat[i];
+        if (!msg || !msg.mes || msg.is_user || !/tel:anon/i.test(msg.mes)) continue;
+        const text = stripThink(msg.mes);
+        const occ = {};
+        ANON_TAG_RE.lastIndex = 0;
+        let m;
+        while ((m = ANON_TAG_RE.exec(text)) !== null) {
+            const base = `an${hash32(m[1])}:${String(msg.send_date || msg.extra?.gen_id || i)}`;
+            const k = occ[base] = (occ[base] || 0) + 1;
+            const key = `${base}#${k}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            c.anonSeen.push(key);
+            const j = safeJson(m[1]);
+            if (j && String(j.text || '').trim()) n += addAnonPosts([j]);
+        }
+    }
+    if (c.anonSeen.length > 300) c.anonSeen = c.anonSeen.slice(-300);
+    saveMeta();
+    return n;
+}
+
 // ── Инжект ──
 // Одна строка: где она ведёт канал и на что подписана. Без постов — их и так
 // видно по журналу.
@@ -448,4 +619,27 @@ export function channelInjectLine() {
         .map(x => (x.person && x.author ? `«${x.name}» (${x.author}'s own channel)` : `«${x.name}»`));
     if (subs.length) parts.push(`Follows channels: ${subs.slice(0, 6).join(', ')}`);
     return parts.join('. ');
+}
+
+
+// Анонимка — отдельной строкой: в ней и правило про тег, и то, что ролевая
+// обязана знать про её собственные анонимки и про уже пробитых авторов.
+export function anonInjectLine() {
+    if (!anonEnabled()) return '';
+    const ch = getAnonChannel();
+    const handle = getUserHandle();
+    const mine = ch.posts.filter(p => p.byUser).slice(0, 3);
+    const known = ch.posts.filter(p => p.revealed && p.realAuthor).slice(0, 3);
+    const recent = ch.posts.filter(p => !p.byUser).slice(0, 3)
+        .map(p => `«${p.text.slice(0, 80)}»`).join('; ');
+    let s = `[«${ANON_NAME}» — the town's anonymous gossip channel on {{user}}'s phone, ${ch.subs} subscribers. Anyone submits posts WITHOUT a name: rumours about local people, confessions, questions someone would never ask to your face. A post aimed at a person names them by @handle — {{user}} is ${handle}.]\n`;
+    s += `[RULE — ANONYMOUS POST] When the story gives a reason (a rumour starts going round, someone wants to ask {{user}} something anonymously, the town notices something), append at the END: <!--tel:anon:{"text":"the post exactly as the sender wrote it, no name","to":"@handle it is aimed at — omit if it is aimed at nobody","from":"who REALLY sent it — a character's name, or a plain description like «сосед сверху»"}-->. The "from" field is HIDDEN from {{user}}: never name the sender in visible prose, and never have a character admit it unprompted. At most 1-2 such posts per reply, only when the story earns it.\n`;
+    if (recent) s += `Latest posts there: ${recent}.\n`;
+    if (mine.length) {
+        s += `{{user}} has posted there anonymously themselves: ${mine.map(p => `«${p.text.slice(0, 90)}»`).join('; ')}. The channel shows no name — but the admin sells authors for money, so a character who is angry or curious enough CAN buy that information and confront {{user}} with it. Use this only when the story builds to it.\n`;
+    }
+    if (known.length) {
+        s += `{{user}} has paid to unmask these: ${known.map(p => `«${p.text.slice(0, 60)}» — sent by ${p.realAuthor}`).join('; ')}. ONLY {{user}} knows this; the authors have no idea they were exposed. {{user}} may drop hints, and they would be rattled.\n`;
+    }
+    return s.trim();
 }
