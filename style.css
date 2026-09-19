@@ -469,8 +469,21 @@
     border-bottom: 1px solid var(--gp-border-soft);
     margin-bottom: 2px;
 }
-.gp-thread-title { flex: 1; min-width: 0; }
+.gp-thread-title { flex: 1 1 auto; min-width: 76px; }
 .gp-thread-number { font-size: 10px; color: var(--gp-text-dim); margin-top: 1px; }
+/* Длинное имя или подпись раньше заворачивались в столбик и раздували шапку.
+   Одна строка с многоточием; кнопки и аватарка не ужимаются. */
+.gp-thread-header .gp-row-name,
+.gp-thread-header .gp-thread-number {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.gp-thread-header .gp-row-name { display: flex; align-items: center; gap: 5px; }
+.gp-thread-header .gp-row-name > span { overflow: hidden; text-overflow: ellipsis; }
+.gp-thread-header > .gp-iconbtn,
+.gp-thread-header > .gp-avatar,
+.gp-thread-header > span:not(.gp-thread-title) { flex: 0 0 auto; }
 
 .gp-msgs {
     flex: 1 1 auto;

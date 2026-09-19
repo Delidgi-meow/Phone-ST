@@ -1898,7 +1898,7 @@ function renderThread(screen) {
     const subLine = t.isGroup
         ? (t.members?.length ? t.members.join(', ') : 'групповой чат')
         : tinMatch
-            ? `${blocked ? 'заблокирован · ' : ''}${tinMatch.inApp ? 'чат в Тиндере' : 'из Тиндера'} · ${tinMatch.age}${tinMatch.job ? ` · ${tinMatch.job}` : ''}`
+            ? `${blocked ? 'заблокирован · ' : ''}${tinMatch.inApp ? 'чат в Тиндере' : 'из Тиндера'} · ${tinMatch.age}`
             : `${blocked ? 'заблокирован · ' : ''}${t.number || 'номер неизвестен'} · ${handleFor(`contact:${t.key}`, t.name)}`;
 
     screen.innerHTML = `
@@ -1907,12 +1907,12 @@ function renderThread(screen) {
             ${headerAva}
             <input type="file" id="gp-ava-file" accept="image/*" style="display:none">
             <div class="gp-thread-title">
-                <div class="gp-row-name" id="gp-rename" title="Нажми, чтобы переименовать" style="cursor:pointer">${esc(t.name)} <i class="fa-solid fa-pen gp-rename-pen"></i></div>
+                <div class="gp-row-name" id="gp-rename" title="Нажми, чтобы переименовать" style="cursor:pointer"><span>${esc(t.name)}</span><i class="fa-solid fa-pen gp-rename-pen"></i></div>
                 <div class="gp-thread-number">${esc(subLine)}</div>
             </div>
             ${tinMatch ? `<button class="gp-iconbtn gp-tin-openbtn" id="gp-tin-open" title="Анкета в Тиндере">${ic('fa-fire')}</button>` : ''}
-            ${tinMatch?.inApp ? `<button class="gp-iconbtn" id="gp-tin-number" title="Дать свой номер">${ic('fa-phone')}</button>` : ''}
-            ${!t.isGroup ? `<button class="gp-iconbtn" id="gp-nick" title="Ник для соцсетей">${ic('fa-at')}</button>` : ''}
+
+            ${!t.isGroup && !tinMatch?.inApp ? `<button class="gp-iconbtn" id="gp-nick" title="Ник для соцсетей">${ic('fa-at')}</button>` : ''}
             ${!t.isGroup ? `<button class="gp-iconbtn${blocked ? ' gp-danger' : ''}" id="gp-sms-block" title="${blocked ? 'Разблокировать SMS' : 'Заблокировать SMS'}">${ic(blocked ? 'fa-lock-open' : 'fa-ban')}</button>` : ''}
             ${t.isGroup ? `<button class="gp-iconbtn" id="gp-add-member" title="Добавить участника">${ic('fa-user-plus')}</button>` : ''}
             ${t.isGroup && (t.members || []).length ? `<button class="gp-iconbtn" id="gp-kick-member" title="Убрать участника">${ic('fa-user-minus')}</button>` : ''}
@@ -1965,14 +1965,6 @@ function renderThread(screen) {
         render();
     });
     // Ник контакта для соцсетей (@handle)
-    screen.querySelector('#gp-tin-number')?.addEventListener('click', () => {
-        if (!tinMatch || !confirm(`Дать ${tinMatch.name.split(' ')[0]} свой номер?\nПереписка переедет в «Сообщения».`)) return;
-        giveNumberTo(tinMatch.id);
-        applyChatHiding();
-        updatePhoneInjection();
-        toast('Номер отправлен — теперь вы в «Сообщениях»', 'fa-phone');
-        render();
-    });
     screen.querySelector('#gp-tin-open')?.addEventListener('click', () => {
         if (!tinMatch) return;
         _tinProfileId = tinMatch.id;
@@ -5405,6 +5397,7 @@ function renderTinProfile(screen) {
                     <span>Уже знакомы вживую</span>
                 </label>
                 <button class="gp-primary" id="gp-tin-write">${ic('fa-comment-dots')} ${match.inApp ? 'Открыть переписку' : 'Написать в «Сообщениях»'}</button>
+                ${match.inApp ? `<button class="gp-secondary" id="gp-tin-number">${ic('fa-phone')} Дать свой номер</button>` : ''}
             </div>` : ''}
         </div>`;
 
@@ -5424,6 +5417,14 @@ function renderTinProfile(screen) {
         toast(this.checked ? 'Теперь знает тебя как обычного человека' : 'Снова знает только по анкете', 'fa-fire');
     });
     screen.querySelector('#gp-tin-write')?.addEventListener('click', () => openTinderThread(p));
+    screen.querySelector('#gp-tin-number')?.addEventListener('click', () => {
+        if (!confirm(`Дать ${p.name.split(' ')[0]} свой номер?\nПереписка переедет в «Сообщения».`)) return;
+        giveNumberTo(p.id);
+        applyChatHiding();
+        updatePhoneInjection();
+        toast('Номер отправлен — теперь вы в «Сообщениях»', 'fa-phone');
+        render();
+    });
 }
 
 // Мэтч уходит в обычную переписку: там работают смс, ммс, голосовые и память
