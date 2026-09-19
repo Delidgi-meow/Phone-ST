@@ -523,6 +523,17 @@ export function delIgComment(postId, commentId) {
 
 // ═══ OnlyFans: контент юзера, фанаты, чаевые ═══
 
+function ofMarker(id) { return `of:${id}`; }
+
+// Что именно лежит на странице — одной строкой и для журнала, и для сводки
+function ofPostLine(post) {
+    const parts = [];
+    if (post.imgDesc) parts.push(`на фото: ${String(post.imgDesc).slice(0, 160)}`);
+    if (post.caption) parts.push(`подпись: «${String(post.caption).slice(0, 200)}»`);
+    if (post.price) parts.push(`доступ за $${post.price}`);
+    return parts.join(', ') || 'фото без подписи';
+}
+
 export function postOf({ image = null, imgDesc = '', caption = '', price = 0 }) {
     const s = getSocial();
     const post = {
@@ -534,6 +545,15 @@ export function postOf({ image = null, imgDesc = '', caption = '', price = 0 }) 
     s.ofPosts.unshift(post);
     if (s.ofPosts.length > MAX_OF_POSTS) s.ofPosts = s.ofPosts.slice(0, MAX_OF_POSTS);
     saveMeta();
+    // Пост ложится в журнал, как твит и инста. Без этого страница жила только
+    // внутри телефона: персонаж, узнавший про неё по сюжету, физически не мог
+    // прочитать ни одного поста. Приватность держится формулировкой строки,
+    // а не тем, что модель о постах вообще не знает.
+    logSocialToChat(
+        `${getUserName()} выкладывает пост на своей закрытой странице по подписке (OnlyFans, подписчиков: ${s.ofSubs || 0}) — ${ofPostLine(post)}. `
+        + `Страница анонимная и платная: её содержимое видят только подписчики. Персонаж знает про неё ТОЛЬКО если в ролевой прямо сказано, что он подписан или как-то узнал; сам по себе никто об этом не догадывается и в разговоре не упоминает.`,
+        { marker: ofMarker(post.id) },
+    );
     return post;
 }
 
@@ -549,6 +569,7 @@ export function delOf(id) {
     const s = getSocial();
     s.ofPosts = s.ofPosts.filter(x => x.id !== id);
     saveMeta();
+    removeJournalEntry(ofMarker(id));
 }
 
 export function addOfComment(postId, text, author = null, ak = 'user', tip = 0) {
@@ -3162,9 +3183,18 @@ export function getSocialActivitySummary() {
     const s = getSocial();
 
     if (getSettings().socialLogToChat !== false) {
-        return s.ofWallet > 0
-            ? `- They have $${s.ofWallet} of their own money available (on their personal card). The SOURCE is their secret — characters see only that they can afford things.`
-            : '';
+        // Журнал несёт историю, но он стареет и уходит в саммари. Страница по
+        // подписке — ПОСТОЯННОЕ состояние: пока на ней есть свежий пост, одна
+        // строка о нём держится в инжекте, иначе «прочитать» его станет нечем.
+        const out = [];
+        const last = s.ofPosts.filter(x => x.ak === 'user')[0];
+        if (last) {
+            out.push(`- Their PRIVATE subscribers-only page (OnlyFans, ${s.ofSubs || 0} subscribers), latest post ${timeAgo(last.time)} ago: ${ofPostLine(last)}. A character knows this page exists ONLY if the story established that they subscribe or found out — nobody guesses it on their own.`);
+        }
+        if (s.ofWallet > 0) {
+            out.push(`- They have $${s.ofWallet} of their own money available (on their personal card). The SOURCE is their secret — characters see only that they can afford things.`);
+        }
+        return out.join('\n');
     }
 
     const lines = [];
@@ -3207,8 +3237,7 @@ export function getSocialActivitySummary() {
     // OnlyFans: только последний пост, с пометкой приватности
     const lastOf = s.ofPosts.filter(p => p.ak === 'user')[0];
     if (lastOf) {
-        const photo = lastOf.imgDesc ? `photo: ${lastOf.imgDesc.slice(0, 80)}` : 'photo';
-        lines.push(`- Their PRIVATE OnlyFans post (${timeAgo(lastOf.time)} ago, subscribers-only): ${photo}${lastOf.caption ? `, caption: "${lastOf.caption.slice(0, 80)}"` : ''}. Characters know about it ONLY if the story established they secretly subscribe.`);
+        lines.push(`- Their PRIVATE subscribers-only page (OnlyFans, ${s.ofSubs || 0} subscribers), latest post ${timeAgo(lastOf.time)} ago: ${ofPostLine(lastOf)}. A character knows this page exists ONLY if the story established that they subscribe or found out — nobody guesses it on their own.`);
     }
     // Деньги, выведенные с OnlyFans — доступны ей в РП (источник приватен)
     if (s.ofWallet > 0) {
