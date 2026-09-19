@@ -5897,7 +5897,11 @@ function subsLine(ch) {
 // анонимка (видно только владельцу телефона, в канале имени нет)
 function anonTagHtml(post) {
     if (!post?.anon) return '';
-    if (post.byUser) return `<span class="gp-chan-tag gp-chan-tag-mine">твой пост</span><br>`;
+    if (post.byUser) {
+        return post.bustedBy
+            ? `<span class="gp-chan-tag">${esc(post.bustedBy)} знает, что это ты</span><br>`
+            : `<span class="gp-chan-tag gp-chan-tag-mine">твой пост</span><br>`;
+    }
     if (anonPostToUser(post)) return `<span class="gp-chan-tag">тебе</span><br>`;
     return '';
 }
@@ -6457,7 +6461,15 @@ function anonHeadHtml(post) {
     const label = post.byUser ? 'анонимно · от тебя' : (anonPostToUser(post) ? 'анонимно · тебе' : 'анонимно');
     let action;
     if (post.byUser) {
-        action = `<div class="gp-anon-note">Это твой пост. Имени в канале нет — но его можно пробить за деньги, как и любой другой.</div>`;
+        action = post.bustedBy
+            ? `<div class="gp-anon-known">
+                <span class="gp-anon-known-ava">${esc(String(post.bustedBy).slice(0, 1).toUpperCase())}</span>
+                <span class="gp-anon-known-text">
+                    <b>${esc(post.bustedBy)} тебя пробил</b>
+                    <small>заплатил админу и знает, что это писала ты</small>
+                </span>
+            </div>`
+            : `<div class="gp-anon-note">Это твой пост. Имени в канале нет — но его можно пробить за деньги, как и любой другой.</div>`;
     } else if (post.revealed) {
         const who = post.realAuthor || 'автор так и не найден';
         action = `
@@ -6523,6 +6535,18 @@ function renderAnonNew(screen) {
     });
 }
 
+// Кого цитирует ответ: ПОСЛЕДНЮЮ реплику этого человека до текущей.
+// Раньше брали первую попавшуюся, и вся ветка ссылалась на одну и ту же
+// старую фразу — обсуждение читалось как каша.
+function quotedFor(all, ci, replyTo) {
+    if (!replyTo) return null;
+    const want = keyOf(replyTo);
+    for (let qi = ci - 1; qi >= 0; qi--) {
+        if (keyOf(all[qi].author) === want) return all[qi];
+    }
+    return all.find(x => keyOf(x.author) === want) || null;
+}
+
 function renderChanPost(screen) {
     const ch = findChannel(_chanId);
     const post = ch ? findChanPost(ch.id, _chanPostId) : null;
@@ -6531,9 +6555,10 @@ function renderChanPost(screen) {
 
     // Пузыри те же, что в переписке: класс .gp-bubble тянет за собой всё
     // оформление темы, включая ширину, хвост и контраст
-    const comments = (post.comments || []).map(c => {
+    const all = post.comments || [];
+    const comments = all.map((c, ci) => {
         const mine = c.ak === 'user';
-        const quoted = c.replyTo ? (post.comments || []).find(x => keyOf(x.author) === keyOf(c.replyTo)) : null;
+        const quoted = quotedFor(all, ci, c.replyTo);
         // Содержимое пузыря склеиваем без переносов: у .gp-bubble white-space
         // pre-wrap, и отступы разметки превратились бы в пустые строки в тексте
         const sender = mine ? '' : `<div class="gp-bubble-sender" style="color:${senderColor(c.author)}">${esc(c.author)}${c.handle ? ` <i>${esc(c.handle)}</i>` : ''}</div>`;

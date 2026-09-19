@@ -654,6 +654,55 @@ export function harvestChannelTags() {
 
 // ── Теги анонимки ──
 const ANON_TAG_RE = /<!--\s*tel:anon:(\{[\s\S]*?\})\s*-->/gi;
+// Кто-то заплатил админу и узнал, что анонимку писала она
+const ANON_BUST_RE = /<!--\s*tel:anonbust:(\{[\s\S]*?\})\s*-->/gi;
+
+// Пробили её саму. Возвращает список {who, text} — для уведомлений.
+export function harvestAnonBust() {
+    if (!anonEnabled()) return [];
+    const c = getChannels();
+    const ch = getAnonChannel();
+    if (!Array.isArray(c.bustSeen)) c.bustSeen = [];
+    let chat = [];
+    try { chat = SillyTavern.getContext()?.chat || []; } catch (e) { return []; }
+    const seen = new Set(c.bustSeen);
+    const hits = [];
+    for (let i = 0; i < chat.length; i++) {
+        const msg = chat[i];
+        if (!msg || !msg.mes || msg.is_user || !/tel:anonbust/i.test(msg.mes)) continue;
+        const text = stripThink(msg.mes);
+        const occ = {};
+        ANON_BUST_RE.lastIndex = 0;
+        let m;
+        while ((m = ANON_BUST_RE.exec(text)) !== null) {
+            const base = `ab${hash32(m[1])}:${String(msg.send_date || msg.extra?.gen_id || i)}`;
+            const k = occ[base] = (occ[base] || 0) + 1;
+            const key = `${base}#${k}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            c.bustSeen.push(key);
+            const j = safeJson(m[1]);
+            const who = String(j?.who || '').trim().slice(0, 60);
+            if (!who) continue;
+            // Ищем, какую именно её анонимку пробили. Не нашли — берём свежую.
+            const mine = ch.posts.filter(p => p.byUser);
+            if (!mine.length) continue;
+            const post = matchPostByText(mine, String(j.post || '')) || mine[0];
+            if (post.bustedBy) continue;
+            post.bustedBy = who;
+            post.bustedAt = Date.now();
+            hits.push({ who, text: post.text });
+            logSocialToChat(
+                `${who} заплатил${/[аяь]$/i.test(who) ? 'а' : ''} админу «${ANON_NAME}» и узнал${/[аяь]$/i.test(who) ? 'а' : ''}, `
+                + `что анонимку «${post.text.slice(0, 160)}» отправил${/[аяь]$/i.test(getUserName()) ? 'а' : ''} ${getUserName()}. `
+                + `Теперь ${who} это знает — и может прийти с этим.`,
+            );
+        }
+    }
+    if (c.bustSeen.length > 200) c.bustSeen = c.bustSeen.slice(-200);
+    saveMeta();
+    return hits;
+}
 
 export function harvestAnonTags() {
     if (!anonEnabled()) return 0;
@@ -725,7 +774,15 @@ export function anonInjectLine() {
     }
     if (recent) s += `Latest posts there: ${recent}.\n`;
     if (mine.length) {
-        s += `{{user}} has posted there anonymously themselves: ${mine.map(p => `«${p.text.slice(0, 90)}»`).join('; ')}. The channel shows no name — but the admin sells authors for money, so a character who is angry or curious enough CAN buy that information and confront {{user}} with it. Use this only when the story builds to it.\n`;
+        const open = mine.filter(p => !p.bustedBy);
+        const burnt = mine.filter(p => p.bustedBy);
+        if (open.length) {
+            s += `{{user}} has posted there anonymously themselves: ${open.map(p => `«${p.text.slice(0, 90)}»`).join('; ')}. The channel shows no name and NOBODY knows it was them.\n`;
+            s += `[RULE — SOMEBODY BUYS {{user}}'S NAME] The admin sells authors for money, same as {{user}} can buy others. When a character has both a real reason (the post hurt them or someone they care about, they suspect {{user}}, they are the jealous or vindictive sort) and the means, they may do it — append at the END: <!--tel:anonbust:{"who":"who bought it","post":"a few words from that anonymous post"}-->. Then that character KNOWS and acts on it: cold silence, a direct question, a scene. Rare and earned — not every reply, and never as a random event.\n`;
+        }
+        if (burnt.length) {
+            s += `ALREADY EXPOSED: ${burnt.map(p => `«${p.text.slice(0, 70)}» — ${p.bustedBy} paid and knows {{user}} wrote it`).join('; ')}. They may bring it up at any time; {{user}} has no idea they know unless it has already come up.\n`;
+        }
     }
     if (known.length) {
         s += `{{user}} has paid to unmask these: ${known.map(p => `«${p.text.slice(0, 60)}» — sent by ${p.realAuthor}${p.realWho ? ` (${p.realWho})` : ''}`).join('; ')}. ONLY {{user}} knows this; the authors have no idea they were exposed. {{user}} may drop hints, and they would be rattled.\n`;

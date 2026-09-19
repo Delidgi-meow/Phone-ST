@@ -6,7 +6,7 @@ import { initUI, checkNewIncoming, resetIncomingCounters, updateFabBadge, render
 import { harvestSocialTags, setUserHandle, getUserHandle, listIigProfiles, listIigStyles, listImageBuckets, currentExtModel } from './social.js';
 import { harvestBankTags } from './bank.js';
 import { harvestPlanTags } from './plans.js';
-import { harvestChannelTags, harvestAnonTags, ANON_NAME } from './channels.js';
+import { harvestChannelTags, harvestAnonTags, harvestAnonBust, ANON_NAME } from './channels.js';
 import { maybeScamSms } from './scam.js';
 import { trDom } from './i18n.js';
 import { buildReport, clearLog } from './debug-log.js';
@@ -469,6 +469,12 @@ jQuery(async () => {
             try {
                 const n = harvestAnonTags();
                 if (n > 0) toast(`${ANON_NAME}: ${n} ${n === 1 ? 'новый пост' : 'новых постов'}`, 'fa-user-secret');
+            } catch (e) { /* ignore */ }
+            // Её саму пробили — это надо сказать громко
+            try {
+                for (const b of harvestAnonBust()) {
+                    toast(`${b.who} узнал, что анонимку писала ты`, 'fa-user-secret');
+                }
             } catch (e) { /* ignore */ }
             // Планы и даты, о которых договорились в сцене
             try {

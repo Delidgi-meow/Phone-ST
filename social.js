@@ -1851,21 +1851,49 @@ Format: [{"text":"...","to":"","from":"кто на самом деле"}]`;
 // Обсуждение в городской анонимке. Отдельно от обычных каналов: здесь
 // комментируют не «подписчики издания», а весь город — те же люди, что
 // живут в ролевой, и они В КУРСЕ происходящего.
+// Кого позвали в обсуждение: «@vadim» или имя контакта. Возвращает
+// отображаемые имена, чтобы модель отвечала именно этим человеком.
+export function mentionedPeople(text) {
+    const out = [];
+    const seen = new Set();
+    let contacts = new Map();
+    try { contacts = scanChat().contacts || new Map(); } catch (e) { /* ignore */ }
+    const mc = mainCharName();
+    for (const m of String(text || '').matchAll(/@([A-Za-zА-Яа-яЁё0-9_.]{2,32})/g)) {
+        const ak = resolveAuthorKey(m[1]);
+        if (!ak.startsWith('contact:')) continue;
+        const key = ak.slice(8);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        // Модели нужно ИМЯ человека, а не его ник: по нику она напишет
+        // «@vadim» вместо «Вадим Огнев» и персонаж не подтянется
+        const real = contacts.get(key)?.name || (mc && keyOf(mc) === key ? mc : '');
+        out.push(displayName(key, real || m[1]));
+    }
+    return out;
+}
+
 export async function generateAnonComments(channelName, post, { userComment = null, replyTo = null } = {}) {
     const existing = (post.comments || []).slice(-8).map(c => `${c.author}: ${c.text}`).join('\n');
+    const called = mentionedPeople(userComment);
     const event = userComment
         ? (replyTo
             ? `${getUserName()} just replied to ${replyTo}: «${userComment}». ${replyTo} answers FIRST, then 1-2 others.`
             : `${getUserName()} just commented under this post: «${userComment}». Somebody answers them.`)
         : '';
+    // Позвали человека по нику — он и должен прийти, иначе окликать бессмысленно
+    const callLine = called.length
+        ? `${getUserName()} has called ${called.join(', ')} into this thread by name. That person answers FIRST, as themselves, in their own voice and in character — before anyone else says a word. Only if they realistically would never read this channel, someone else remarks that calling them here was pointless, and they stay silent.`
+        : '';
     const prompt = `${await taskHeaderPub(`write the comments under a post in «${channelName}» — the town's anonymous gossip channel.`)}
 The post: ${post.text}
 ${post.to ? `It is aimed at ${post.to}.` : ''}
 ${existing ? `Comments so far (do NOT repeat):\n${existing}\n` : ''}${event}
+${callLine}
 ${contactsBlock()}
 This channel is read by the WHOLE town, so the commenters are ordinary local people — and they KNOW what has been going on lately: the events, rumours and people from the roleplay excerpt above. Let that show. They speculate, recognise who the post is about, half-guess wrong, bring up something that happened recently, take sides, bicker with each other.
 Known characters from the list above MAY comment here when they plausibly would — under their real name if they do not care about being seen, or under a nickname if they do. Do not force them in; one is plenty, often none.
-Write ${userComment ? '2-4' : '4-6'} comments. Short and spoken, the way people write in such channels: unpunctuated, mean, funny, nosy. Use "reply_to" with the exact name of the person being answered. NO emojis.
+Write ${userComment ? '2-4' : '4-6'} comments. Short and spoken, the way people write in such channels: unpunctuated, mean, funny, nosy. Each comment must answer the person's LATEST line, not something they said much earlier. Set "reply_to" ONLY when the comment really is a reply to one specific person, and then to their exact name; leave it empty for a general remark — a thread where everyone quotes the same person reads like noise. NO emojis.
 ${uiLangLine()}
 ${JSON_RULES}
 Format: [{"author":"Имя или ник","handle":"","text":"...","reply_to":""}]`;
