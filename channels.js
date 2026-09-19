@@ -42,7 +42,9 @@ export function getAnonChannel() {
             posts: [],
             unread: 0,
             reveals: 0,
+            lastPostAt: 0,
         };
+        c.anon.lastPostAt = chatLen();
         saveMeta();
     }
     const a = c.anon;
@@ -76,6 +78,11 @@ export function anonPostToUser(post) {
     return to.slice(1) === keyOf(getUserName());
 }
 
+// Длина истории: по ней считаем, сколько ходов канал молчит
+function chatLen() {
+    try { return SillyTavern.getContext()?.chat?.length || 0; } catch (e) { return 0; }
+}
+
 export function addAnonPosts(arr) {
     const ch = getAnonChannel();
     const fresh = (Array.isArray(arr) ? arr : [])
@@ -99,6 +106,7 @@ export function addAnonPosts(arr) {
     if (!fresh.length) return 0;
     ch.posts = [...fresh, ...ch.posts].slice(0, 40);
     ch.unread = (ch.unread || 0) + fresh.length;
+    ch.lastPostAt = chatLen();
     saveMeta();
     return fresh.length;
 }
@@ -124,6 +132,7 @@ export function postAnonAsUser(text, to = '') {
         commentsOn: true,
     };
     ch.posts = [post, ...ch.posts].slice(0, 40);
+    ch.lastPostAt = chatLen();
     saveMeta();
     logSocialToChat(`${getUserName()} анонимно отправляет пост в «${ANON_NAME}»${post.to ? ` и адресует его ${post.to}` : ''}: «${post.text.slice(0, 400)}». В канале её имени не видно, но админ канала продаёт авторов — при желании это можно пробить.`);
     return post;
@@ -672,7 +681,16 @@ export function anonInjectLine() {
     const recent = ch.posts.filter(p => !p.byUser).slice(0, 3)
         .map(p => `«${p.text.slice(0, 80)}»`).join('; ');
     let s = `[«${ANON_NAME}» — the town's anonymous gossip channel on {{user}}'s phone, ${ch.subs} subscribers. Anyone submits posts WITHOUT a name: rumours about local people, confessions, questions someone would never ask to your face. A post aimed at a person names them by @handle — {{user}} is ${handle}.]\n`;
-    s += `[RULE — ANONYMOUS POST] When the story gives a reason (a rumour starts going round, someone wants to ask {{user}} something anonymously, the town notices something), append at the END: <!--tel:anon:{"text":"the post exactly as the sender wrote it, no name","to":"@handle it is aimed at — omit if it is aimed at nobody","from":"who REALLY sent it — a character's name, or a plain description like «сосед сверху»"}-->. The "from" field is HIDDEN from {{user}}: never name the sender in visible prose, and never have a character admit it unprompted. At most 1-2 such posts per reply, only when the story earns it.\n`;
+    // Молчит давно — просим прямо. Мягкое «когда сюжет даст повод» модель
+    // пропускает ходов сорок подряд, и канал стоит мёртвый.
+    const silent = Math.max(0, chatLen() - (ch.lastPostAt || 0));
+    s += `[RULE — ANONYMOUS POST] Append at the END: <!--tel:anon:{"text":"the post exactly as the sender wrote it, no name","to":"@handle it is aimed at — omit if aimed at nobody","from":"who REALLY sent it: a NAME (a character from the story, or an invented «Имя Фамилия», plus who they are after a comma)"}-->. The "from" field is HIDDEN from {{user}}: never name the sender in visible prose, and never have a character admit it unprompted.\n`;
+    s += `WHAT COUNTS AS A REASON — any of these, and they happen constantly: something took place where strangers could see it (a street, a shop, a cafe, a stairwell, a workplace); somebody in town did something odd, shameful, generous or loud; a new person appeared; two people were seen together; a local business, a neighbour, a bus route or a dog caused a scandal; someone wants to ask or say a thing anonymously. It does NOT have to involve {{user}} — most posts are about other townspeople, named.\n`;
+    if (silent >= 8) {
+        s += `NOTE: nothing has been posted to «${ANON_NAME}» for ${silent} messages and the channel looks dead. Unless this scene is completely private and nothing public has happened at all, post ONE now — preferably about somebody other than {{user}}.\n`;
+    } else {
+        s += `At most 1-2 posts per reply, and not every reply — the channel should feel alive, not spammy.\n`;
+    }
     if (recent) s += `Latest posts there: ${recent}.\n`;
     if (mine.length) {
         s += `{{user}} has posted there anonymously themselves: ${mine.map(p => `«${p.text.slice(0, 90)}»`).join('; ')}. The channel shows no name — but the admin sells authors for money, so a character who is angry or curious enough CAN buy that information and confront {{user}} with it. Use this only when the story builds to it.\n`;
