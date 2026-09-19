@@ -108,15 +108,13 @@ export function addAnonPosts(arr, { fromTag = false } = {}) {
     ch.unread = (ch.unread || 0) + fresh.length;
     ch.lastPostAt = chatLen();
     saveMeta();
-    // Пост из тега уже лежит в истории самим тегом — второй раз не пишем.
-    // Всё остальное («что там нового») ролевая иначе не увидит вовсе.
-    if (!fromTag) {
-        logSocialToChat(
-            `В «${ANON_NAME}» (городская анонимка, её читает ${getUserName()}) появились новые посты: `
-            + fresh.map(p => `«${p.text.slice(0, 200)}»${p.to ? ` — адресовано ${p.to}` : ''}`).join('; ')
-            + `. Авторы не подписаны.`,
-        );
-    }
+    // Пишем ВСЕГДА, в том числе про посты из тега: сам тег — сырой JSON
+    // посреди прозы, и в следующем ходе модель не помнит, что публиковала.
+    logSocialToChat(
+        `В «${ANON_NAME}» (городская анонимка, её читает ${getUserName()}) ${fromTag ? 'появился новый пост' : 'появились новые посты'}: `
+        + fresh.map(p => `«${p.text.slice(0, 200)}»${p.to ? ` — адресовано ${p.to}` : ''}`).join('; ')
+        + `. Авторы не подписаны.`,
+    );
     return fresh.length;
 }
 
@@ -335,13 +333,10 @@ export function addChannelPosts(id, arr, { fromTag = false } = {}) {
     ch.posts = [...fresh, ...(ch.posts || [])].slice(0, 40);
     if (ch.subscribed) ch.unread = (ch.unread || 0) + fresh.length;
     saveMeta();
-    // Пост из тега уже в истории; подтянутый кнопкой — нет
-    if (!fromTag) {
-        logSocialToChat(
-            `В канале «${ch.name}»${ch.author ? ` (ведёт ${ch.author})` : ''} новые посты: `
-            + fresh.map(p => `«${String(p.text || p.imgDesc || '').slice(0, 200)}»`).join('; '),
-        );
-    }
+    logSocialToChat(
+        `В канале «${ch.name}»${ch.author ? ` (ведёт ${ch.author})` : ''} ${fromTag ? 'новый пост' : 'новые посты'}: `
+        + fresh.map(p => `«${String(p.text || p.imgDesc || '').slice(0, 200)}»`).join('; '),
+    );
     return fresh.length;
 }
 

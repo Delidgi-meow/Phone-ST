@@ -6293,7 +6293,7 @@ function renderChannel(screen) {
             if (!r) throw new Error('Подписчики молчат — реакции не пришли');
             if (r.photo && !post.imgDesc) post.imgDesc = String(r.photo).slice(0, 300);
             addReacts(post, r.reactions);
-            if (post.commentsOn) addComments(post, r.comments);
+            if (post.commentsOn) addComments(post, r.comments, { channel: ch });
             const delta = Math.max(-50, Math.min(300, Math.round(Number(r.new_subs) || 0)));
             if (delta) addSubs(ch, delta);
             saveMeta();
