@@ -7,7 +7,7 @@ import { notesInjectBlock } from './notes.js';
 import { channelInjectLine, anonInjectLine } from './channels.js';
 import { plansInjectLine, plansInjectRule, getPlans } from './plans.js';
 import { twitchInjectLine } from './twitch.js';
-import { tinderInjectLine } from './tinder.js';
+import { tinderInjectLine, inAppMatchNames } from './tinder.js';
 import { pendingConsequences } from './social-events.js';
 
 const CHAT_KEY = EXT_NAME;
@@ -57,8 +57,13 @@ function buildPrompt() {
         }
     } catch (e) { /* ignore */ }
 
+    // Мэтч из приложения в контактах телефона лежит (на нём держится тред),
+    // но номера у него нет — в список «у них есть твой номер» он не идёт
+    let inAppKeys = new Set();
+    try { inAppKeys = new Set(inAppMatchNames().map(n => keyOf(n))); } catch (e) { /* ignore */ }
     const contactLines = [];
     for (const c of contacts.values()) {
+        if (inAppKeys.has(keyOf(c.name))) continue;
         contactLines.push(`- ${c.name}${c.number ? ` (${c.number})` : ''}`);
     }
     let contactsBlock = contactLines.length > 0

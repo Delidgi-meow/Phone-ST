@@ -50,7 +50,7 @@ import {
     tinderEnabled, getTinder, getTinderMe, saveTinderMe, setTinderMePhoto,
     addTinderProfiles, currentCard, findProfile, swipeTinder, undoSwipe,
     getMatches, matchBadge, markMatchOpened, setMatchIrl, deleteMatch, setProfileImage,
-    matchByContactKey, isInAppMatch, giveNumberTo,
+    matchByContactKey, isInAppMatch, giveNumberTo, ensureMatchContact,
 } from './tinder.js';
 import {
     getPlans, addPlan, togglePlan, deletePlan, groupedPlans, plansBadgeCount,
@@ -5429,6 +5429,9 @@ function renderTinProfile(screen) {
 // Мэтч уходит в обычную переписку: там работают смс, ммс, голосовые и память
 function openTinderThread(p) {
     markMatchOpened(p.id);
+    // Контакт — основа треда. У старых мэтчей его могло не быть, тогда
+    // переписка просто не открывалась и юзера выкидывало в список.
+    ensureMatchContact(p.id);
     updatePhoneInjection();
     currentThreadKey = keyOf(p.name);
     goto('thread');

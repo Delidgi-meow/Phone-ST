@@ -129,11 +129,12 @@ export function swipeTinder(id, dir) {
         p.matchedAt = Date.now();
         p.irl = false;
         t.matches = [p, ...t.matches].slice(0, 40);
-        // Номерами вы ещё не обменивались: переписка живёт ВНУТРИ Тиндера и
-        // в «Сообщениях» не показывается, пока номер не дадут. Движок при этом
-        // общий — те же теги, та же память ролевой.
+        // Номерами ещё не обменивались: в списке «Сообщений» человека не видно,
+        // а переписка открывается из Тиндера. Контакт при этом заводится — на
+        // нём держится весь тред, без него открывать было бы нечего.
         p.inApp = true;
         try {
+            addManualContact(p.name, '');
             if (p.image) setContactAvatar(keyOf(p.name), p.image);
         } catch (e) { /* ignore */ }
         logSocialToChat(
@@ -210,6 +211,25 @@ export function giveNumberTo(id) {
 export function isInAppMatch(key) {
     const m = matchByContactKey(key);
     return !!(m && m.inApp);
+}
+
+// Мэтчи, заведённые до того, как контакт стал обязательным, остались без него
+// — тред таким не открыть. Чиним по требованию, при первом же заходе.
+export function ensureMatchContact(id) {
+    const m = getMatches().find(x => x.id === id);
+    if (!m) return false;
+    try {
+        addManualContact(m.name, '');
+        if (m.image) setContactAvatar(keyOf(m.name), m.image);
+    } catch (e) { return false; }
+    return true;
+}
+
+// Имена тех, у кого её номера НЕТ: они пишут внутри приложения, и в списке
+// «у этих есть твой номер» им не место
+export function inAppMatchNames() {
+    if (!tinderEnabled()) return [];
+    return getTinder().matches.filter(m => m.inApp).map(m => m.name);
 }
 
 export function deleteMatch(id) {
