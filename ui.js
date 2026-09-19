@@ -6585,7 +6585,7 @@ function renderChanPost(screen) {
     screen.querySelector('#gp-chan-more')?.addEventListener('click', () => chanBusyRun(async () => {
         const n = addComments(post, ch.system
             ? await generateAnonComments(ch.name, post)
-            : await generateChannelComments(ch, post));
+            : await generateChannelComments(ch, post), { channel: ch });
         if (!n) throw new Error('Обсуждение молчит — попробуй ещё раз');
         toast(`Новых комментариев: ${n}`, 'fa-comment');
     }));
@@ -6607,7 +6607,8 @@ function renderChanPost(screen) {
         await chanBusyRun(async () => {
             addComments(post, ch.system
                 ? await generateAnonComments(ch.name, post, { userComment: text, replyTo })
-                : await generateChannelComments(ch, post, { userComment: text, replyTo }));
+                : await generateChannelComments(ch, post, { userComment: text, replyTo }), { channel: ch });
+            applyChatHiding();
             updatePhoneInjection();
         });
     });

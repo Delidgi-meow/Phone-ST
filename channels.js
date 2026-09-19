@@ -83,7 +83,7 @@ function chatLen() {
     try { return SillyTavern.getContext()?.chat?.length || 0; } catch (e) { return 0; }
 }
 
-export function addAnonPosts(arr) {
+export function addAnonPosts(arr, { fromTag = false } = {}) {
     const ch = getAnonChannel();
     const fresh = (Array.isArray(arr) ? arr : [])
         .filter(p => p && String(p.text || '').trim())
@@ -108,6 +108,15 @@ export function addAnonPosts(arr) {
     ch.unread = (ch.unread || 0) + fresh.length;
     ch.lastPostAt = chatLen();
     saveMeta();
+    // Пост из тега уже лежит в истории самим тегом — второй раз не пишем.
+    // Всё остальное («что там нового») ролевая иначе не увидит вовсе.
+    if (!fromTag) {
+        logSocialToChat(
+            `В «${ANON_NAME}» (городская анонимка, её читает ${getUserName()}) появились новые посты: `
+            + fresh.map(p => `«${p.text.slice(0, 200)}»${p.to ? ` — адресовано ${p.to}` : ''}`).join('; ')
+            + `. Авторы не подписаны.`,
+        );
+    }
     return fresh.length;
 }
 
@@ -317,7 +326,7 @@ export function deleteChannel(id) {
     saveMeta();
 }
 
-export function addChannelPosts(id, arr) {
+export function addChannelPosts(id, arr, { fromTag = false } = {}) {
     const ch = findChannel(id);
     if (!ch) return 0;
     const fresh = normalizePosts(arr);
@@ -325,6 +334,13 @@ export function addChannelPosts(id, arr) {
     ch.posts = [...fresh, ...(ch.posts || [])].slice(0, 40);
     if (ch.subscribed) ch.unread = (ch.unread || 0) + fresh.length;
     saveMeta();
+    // Пост из тега уже в истории; подтянутый кнопкой — нет
+    if (!fromTag) {
+        logSocialToChat(
+            `В канале «${ch.name}»${ch.author ? ` (ведёт ${ch.author})` : ''} новые посты: `
+            + fresh.map(p => `«${String(p.text || p.imgDesc || '').slice(0, 200)}»`).join('; '),
+        );
+    }
     return fresh.length;
 }
 
@@ -444,7 +460,21 @@ export function addReacts(post, arr) {
 }
 
 // ── Обсуждение ──
-export function addComments(post, arr, { fromUser = false } = {}) {
+// Обсуждение генерируется отдельным запросом и в историю чата само не
+// попадает: для ролевой его как будто нет. Пишем одну строку на пачку —
+// не каждый коммент, чтобы не топить журнал.
+function logCommentsDigest(channel, post, fresh) {
+    if (!channel || !fresh.length) return;
+    const where = channel.system
+        ? `под анонимкой в «${channel.name}»`
+        : `в обсуждении канала «${channel.name}»`;
+    const what = String(post.text || post.imgDesc || 'пост').slice(0, 120);
+    const lines = fresh.slice(0, 4)
+        .map(c => `${c.author}: «${String(c.text).slice(0, 140)}»`).join(' | ');
+    logSocialToChat(`${where} (пост «${what}») пишут — ${lines}`);
+}
+
+export function addComments(post, arr, { fromUser = false, channel = null } = {}) {
     if (!post) return 0;
     if (!Array.isArray(post.comments)) post.comments = [];
     const fresh = (Array.isArray(arr) ? arr : [])
@@ -464,6 +494,7 @@ export function addComments(post, arr, { fromUser = false } = {}) {
         }));
     post.comments = [...post.comments, ...fresh].slice(-60);
     saveMeta();
+    if (!fromUser) logCommentsDigest(channel, post, fresh);
     return fresh.length;
 }
 
@@ -560,7 +591,7 @@ function applyChannelTag(j) {
     // Модель может прислать анонимку обычным tel:chan — не плодим двойник
     // канала, а кладём пост туда, куда он и метил
     if (anonEnabled() && keyOf(name) === keyOf(ANON_NAME)) {
-        return addAnonPosts([{ text, to: j.to, from: j.from || j.author }]) ? ANON_NAME : null;
+        return addAnonPosts([{ text, to: j.to, from: j.from || j.author }], { fromTag: true }) ? ANON_NAME : null;
     }
     const c = getChannels();
     if (c.mine && keyOf(c.mine.name) === keyOf(name)) return null;
@@ -584,7 +615,7 @@ function applyChannelTag(j) {
         if (!ch) return null;
         ch.fromRp = true;
     }
-    return addChannelPosts(ch.id, [{ text, photo }]) ? ch.name : null;
+    return addChannelPosts(ch.id, [{ text, photo }], { fromTag: true }) ? ch.name : null;
 }
 
 export function harvestChannelTags() {
@@ -646,7 +677,7 @@ export function harvestAnonTags() {
             seen.add(key);
             c.anonSeen.push(key);
             const j = safeJson(m[1]);
-            if (j && String(j.text || '').trim()) n += addAnonPosts([j]);
+            if (j && String(j.text || '').trim()) n += addAnonPosts([j], { fromTag: true });
         }
     }
     if (c.anonSeen.length > 300) c.anonSeen = c.anonSeen.slice(-300);
