@@ -473,6 +473,18 @@ export function delTweetReply(tweetId, replyId) {
     saveMeta();
 }
 
+function igMarker(id) { return `ig:${id}`; }
+
+// Строка журнала для её поста. Зовётся сразу при публикации и второй раз,
+// когда vision дорисует описание кадра, — со снятием прежней записи.
+export function logIgPost(post) {
+    if (!post) return;
+    removeJournalEntry(igMarker(post.id));
+    const what = post.imgDesc ? ` (на фото: ${String(post.imgDesc).slice(0, 200)})` : '';
+    const cap = post.caption ? `, подпись: «${String(post.caption).slice(0, 200)}»` : '';
+    logSocialToChat(`${getUserName()} публикует фото в Instagram${what}${cap}`, { marker: igMarker(post.id) });
+}
+
 export function postIg({ image = null, imgDesc = '', caption = '' }) {
     const s = getSocial();
     const post = {
@@ -483,6 +495,9 @@ export function postIg({ image = null, imgDesc = '', caption = '' }) {
     post.temporalContext = extractTemporalContext(`${post.caption} ${post.imgDesc}`);
     s.igPosts.unshift(post);
     trimFeeds(s); saveMeta();
+    // Пишем сразу: раньше строка уходила только если догенерились
+    // комменты, и при сбое публикация до ролевой не доходила вовсе
+    logIgPost(post);
     return post;
 }
 
@@ -498,6 +513,8 @@ export function delIg(id) {
     const s = getSocial();
     s.igPosts = s.igPosts.filter(x => x.id !== id);
     saveMeta();
+    // Пост удалён — журнальная строка о нём тоже
+    removeJournalEntry(igMarker(id));
 }
 
 export function addIgComment(postId, text, author = null, ak = 'user', replyTo = null) {
@@ -3325,6 +3342,19 @@ export function stripFakeJournal() {
         if (next !== msg.mes) { msg.mes = next; fixed++; }
     }
     return fixed;
+}
+
+// Лента, которую нагенерили по кнопке, живёт только в телефоне: для ролевой
+// её как будто нет. Пишем одну строку на пачку — не каждый пост.
+export function logFeedDigest(where, items) {
+    const arr = (Array.isArray(items) ? items : []).filter(Boolean).slice(0, 4);
+    if (!arr.length) return;
+    const parts = arr.map((x) => {
+        const who = x.author || 'Аккаунт';
+        const what = String(x.text || x.caption || x.imgDesc || '').slice(0, 140);
+        return what ? `${who}: «${what}»` : who;
+    });
+    logSocialToChat(`В ${where} на телефоне ${getUserName()} появились новые посты — ${parts.join(' | ')}`);
 }
 
 // Читаемая копия скрытого журнала, который реально лежит в истории чата и

@@ -101,9 +101,18 @@ export async function refreshDChannel(sid, cid) {
     if (!srv || !ch) return 0;
     _inflight = true;
     try {
+        const before = (ch.messages || []).length;
         const n = pushMessages(ch, await generateDiscordFeed(srv, ch, ch.messages));
         if (!n) throw new Error('Канал молчит — попробуй ещё раз');
         saveMeta();
+        // Иначе переписка на сервере для ролевой не существует
+        const fresh = (ch.messages || []).slice(before, before + 4);
+        if (fresh.length) {
+            logSocialToChat(
+                `В Discord, на сервере «${srv.name}» в канале #${ch.name}, пишут — `
+                + fresh.map(m => `${m.author}: «${String(m.text || '').slice(0, 140)}»`).join(' | '),
+            );
+        }
         return n;
     } finally {
         _inflight = false;

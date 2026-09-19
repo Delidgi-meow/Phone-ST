@@ -23,7 +23,7 @@ import {
     regenerateTweet, regenerateIgPost, refreshFeed,
     compressImage, setContactAvatar, getContactAvatar, avatarForAuthor, setUserAvatar, getUserAvatar,
     timeAgo, makeHandle, getUserName, generatePostImage, cancelImageGen, isImageGenAvailable, resolveAuthorKey,
-    handleFor, setContactHandle, setUserHandle, getUserHandle, describePostImage, generateSmsPhotoReply, logSocialToChat, getSocialJournalEntries,
+    handleFor, setContactHandle, setUserHandle, getUserHandle, describePostImage, generateSmsPhotoReply, logSocialToChat, getSocialJournalEntries, logIgPost, logFeedDigest,
     settleSocialPost, maybeGenerateStoryEvent, resolveStoryEvent, generateAdvertisingOffers,
     getStories, activeStories, addStory, deleteStory, bumpStoryViews, toggleStoryLike, generateContactStories, generateStoryReactions,
     generateRepLabel, generateGroupChats,
@@ -2546,6 +2546,7 @@ function renderTw(screen) {
         genBusy = true; render();
         try {
             const n = await generateTweetFeed();
+            logFeedDigest('лента твиттера', getTweets().filter(t => t.ak !== 'user').slice(0, n));
             toast(n > 0 ? `Новых твитов: ${n}` : 'Не получилось — попробуй ещё раз', n > 0 ? 'fa-x-twitter' : 'fa-circle-exclamation');
         } catch (e) {
             console.error('[GlassPhone] tw feed failed:', e);
@@ -2962,6 +2963,7 @@ function renderIg(screen) {
         genBusy = true; render();
         try {
             const n = await generateIgFeed();
+            logFeedDigest('лента Instagram', getIgPosts().filter(p => p.ak !== 'user').slice(0, n));
             toast(n > 0 ? `Новых постов: ${n}` : 'Не получилось — попробуй ещё раз', n > 0 ? 'fa-instagram' : 'fa-circle-exclamation');
         } catch (e) {
             console.error('[GlassPhone] ig feed failed:', e);
@@ -3466,10 +3468,9 @@ function renderIgNew(screen) {
                 await generateIgComments(post);
                 updatePhoneInjection();
                 render();
-                // Журнал — уже с готовым описанием
-                await logSocialToChat(
-                    `${getUserName()} публикует фото в Instagram${post.imgDesc ? ` (на фото: ${post.imgDesc})` : ''}${post.caption ? `, подпись: «${post.caption}»` : ''}`,
-                );
+                // Строку писал сам postIg; теперь, когда vision дорисовал
+                // описание кадра, переписываем её с ним
+                logIgPost(post);
                 applyChatHiding();
                 logNewReplies('фото в Instagram', post.caption || post.imgDesc, post.comments, before);
                 await finalizeSocialPost('instagram', post);
