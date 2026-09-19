@@ -139,11 +139,23 @@ export function canAffordAnonReveal() {
     try { return getBank().balance >= anonRevealPrice(); } catch (e) { return false; }
 }
 
-export function revealAnonAuthor(postId) {
+// Похоже ли на имя, а не на описание вроде «девушка из ТЦ Галерея»
+function looksLikeName(v) {
+    const t = String(v || '').trim();
+    if (!t) return false;
+    const first = t.split(/[\s,]+/)[0] || '';
+    if (first.length < 2) return false;
+    // Имя начинается с заглавной и не с предлога
+    if (first[0] !== first[0].toUpperCase() || first[0] === first[0].toLowerCase()) return false;
+    return !/^(из|с|со|от|в|во|у|про|для|один|одна)$/i.test(first);
+}
+
+// Проверить и списать — без генерации. Возвращает цену, если платёж прошёл.
+export function chargeAnonReveal(postId) {
     const ch = getAnonChannel();
     const post = ch.posts.find(p => p.id === postId);
     if (!post) throw new Error('Пост не найден');
-    if (post.revealed) return post;
+    if (post.revealed) return 0;
     if (post.byUser) throw new Error('Это твой собственный пост');
     const price = anonRevealPrice();
     if (getBank().balance < price) throw new Error('Не хватает денег на карте');
@@ -152,8 +164,35 @@ export function revealAnonAuthor(postId) {
     post.revealPrice = price;
     ch.reveals = (ch.reveals || 0) + 1;
     saveMeta();
-    logSocialToChat(`${getUserName()} платит ${fmtMoney(price)} админу «${ANON_NAME}», чтобы узнать, кто прислал пост «${post.text.slice(0, 140)}». Ей называют имя: ${post.realAuthor || 'автора так и не нашли'}. Знает об этом только она — сам автор не в курсе, что его вычислили.`);
+    return price;
+}
+
+// Записать выясненную личность и отправить строку в журнал
+export function setAnonAuthor(postId, { name = '', who = '', why = '' } = {}) {
+    const post = getAnonChannel().posts.find(p => p.id === postId);
+    if (!post) return null;
+    if (name) post.realAuthor = String(name).trim().slice(0, 60);
+    if (who) post.realWho = String(who).trim().slice(0, 300);
+    if (why) post.realWhy = String(why).trim().slice(0, 300);
+    saveMeta();
+    logSocialToChat(
+        `${getUserName()} платит ${fmtMoney(post.revealPrice || 0)} админу «${ANON_NAME}», чтобы узнать, кто прислал пост «${post.text.slice(0, 140)}». `
+        + `Называют имя: ${post.realAuthor || 'автора так и не нашли'}.${post.realWho ? ` ${post.realWho}` : ''}${post.realWhy ? ` ${post.realWhy}` : ''} `
+        + `Знает об этом только ${getUserName()} — сам автор не в курсе, что его вычислили.`,
+    );
     return post;
+}
+
+// Нужно ли доспрашивать модель: в анкете поста имени нет
+export function anonAuthorNeedsLookup(postId) {
+    const post = getAnonChannel().posts.find(p => p.id === postId);
+    return !!post && !looksLikeName(post.realAuthor);
+}
+
+export function revealAnonAuthor(postId) {
+    const price = chargeAnonReveal(postId);
+    if (!price) return getAnonChannel().posts.find(p => p.id === postId);
+    return setAnonAuthor(postId, {});
 }
 
 export function findChannel(id) { return allChannels().find(x => x.id === id) || null; }
@@ -639,7 +678,7 @@ export function anonInjectLine() {
         s += `{{user}} has posted there anonymously themselves: ${mine.map(p => `«${p.text.slice(0, 90)}»`).join('; ')}. The channel shows no name — but the admin sells authors for money, so a character who is angry or curious enough CAN buy that information and confront {{user}} with it. Use this only when the story builds to it.\n`;
     }
     if (known.length) {
-        s += `{{user}} has paid to unmask these: ${known.map(p => `«${p.text.slice(0, 60)}» — sent by ${p.realAuthor}`).join('; ')}. ONLY {{user}} knows this; the authors have no idea they were exposed. {{user}} may drop hints, and they would be rattled.\n`;
+        s += `{{user}} has paid to unmask these: ${known.map(p => `«${p.text.slice(0, 60)}» — sent by ${p.realAuthor}${p.realWho ? ` (${p.realWho})` : ''}`).join('; ')}. ONLY {{user}} knows this; the authors have no idea they were exposed. {{user}} may drop hints, and they would be rattled.\n`;
     }
     return s.trim();
 }

@@ -91,7 +91,7 @@ const DICT = {
     'Что рассказать городу…': 'Tell the town something…', 'Кому (необязательно)': 'To (optional)',
     'Отправить в канал': 'Send to the channel', 'Что там нового': 'See what is new',
     'Узнать, кто написал': 'Find out who sent it', 'Не хватает денег': 'Not enough money',
-    'Пробить автора': 'Buy the sender\'s name', 'Не надо': 'Never mind', 'Заплатить': 'Pay',
+    'Пробить автора': 'Buy the sender\'s name', 'Пробиваю…': 'Digging…', 'Не надо': 'Never mind', 'Заплатить': 'Pay',
     'знаешь только ты': 'only you know this', 'тебе': 'to you', 'твой пост': 'your post',
     'анонимно': 'anonymous', 'анонимно · тебе': 'anonymous · to you', 'анонимно · от тебя': 'anonymous · from you',
     'Анонимка ушла в канал': 'Your anonymous post is live', 'Напиши текст': 'Write something',

@@ -1824,12 +1824,59 @@ export async function generateAnonFeed(channelName, existing = [], handle = '') 
 People send posts there WITHOUT a name: rumours about local people, things they saw, confessions, questions they would never ask to someone's face. The channel publishes them as-is.
 ${existing.length ? `Already published (do NOT repeat, do not contradict):\n${existing.slice(0, 6).map(x => `- ${x}`).join('\n')}` : ''}
 ${contactsBlock()}
-Write 4-6 new submissions rooted in what is happening in the roleplay right now and in this town. Mix them: most are about other people and everyday local life, and 1-2 are aimed at ${getUserName()} personally — those set "to" to "${handle}" and speak TO them (a question, a jab, a confession). Short, spoken, a little mean or a little tender, the way real people write anonymously. No emojis.
-"from" — who REALLY sent each one: an exact name from the contacts above when it plausibly is them, otherwise a plain description of a stranger («сосед сверху», «девушка из «Ротонды»»). This field is secret from ${getUserName()}.
+Write 4-6 new submissions. MOST OF THEM MUST BE ABOUT OTHER PEOPLE — this is a channel about the whole town, not about two people. Spread them across:
+- minor characters who have already appeared in the roleplay excerpt, BY NAME;
+- people named in the WORLD/LOREBOOK and in the main character's card — their colleagues, family, neighbours, rivals, exes, the staff of the places they frequent. Use those exact names;
+- ordinary locals you invent yourself and can reuse later: a shop, a stairwell, a school, a clinic, a bus route, a building site, a dog, a scandal at a wedding.
+At most ONE post may be about ${getUserName()} and at most ONE about the main character — and even those are optional. If a post IS aimed at ${getUserName()}, set "to" to "${handle}" and speak TO them. Everything else is the town talking about itself: name names, be petty and concrete.
+"from" — who REALLY sent each one, ALWAYS AS A NAME: an exact name from the contacts above when it plausibly is them, otherwise INVENT a full name for the stranger (first name + surname) and add who they are after a comma («Алина Ковалёва, продавщица из ТЦ», «Пётр Гринько, сосед сверху»). NEVER a description without a name — ${getUserName()} can pay to learn it, and a nameless answer is worthless. This field is secret from ${getUserName()}.
 ${uiLangLine()}
 ${JSON_RULES}
 Format: [{"text":"...","to":"","from":"кто на самом деле"}]`;
     return await socialGenArray(prompt, { maxTokens: 1400, prefill: '[{"text":"' });
+}
+
+// Обсуждение в городской анонимке. Отдельно от обычных каналов: здесь
+// комментируют не «подписчики издания», а весь город — те же люди, что
+// живут в ролевой, и они В КУРСЕ происходящего.
+export async function generateAnonComments(channelName, post, { userComment = null, replyTo = null } = {}) {
+    const existing = (post.comments || []).slice(-8).map(c => `${c.author}: ${c.text}`).join('\n');
+    const event = userComment
+        ? (replyTo
+            ? `${getUserName()} just replied to ${replyTo}: «${userComment}». ${replyTo} answers FIRST, then 1-2 others.`
+            : `${getUserName()} just commented under this post: «${userComment}». Somebody answers them.`)
+        : '';
+    const prompt = `${await taskHeader(`write the comments under a post in «${channelName}» — the town's anonymous gossip channel.`)}
+The post: ${post.text}
+${post.to ? `It is aimed at ${post.to}.` : ''}
+${existing ? `Comments so far (do NOT repeat):\n${existing}\n` : ''}${event}
+${contactsBlock()}
+This channel is read by the WHOLE town, so the commenters are ordinary local people — and they KNOW what has been going on lately: the events, rumours and people from the roleplay excerpt above. Let that show. They speculate, recognise who the post is about, half-guess wrong, bring up something that happened recently, take sides, bicker with each other.
+Known characters from the list above MAY comment here when they plausibly would — under their real name if they do not care about being seen, or under a nickname if they do. Do not force them in; one is plenty, often none.
+Write ${userComment ? '2-4' : '4-6'} comments. Short and spoken, the way people write in such channels: unpunctuated, mean, funny, nosy. Use "reply_to" with the exact name of the person being answered. NO emojis.
+${uiLangLine()}
+${JSON_RULES}
+Format: [{"author":"Имя или ник","handle":"","text":"...","reply_to":""}]`;
+    return await socialGenArray(prompt, { maxTokens: 1300, prefill: '[{"author":"' });
+}
+
+// Пробить автора: имени в анкете поста может не быть (модель прислала
+// описание) — тогда выясняем, кто это, отдельным запросом. Юзер платит
+// деньги и должен получить имя, а не «девушка из ТЦ».
+export async function resolveAnonAuthor(channelName, post) {
+    const seed = String(post.realAuthor || '').trim();
+    const prompt = `${await taskHeader(`identify who anonymously sent one post to «${channelName}», the town's gossip channel.`)}
+The post: ${post.text}
+${post.to ? `It was aimed at ${post.to}.` : ''}
+${seed ? `What the channel's admin has on the sender: «${seed}». Turn this into a real person — keep it consistent with that.` : ''}
+${contactsBlock()}
+Answer with ONE person. If it plausibly is one of the known characters above, use their EXACT name. Otherwise invent an ordinary local person: full name (first name + surname) that fits this place and era.
+"name" — the name, nothing else. "who" — one sentence: who they are, and how they crossed paths with ${getUserName()} or with what the post is about. "why" — one short sentence: why they sent it anonymously.
+${uiLangLine()}
+${JSON_RULES}
+Format: [{"name":"Имя Фамилия","who":"...","why":"..."}]`;
+    const arr = await socialGenArray(prompt, { maxTokens: 500, prefill: '[{"name":"' });
+    return Array.isArray(arr) ? arr[0] : null;
 }
 
 export async function generateChannelComments(channel, post, { userComment = null, replyTo = null } = {}) {

@@ -27,7 +27,8 @@ import {
     settleSocialPost, maybeGenerateStoryEvent, resolveStoryEvent, generateAdvertisingOffers,
     getStories, activeStories, addStory, deleteStory, bumpStoryViews, toggleStoryLike, generateContactStories, generateStoryReactions,
     generateRepLabel, generateGroupChats,
-    generateChannels, generateChannelPosts, generateChannelComments, generateMyChannelFeedback, generatePersonChannel, generateAnonFeed, generateTinderDeck,
+    generateChannels, generateChannelPosts, generateChannelComments, generateMyChannelFeedback, generatePersonChannel,
+    generateAnonFeed, generateAnonComments, resolveAnonAuthor, generateTinderDeck,
 } from './social.js';
 import { getSystemsView, deferEvent, declineEvent, selectStoryEvent, acceptAdOffer, declineAdOffer, attachActiveAd, getReputationStatus } from './social-events.js';
 import { maybeScamSms } from './scam.js';
@@ -39,7 +40,8 @@ import {
     setChannelAvatar, clearChannelAvatar,
     CHAN_REACTS,
     ANON_ID, ANON_NAME, anonEnabled, getAnonChannel, anonPostToUser, addAnonPosts,
-    postAnonAsUser, anonRevealPrice, canAffordAnonReveal, revealAnonAuthor,
+    postAnonAsUser, anonRevealPrice, canAffordAnonReveal,
+    chargeAnonReveal, setAnonAuthor, anonAuthorNeedsLookup,
 } from './channels.js';
 import { casinoStats, spinSlots, spinRoulette, canBet } from './casino.js';
 import { getNews, refreshNews, shareNews, deleteNews } from './news.js';
@@ -6419,16 +6421,32 @@ function anonBuySheet(post) {
     const close = () => overlay.remove();
     overlay.querySelector('#gp-anonpay-no')?.addEventListener('click', close);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-    overlay.querySelector('#gp-anonpay-yes')?.addEventListener('click', () => {
+    overlay.querySelector('#gp-anonpay-yes')?.addEventListener('click', async () => {
+        const yes = overlay.querySelector('#gp-anonpay-yes');
         try {
-            const done = revealAnonAuthor(post.id);
-            close();
-            applyChatHiding();
-            render();
-            toast(done.realAuthor ? `Автор: ${done.realAuthor}` : 'Автора не нашли', 'fa-user-secret');
+            chargeAnonReveal(post.id);
         } catch (e) {
             toast(String(e?.message || e).slice(0, 60), 'fa-circle-exclamation');
+            return;
         }
+        // Имени в посте может не быть — админ «пробивает» его отдельно.
+        // Деньги уже списаны, поэтому имя обязано появиться.
+        let info = {};
+        if (anonAuthorNeedsLookup(post.id)) {
+            if (yes) { yes.disabled = true; yes.innerHTML = `${ic('fa-spinner fa-spin')} Пробиваю…`; }
+            try {
+                info = (await resolveAnonAuthor(ANON_NAME, post)) || {};
+            } catch (e) {
+                console.warn('[GlassPhone] anon author lookup failed:', e);
+            }
+        }
+        setAnonAuthor(post.id, info);
+        close();
+        applyChatHiding();
+        updatePhoneInjection();
+        render();
+        const who = findChanPost(ANON_ID, post.id)?.realAuthor;
+        toast(who ? `Автор: ${who}` : 'Автора не нашли', 'fa-user-secret');
     });
 }
 
@@ -6446,8 +6464,8 @@ function anonHeadHtml(post) {
         <div class="gp-anon-known">
             <span class="gp-anon-known-ava">${esc(who.slice(0, 1).toUpperCase())}</span>
             <span class="gp-anon-known-text">
-                <b>Написал${/[аяь]$/i.test(who) ? 'а' : ''} ${esc(who)}</b>
-                <small>${post.revealPrice ? `пробито за ${esc(fmtMoney(post.revealPrice))} · ` : ''}знаешь только ты</small>
+                <b>${esc(who)}</b>
+                <small>${post.realWho ? `${esc(post.realWho)} · ` : ''}знаешь только ты</small>
             </span>
         </div>`;
     } else {
@@ -6565,7 +6583,9 @@ function renderChanPost(screen) {
     }));
 
     screen.querySelector('#gp-chan-more')?.addEventListener('click', () => chanBusyRun(async () => {
-        const n = addComments(post, await generateChannelComments(ch, post));
+        const n = addComments(post, ch.system
+            ? await generateAnonComments(ch.name, post)
+            : await generateChannelComments(ch, post));
         if (!n) throw new Error('Обсуждение молчит — попробуй ещё раз');
         toast(`Новых комментариев: ${n}`, 'fa-comment');
     }));
@@ -6585,7 +6605,9 @@ function renderChanPost(screen) {
         applyChatHiding();
         render();
         await chanBusyRun(async () => {
-            addComments(post, await generateChannelComments(ch, post, { userComment: text, replyTo }));
+            addComments(post, ch.system
+                ? await generateAnonComments(ch.name, post, { userComment: text, replyTo })
+                : await generateChannelComments(ch, post, { userComment: text, replyTo }));
             updatePhoneInjection();
         });
     });
