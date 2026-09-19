@@ -5175,6 +5175,8 @@ function renderTinder(screen) {
                     ${next ? '<div class="gp-tin-card gp-tin-card-under"></div>' : ''}
                     <div class="gp-tin-card" data-tinopen="${esc(card.id)}">
                         ${tinPhotoHtml(card)}
+                        <span class="gp-tin-stamp gp-tin-stamp-yes">Нравится</span>
+                        <span class="gp-tin-stamp gp-tin-stamp-no">Мимо</span>
                         <div class="gp-tin-scrim">
                             <div class="gp-tin-name"><b>${esc(card.name.split(' ')[0])}</b><span>${card.age}</span></div>
                             ${card.job ? `<div class="gp-tin-job">${ic('fa-briefcase')} ${esc(card.job)}</div>` : ''}
@@ -5211,10 +5213,7 @@ function renderTinder(screen) {
     }));
 
     const openProfile = (id) => { _tinProfileId = id; goto('tinprofile'); };
-    screen.querySelector('[data-tinopen]')?.addEventListener('click', (e) => {
-        if (e.target.closest('[data-tindraw]')) return;
-        openProfile(screen.querySelector('[data-tinopen]').getAttribute('data-tinopen'));
-    });
+    bindTinSwipe(screen, openProfile);
     screen.querySelector('#gp-tin-info')?.addEventListener('click', () => card && openProfile(card.id));
     screen.querySelector('#gp-tin-no')?.addEventListener('click', () => card && doSwipe(card.id, 'pass'));
     screen.querySelector('#gp-tin-yes')?.addEventListener('click', () => card && doSwipe(card.id, 'like'));
@@ -5223,6 +5222,68 @@ function renderTinder(screen) {
         render();
     });
     bindTinMatchOverlay(screen);
+}
+
+// Свайп пальцем. Карта едет за пальцем, кренится и проявляет штамп; на
+// отпускании либо улетает и засчитывается, либо возвращается на место.
+// Обычный клик отличаем от свайпа по тому, сдвинулся ли палец вообще.
+function bindTinSwipe(root, openProfile) {
+    const card = root.querySelector('[data-tinopen]');
+    if (!card) return;
+    const id = card.getAttribute('data-tinopen');
+    const yes = card.querySelector('.gp-tin-stamp-yes');
+    const no = card.querySelector('.gp-tin-stamp-no');
+    // Порог — треть ширины карты, но не меньше пальца
+    const threshold = () => Math.max(90, card.offsetWidth * 0.3);
+    let startX = 0, startY = 0, dx = 0, dy = 0, dragging = false, moved = false;
+
+    const paint = () => {
+        card.style.transform = `translate(${dx}px, ${dy * 0.35}px) rotate(${dx / 20}deg)`;
+        const k = Math.min(1, Math.abs(dx) / threshold());
+        if (yes) yes.style.opacity = dx > 0 ? String(k) : '0';
+        if (no) no.style.opacity = dx < 0 ? String(k) : '0';
+    };
+    const reset = () => {
+        card.classList.remove('gp-tin-dragging');
+        card.style.transform = '';
+        if (yes) yes.style.opacity = '0';
+        if (no) no.style.opacity = '0';
+    };
+
+    card.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('button')) return;
+        dragging = true;
+        moved = false;
+        startX = e.clientX;
+        startY = e.clientY;
+        dx = 0; dy = 0;
+        card.classList.add('gp-tin-dragging');
+        try { card.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    });
+    card.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        dx = e.clientX - startX;
+        dy = e.clientY - startY;
+        if (Math.abs(dx) > 5 || Math.abs(dy) > 5) moved = true;
+        paint();
+    });
+    const end = () => {
+        if (!dragging) return;
+        dragging = false;
+        const dir = dx > threshold() ? 'like' : dx < -threshold() ? 'pass' : null;
+        if (!dir) { reset(); return; }
+        card.classList.remove('gp-tin-dragging');
+        card.style.transform = `translate(${dx > 0 ? 640 : -640}px, ${dy * 0.35}px) rotate(${dx > 0 ? 26 : -26}deg)`;
+        card.style.opacity = '0';
+        // Даём карте улететь и только потом пересобираем экран
+        setTimeout(() => doSwipe(id, dir), 190);
+    };
+    card.addEventListener('pointerup', end);
+    card.addEventListener('pointercancel', () => { dragging = false; reset(); });
+    card.addEventListener('click', (e) => {
+        if (moved || e.target.closest('button')) return;
+        openProfile(id);
+    });
 }
 
 function doSwipe(id, dir) {

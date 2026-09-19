@@ -104,6 +104,7 @@ const DICT = {
     'Узнать автора анонимки': 'Unmasking an anonymous sender',
     'цена первого имени, дальше растёт': 'price of the first name, rises after that',
     'Пост не найден': 'Post not found',
+    'Мимо': 'Nope',
     'Моя анкета': 'My profile', 'Мэтчи': 'Matches', 'Ещё анкеты': 'More profiles',
     'Анкета целиком': 'Full profile', 'Вернуть последнюю': 'Undo last', 'Не сегодня': 'Nope',
     'Нравится': 'Like', 'Нарисовать': 'Draw it', 'Рисую…': 'Drawing…', 'Перерисовать фото': 'Redraw the photo',

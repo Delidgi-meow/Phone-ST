@@ -3362,6 +3362,20 @@ body.gp-theme-minimal .gp-toast-ava {
     cursor: pointer;
 }
 .gp-tin-card-under { transform: scale(.94) translateY(12px); opacity: .5; }
+/* Свайп пальцем: карта едет за пальцем без анимации, отпустил — доезжает сама.
+   touch-action: none, иначе браузер попытается прокрутить страницу. */
+.gp-tin-card { touch-action: none; transition: transform .22s cubic-bezier(.2,.8,.3,1), opacity .18s linear; }
+.gp-tin-card.gp-tin-dragging { transition: none; cursor: grabbing; }
+.gp-tin-stamp {
+    position: absolute; top: 18px; z-index: 5;
+    padding: 4px 11px;
+    border: 2px solid; border-radius: 7px;
+    font-size: 15px; font-weight: 800; letter-spacing: .05em; text-transform: uppercase;
+    opacity: 0; pointer-events: none;
+}
+.gp-tin-stamp-yes { left: 16px; transform: rotate(-14deg); border-color: #43d18a; color: #43d18a; }
+.gp-tin-stamp-no { right: 16px; transform: rotate(14deg); border-color: #ff5f6d; color: #ff5f6d; }
+@media (prefers-reduced-motion: reduce) { .gp-tin-card { transition: none; } }
 .gp-tin-empty {
     position: absolute; inset: 0;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
