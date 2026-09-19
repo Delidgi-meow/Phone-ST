@@ -18,7 +18,7 @@ import {
     getTweets, getIgPosts, postTweet, likeTweet, rtTweet, delTweet, addTweetReply, delTweetReply,
     postIg, likeIg, delIg, addIgComment, delIgComment,
     getOfPosts, postOf, likeOf, delOf, addOfComment, delOfComment, generateOfComments, getSocial,
-    withdrawOf, setOfWallet,
+    migrateOfWallet, ofIsText,
     generateTweetFeed, generateTweetComments, generateAuthorReply, generateReplyToComment, generateIgFeed, generateIgComments,
     regenerateTweet, regenerateIgPost, refreshFeed,
     compressImage, setContactAvatar, getContactAvatar, avatarForAuthor, setUserAvatar, getUserAvatar,
@@ -3464,13 +3464,15 @@ function ofCard(p, { clickable = true } = {}) {
             <span class="gp-tw-time">· ${esc(timeAgo(p.time))}</span>
             <button class="gp-tw-del" data-del-of="${esc(p.id)}" title="Удалить">${ic('fa-xmark')}</button>
         </div>
-        <div class="${clickable ? 'gp-clickable' : ''}" data-open-of="${esc(p.id)}">${igImageHtml(p)}</div>
+        <div class="${clickable ? 'gp-clickable' : ''}" data-open-of="${esc(p.id)}">${ofIsText(p)
+            ? `<div class="gp-of-text">${esc(p.caption || '')}</div>`
+            : igImageHtml(p)}</div>
         <div class="gp-ig-actions">
             <button class="gp-tw-act${p.liked ? ' gp-tw-on' : ''}" data-like-of="${esc(p.id)}">${ic('fa-heart')}<span>${p.likes || ''}</span></button>
             <button class="gp-tw-act" data-open-of2="${esc(p.id)}">${ic('fa-comment')}<span>${p.comments?.length || ''}</span></button>
             ${p.tips > 0 ? `<span class="gp-of-tips">${ic('fa-sack-dollar')} $${p.tips}</span>` : ''}
         </div>
-        ${p.caption ? `<div class="gp-ig-caption"><b>${esc(p.author)}</b> ${esc(p.caption)}</div>` : ''}
+        ${p.caption && !ofIsText(p) ? `<div class="gp-ig-caption"><b>${esc(p.author)}</b> ${esc(p.caption)}</div>` : ''}
     </div>`;
 }
 
@@ -3493,6 +3495,8 @@ function bindOfCardActions(root) {
 
 function renderOf(screen) {
     currentScreen = 'of';
+    // Накопленное на прежней «карте» не должно пропасть при обновлении
+    try { migrateOfWallet(); } catch (e) { /* ignore */ }
     const posts = getOfPosts();
     markFeedSeen('of', posts.length);
     const s = getSocial();
@@ -3505,8 +3509,8 @@ function renderOf(screen) {
         </div>
         <div class="gp-of-stats">
             <div class="gp-of-stat"><b>${s.ofSubs}</b><span>подписчиков</span></div>
-            <div class="gp-of-stat gp-of-stat-btn" id="gp-of-withdraw" title="Вывести на карту"><b>$${s.ofEarned}</b><span>${s.ofEarned > 0 ? `вывести ${'→'}` : 'баланс'}</span></div>
-            <div class="gp-of-stat gp-of-stat-btn" id="gp-of-wallet" title="Клик — изменить (траты в РП)"><b>$${s.ofWallet}</b><span>на карте</span></div>
+            <div class="gp-of-stat"><b>$${s.ofEarned}</b><span>заработано</span></div>
+            <div class="gp-of-stat gp-of-stat-btn" id="gp-of-bank" title="Открыть банк"><b>${esc(fmtMoney(getBank().balance))}</b><span>на счету →</span></div>
         </div>
         <div class="gp-feed" id="gp-of-feed">
             ${posts.length === 0
@@ -3516,25 +3520,9 @@ function renderOf(screen) {
 
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('home'));
     screen.querySelector('#gp-of-new')?.addEventListener('click', () => goto('ofnew'));
-    // Вывод заработка на карту → деньги доступны в ролевой (через инжекцию)
-    screen.querySelector('#gp-of-withdraw')?.addEventListener('click', () => {
-        const st = getSocial();
-        if (st.ofEarned <= 0) { toast('Пока нечего выводить', 'fa-circle-exclamation'); return; }
-        if (!confirm(`Вывести $${st.ofEarned} на карту?\nДеньги станут доступны тебе в ролевой (персонажи не узнают источник).`)) return;
-        const amount = withdrawOf();
-        updatePhoneInjection();
-        toast(`Выведено $${amount} — деньги на карте`, 'fa-sack-dollar');
-        render();
-    });
-    // Ручная правка баланса карты (потратила в РП — спиши)
-    screen.querySelector('#gp-of-wallet')?.addEventListener('click', () => {
-        const st = getSocial();
-        const v = prompt('Баланс карты, $ (потратила в РП — уменьши):', String(st.ofWallet));
-        if (v === null) return;
-        setOfWallet(v);
-        updatePhoneInjection();
-        render();
-    });
+    // Деньги со страницы падают прямо на счёт, отдельного кошелька нет —
+    // плитка ведёт в банк, где их и видно вместе с остальными
+    screen.querySelector('#gp-of-bank')?.addEventListener('click', () => goto('bank'));
     bindOfCardActions(screen);
 }
 
@@ -3638,15 +3626,15 @@ function renderOfNew(screen) {
                 <input type="text" id="gp-of-desc" maxlength="200" placeholder="Или нажми «Нарисовать» после публикации">
             </label>
             <label class="gp-field">
-                <span>Подпись</span>
-                <input type="text" id="gp-of-caption" maxlength="400" placeholder="Подпись для подписчиков">
+                <span>Текст поста</span>
+                <textarea id="gp-of-caption" rows="3" maxlength="400" placeholder="Подпись к фото — или просто запись без фото"></textarea>
             </label>
             <label class="gp-field">
                 <span>Цена PPV, $ <i style="opacity:0.5;text-transform:none;letter-spacing:0">(0 = по подписке)</i></span>
                 <input type="number" id="gp-of-price" min="0" max="500" value="0">
             </label>
             <button class="gp-primary gp-of-primary" id="gp-of-publish">${ic('fa-check')} Опубликовать</button>
-            <div class="gp-add-hint">Пост приватный: персонажи в ролевой узнают о нём, только если по сюжету тайно подписаны.</div>
+            <div class="gp-add-hint">Без фото выйдет текстовая запись. Пост приватный: персонажи в ролевой узнают о нём, только если по сюжету тайно подписаны.</div>
         </div>`;
 
     screen.querySelector('#gp-back')?.addEventListener('click', () => { _ofDraftImage = null; goto('of'); });
@@ -3669,8 +3657,9 @@ function renderOfNew(screen) {
         const desc = screen.querySelector('#gp-of-desc')?.value.trim() || '';
         const caption = screen.querySelector('#gp-of-caption')?.value.trim() || '';
         const price = parseInt(screen.querySelector('#gp-of-price')?.value) || 0;
-        if (!_ofDraftImage && !desc) {
-            toast('Выбери фото или опиши, что на нём', 'fa-circle-exclamation');
+        // Пост без фото — обычная текстовая запись, так что хватает и текста
+        if (!_ofDraftImage && !desc && !caption) {
+            toast('Нужно фото или текст', 'fa-circle-exclamation');
             return;
         }
         clearDraft('gp-of-desc'); clearDraft('gp-of-caption'); clearDraft('gp-of-price');
@@ -3679,6 +3668,7 @@ function renderOfNew(screen) {
         updatePhoneInjection();
         currentPostId = post.id;
         goto('ofview');
+        applyChatHiding();
         toast('Опубликовано для подписчиков', 'fa-heart');
 
         if (!genBusy) {
@@ -3690,10 +3680,8 @@ function renderOfNew(screen) {
                 await generateOfComments(post);
                 updatePhoneInjection();
                 render();
-                // Журнал: только описание, текст жёстко помечает приватность
-                await logSocialToChat(
-                    `${getUserName()} публикует пост на своей ПРИВАТНОЙ странице OnlyFans (видят только анонимные подписчики; персонажи НЕ знают, если сюжет не установил обратное)${post.imgDesc ? ` — на фото: ${post.imgDesc}` : ''}${post.caption ? `, подпись: «${post.caption}»` : ''}`,
-                );
+                // Сам пост в журнал пишет postOf — с меткой, чтобы строка
+                // ушла вместе с постом. Здесь остаются только отклики фанатов.
                 applyChatHiding();
                 logNewReplies('приватным OnlyFans-постом', post.caption || post.imgDesc, post.comments, before);
             } catch (e) {

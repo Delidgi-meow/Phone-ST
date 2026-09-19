@@ -3,6 +3,7 @@ import { saveBase64AsFile } from '../../../utils.js';
 import { extensionNames, extension_settings } from '../../../extensions.js';
 import { getMeta, saveMeta, keyOf, scanChat, getSettings, stripThink, textMentionsName, stripHandle, isBanned, displayName, getRpDateTime, extractTemporalContext, isUserName } from './state.js';
 import { lang } from './i18n.js';
+import { getBank, addTransaction } from './bank.js';
 import { logReq, logOk, logFail } from './debug-log.js';
 
 // Язык генерируемого UI-контента (ачивки, статусы репутации): следует выбору
@@ -29,7 +30,7 @@ export function getSocial() {
     if (!Array.isArray(s.ofPosts)) s.ofPosts = [];
     if (typeof s.ofSubs !== 'number') s.ofSubs = 12 + Math.floor(Math.random() * 40);
     if (typeof s.ofEarned !== 'number') s.ofEarned = 0;
-    if (typeof s.ofWallet !== 'number') s.ofWallet = 0; // выведено на карту (доступно в РП)
+    if (typeof s.ofWallet !== 'number') s.ofWallet = 0; // прежний кошелёк: один раз переезжает в банк (migrateOfWallet)
     if (!Array.isArray(s.seenTags)) s.seenTags = [];
     ensureSocialSystems(s);
     return s;
@@ -525,8 +526,15 @@ export function delIgComment(postId, commentId) {
 
 function ofMarker(id) { return `of:${id}`; }
 
+// Пост без картинки и без описания кадра — обычная текстовая запись
+export function ofIsText(post) { return !post?.image && !post?.imgDesc; }
+
 // Что именно лежит на странице — одной строкой и для журнала, и для сводки
 function ofPostLine(post) {
+    if (ofIsText(post)) {
+        const t = String(post.caption || '').trim();
+        return `${t ? `текстовая запись: «${t.slice(0, 220)}»` : 'пустая запись'}${post.price ? `, доступ за $${post.price}` : ''}`;
+    }
     const parts = [];
     if (post.imgDesc) parts.push(`на фото: ${String(post.imgDesc).slice(0, 160)}`);
     if (post.caption) parts.push(`подпись: «${String(post.caption).slice(0, 200)}»`);
@@ -550,7 +558,7 @@ export function postOf({ image = null, imgDesc = '', caption = '', price = 0 }) 
     // прочитать ни одного поста. Приватность держится формулировкой строки,
     // а не тем, что модель о постах вообще не знает.
     logSocialToChat(
-        `${getUserName()} выкладывает пост на своей закрытой странице по подписке (OnlyFans, подписчиков: ${s.ofSubs || 0}) — ${ofPostLine(post)}. `
+        `${getUserName()} ${ofIsText(post) ? 'пишет' : 'выкладывает'} пост на своей закрытой странице по подписке (OnlyFans, подписчиков: ${s.ofSubs || 0}) — ${ofPostLine(post)}. `
         + `Страница анонимная и платная: её содержимое видят только подписчики. Персонаж знает про неё ТОЛЬКО если в ролевой прямо сказано, что он подписан или как-то узнал; сам по себе никто об этом не догадывается и в разговоре не упоминает.`,
         { marker: ofMarker(post.id) },
     );
@@ -589,19 +597,22 @@ export function addOfComment(postId, text, author = null, ak = 'user', tip = 0) 
 
 // Вывод заработка на карту: баланс становится «живыми деньгами» юзера в РП
 // (уходит в инжекцию — модель знает, что деньги у неё есть, но не знает источник)
-export function withdrawOf() {
+// Старый «кошелёк» жил отдельно от банка и существовал только в инжекте.
+// Деньги, накопленные там до обновления, один раз переезжают на счёт, чтобы
+// не пропасть. Дальше кошелька нет вовсе.
+export function migrateOfWallet() {
     const s = getSocial();
-    const amount = s.ofEarned;
-    if (amount <= 0) return 0;
-    s.ofWallet += amount;
-    s.ofEarned = 0;
+    if (s.ofWalletMoved) return 0;
+    s.ofWalletMoved = true;
+    const amount = Math.max(0, parseInt(s.ofWallet) || 0);
+    s.ofWallet = 0;
+    if (amount > 0) {
+        try {
+            addTransaction({ amount, label: 'Остаток с прежней карты', category: 'подписки', silent: true });
+        } catch (e) { console.warn('[GlassPhone] of wallet migration failed:', e); }
+    }
     saveMeta();
     return amount;
-}
-export function setOfWallet(v) {
-    const s = getSocial();
-    s.ofWallet = Math.max(0, parseInt(v) || 0);
-    saveMeta();
 }
 
 export function delOfComment(postId, commentId) {
@@ -616,9 +627,11 @@ export async function generateOfComments(post) {
     const s = getSocial();
     const willAttach = !!post.image && (getSettings().visionInComments || !post.imgDesc);
     const wantDesc = willAttach && !post.imgDesc;
-    const photoLine = willAttach
-        ? `The actual photo is ATTACHED — react to what you SEE.${post.imgDesc ? ` (fallback description: ${post.imgDesc})` : ''}`
-        : `Photo (description): ${post.imgDesc || '(no description)'}`;
+    const photoLine = ofIsText(post)
+        ? 'This post is TEXT ONLY — no photo at all. The fans are reacting to what they WROTE, not to a picture: do not describe or mention any image.'
+        : (willAttach
+            ? `The actual photo is ATTACHED — react to what you SEE.${post.imgDesc ? ` (fallback description: ${post.imgDesc})` : ''}`
+            : `Photo (description): ${post.imgDesc || '(no description)'}`);
     const existing = (post.comments || []).map(c => `${c.author}: ${c.text}`).join('\n');
 
     // Имена известных персонажей — ТОЛЬКО как запрет (страница приватная!)
@@ -676,7 +689,16 @@ ${wantDesc
     }
     post.likes = Math.max(post.likes || 0, Math.floor(Math.random() * 30) + post.comments.length * 2 + Math.floor(s.ofSubs / 4));
     post.tips = (post.tips || 0) + tipsTotal;
-    s.ofEarned += tipsTotal + (post.price > 0 ? post.price * (2 + Math.floor(Math.random() * 6)) : 0);
+    // Деньги со страницы теперь падают сразу на банковский счёт: отдельного
+    // «кошелька» больше нет, тратятся они как обычные деньги в банке.
+    // ofEarned остаётся счётчиком «заработано всего» — только для витрины.
+    const income = tipsTotal + (post.price > 0 ? post.price * (2 + Math.floor(Math.random() * 6)) : 0);
+    if (income > 0) {
+        s.ofEarned += income;
+        try {
+            addTransaction({ amount: income, label: 'Страница по подписке', category: 'подписки', silent: true });
+        } catch (e) { console.warn('[GlassPhone] of payout failed:', e); }
+    }
     s.ofSubs += Math.floor(Math.random() * 5);
     saveMeta();
     return added;
@@ -3186,15 +3208,12 @@ export function getSocialActivitySummary() {
         // Журнал несёт историю, но он стареет и уходит в саммари. Страница по
         // подписке — ПОСТОЯННОЕ состояние: пока на ней есть свежий пост, одна
         // строка о нём держится в инжекте, иначе «прочитать» его станет нечем.
-        const out = [];
+        // Деньги со страницы лежат на банковском счёте и уходят в инжект
+        // банковской строкой — отдельной «карты» больше нет
         const last = s.ofPosts.filter(x => x.ak === 'user')[0];
-        if (last) {
-            out.push(`- Their PRIVATE subscribers-only page (OnlyFans, ${s.ofSubs || 0} subscribers), latest post ${timeAgo(last.time)} ago: ${ofPostLine(last)}. A character knows this page exists ONLY if the story established that they subscribe or found out — nobody guesses it on their own.`);
-        }
-        if (s.ofWallet > 0) {
-            out.push(`- They have $${s.ofWallet} of their own money available (on their personal card). The SOURCE is their secret — characters see only that they can afford things.`);
-        }
-        return out.join('\n');
+        return last
+            ? `- Their PRIVATE subscribers-only page (OnlyFans, ${s.ofSubs || 0} subscribers), latest post ${timeAgo(last.time)} ago: ${ofPostLine(last)}. A character knows this page exists ONLY if the story established that they subscribe or found out — nobody guesses it on their own.`
+            : '';
     }
 
     const lines = [];
@@ -3238,10 +3257,6 @@ export function getSocialActivitySummary() {
     const lastOf = s.ofPosts.filter(p => p.ak === 'user')[0];
     if (lastOf) {
         lines.push(`- Their PRIVATE subscribers-only page (OnlyFans, ${s.ofSubs || 0} subscribers), latest post ${timeAgo(lastOf.time)} ago: ${ofPostLine(lastOf)}. A character knows this page exists ONLY if the story established that they subscribe or found out — nobody guesses it on their own.`);
-    }
-    // Деньги, выведенные с OnlyFans — доступны ей в РП (источник приватен)
-    if (s.ofWallet > 0) {
-        lines.push(`- They have $${s.ofWallet} of their own money available (on their personal card). The SOURCE is their secret — characters see only that they can afford things, never assume they know where it came from.`);
     }
 
     return lines.join('\n');

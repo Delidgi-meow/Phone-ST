@@ -104,6 +104,11 @@ const DICT = {
     'Узнать автора анонимки': 'Unmasking an anonymous sender',
     'цена первого имени, дальше растёт': 'price of the first name, rises after that',
     'Пост не найден': 'Post not found',
+    'заработано': 'earned', 'на счету →': 'on the account →', 'Открыть банк': 'Open the bank',
+    'Текст поста': 'Post text', 'Подпись к фото — или просто запись без фото': 'A caption for the photo — or just a post without one',
+    'Нужно фото или текст': 'Add a photo or some text',
+    'Без фото выйдет текстовая запись. Пост приватный: персонажи в ролевой узнают о нём, только если по сюжету тайно подписаны.':
+        'With no photo it goes out as a text post. The post is private: characters learn about it only if the story made them secret subscribers.',
     'Это твой пост. Имени в канале нет — но его можно пробить за деньги, как и любой другой.':
         'This one is yours. The channel shows no name — but it can be bought, same as any other.',
     'Админ канала сольёт, кто прислал этот пост. Узнаешь только ты — в канале ничего не изменится, и автор не поймёт, что его вычислили.':
