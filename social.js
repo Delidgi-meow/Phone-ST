@@ -1441,7 +1441,7 @@ function contactsBlock() {
 // ── Богатый контекст: карточка персонажа + персона + триггернутый лорбук ──
 // Режим 'rich' (дефолт): модель получает то же, что видит в основном чате,
 // НО без пресета — персонажи в соцсетях звучат в характере, а не «вне контекста».
-async function richContext() {
+async function richContext({ publicOnly = false } = {}) {
     const out = { charDesc: '', persona: '', wi: '' };
     try {
         const ctx = SillyTavern.getContext();
@@ -1462,7 +1462,11 @@ async function richContext() {
         try {
             const wiMod = await import('../../../world-info.js');
             if (typeof wiMod.getWorldInfoPrompt === 'function') {
-                const chat = (ctx.chat || []).filter(m => m && m.mes && !m.is_system);
+                // Для «города» лорбук триггерим тоже без приватных строк:
+                // иначе запись могла бы всплыть из её же переписки
+                const chat = (ctx.chat || [])
+                    .filter(m => m && m.mes && !m.is_system)
+                    .filter(m => !publicOnly || !/<!--\s*tel:priv\s*-->/i.test(m.mes));
                 const chatForWI = chat.map(x => `${x.name}: ${x.mes}`).reverse();
                 const scanData = {
                     personaDescription: out.persona,
@@ -1496,7 +1500,7 @@ This is a STANDALONE task — do NOT roleplay, do NOT write for characters outsi
 `;
     let rc = { charDesc: '', persona: '', wi: '' };
     if (rich) {
-        rc = await richContext();
+        rc = await richContext({ publicOnly });
         if (rc.charDesc) block += `\n=== MAIN CHARACTER (how they think, talk, behave — use this voice) ===\n${rc.charDesc}\n`;
         if (rc.persona) block += `\n=== ${getUserName()} (the user's persona) ===\n${rc.persona}\n`;
         if (rc.wi) block += `\n=== WORLD / LOREBOOK (relevant entries) ===\n${rc.wi}\n`;
