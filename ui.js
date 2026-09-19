@@ -5935,7 +5935,7 @@ function anonBuySheet(post) {
             close();
             applyChatHiding();
             render();
-            toast(done.realAuthor ? `Это ${done.realAuthor}` : 'Автора не нашли', 'fa-user-secret');
+            toast(done.realAuthor ? `Автор: ${done.realAuthor}` : 'Автора не нашли', 'fa-user-secret');
         } catch (e) {
             toast(String(e?.message || e).slice(0, 60), 'fa-circle-exclamation');
         }

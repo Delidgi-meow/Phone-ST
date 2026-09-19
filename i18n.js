@@ -103,6 +103,13 @@ const DICT = {
     'Анонимка «Подслушано» в каналах': 'The «Overheard» anonymous channel',
     'Узнать автора анонимки': 'Unmasking an anonymous sender',
     'цена первого имени, дальше растёт': 'price of the first name, rises after that',
+    'Пост не найден': 'Post not found',
+    'Это твой пост. Имени в канале нет — но его можно пробить за деньги, как и любой другой.':
+        'This one is yours. The channel shows no name — but it can be bought, same as any other.',
+    'Админ канала сольёт, кто прислал этот пост. Узнаешь только ты — в канале ничего не изменится, и автор не поймёт, что его вычислили.':
+        'The channel admin will hand over who sent this. Only you will know — nothing changes in the channel, and the sender will not realise they were traced.',
+    'Пост выйдет от «Анонима» — ни имени, ни ника. В ролевой это правда: слух пойдёт по городу. Но автора тут продают за деньги, так что при желании это могут пробить и прийти к тебе.':
+        'The post goes out as «Anonymous» — no name, no handle. In the roleplay it is real: the rumour starts going round town. But senders are sold here for money, so someone determined can buy your name and come to you with it.',
     'Профиль картинко-расширения': 'Image extension profile', 'Как в основном чате': 'Same as the main chat',
     'Стиль картинок телефона': 'Phone image style',
     // Сторис
@@ -433,7 +440,10 @@ const RULES = [
     [/^Участники — (\d+)$/, 'Members — $1'],
     [/^Написать как (.+)$/, 'Post as $1'],
     [/^Новых анонимок: (\d+)$/, 'New anonymous posts: $1'],
-    [/^Это (.+)$/, "It was $1"],
+    [/^Автор: (.+)$/, 'Sender: $1'],
+    [/^Написала? (.+)$/, 'Sent by $1'],
+    [/^пробито за (.+) · знаешь только ты$/, 'paid $1 · only you know this'],
+    [/^На карте (.+)$/, 'On the card: $1'],
     [/^Сумма доната для (.+):$/, 'Donation amount for $1:'],
     [/^донаты (.+)$/, 'donations $1'],
     [/^Добро пожаловать в #(.+)!$/, 'Welcome to #$1!'],
