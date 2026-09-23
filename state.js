@@ -1,11 +1,12 @@
 
 import { chat_metadata } from '../../../../script.js';
 import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
+import { saveBase64AsFile } from '../../../utils.js';
 
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.35.0';
+export const GP_VERSION = '2.35.1';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -342,6 +343,71 @@ let _metaVersion = 0;
 export function saveMeta() {
     _metaVersion++;
     try { saveMetadataDebounced(); } catch (e) { console.warn('[GlassPhone] saveMeta failed:', e); }
+    scheduleImageOffload();
+}
+
+// ── Фото из метаданных — в файлы ──
+// Загруженные ею снимки (каналы, сторис, инста, OF, тиндер, аватарки) ложились
+// в chat_metadata строкой base64: одна картинка канала — 150 КБ, и весь этот
+// груз переписывался в файл чата при каждом сохранении. Выносим такие строки
+// в /user/images/glassphone, в метаданных остаётся короткий путь. Проходит и по
+// старым чатам — при первом же сохранении.
+const IMG_DATA_RE = /^data:image\/(png|jpe?g|webp|gif);base64,/i;
+let _offloadTimer = null;
+let _offloading = false;
+
+function scheduleImageOffload() {
+    clearTimeout(_offloadTimer);
+    _offloadTimer = setTimeout(() => { offloadMetaImages(); }, 2000);
+}
+
+export async function offloadMetaImages() {
+    if (_offloading) return 0;
+    _offloading = true;
+    try {
+        const root = getMeta();
+        const hits = [];
+        const walk = (node, depth) => {
+            if (!node || typeof node !== 'object' || depth > 12) return;
+            for (const k of Object.keys(node)) {
+                const v = node[k];
+                if (typeof v === 'string') {
+                    if (v.length > 4096 && IMG_DATA_RE.test(v)) hits.push([node, k, v]);
+                } else if (v && typeof v === 'object') {
+                    walk(v, depth + 1);
+                }
+            }
+        };
+        walk(root, 0);
+        if (!hits.length) return 0;
+
+        const saved = new Map(); // одна и та же картинка — один файл
+        let n = 0;
+        for (const [node, k, v] of hits) {
+            let path = saved.get(v);
+            if (!path) {
+                const ext = (v.match(IMG_DATA_RE)[1] || 'jpeg').toLowerCase().replace('jpg', 'jpeg');
+                try {
+                    path = await saveBase64AsFile(v.replace(IMG_DATA_RE, ''), 'glassphone', `meta_${Date.now()}_${n}`, ext);
+                } catch (e) {
+                    console.warn('[GlassPhone] image offload failed:', e);
+                    continue;
+                }
+                if (!path) continue;
+                saved.set(v, path);
+            }
+            // Пока файл писался, могли переключить чат — чужие метаданные не трогаем
+            if (getMeta() !== root) return n;
+            if (node[k] === v) { node[k] = path; n++; }
+        }
+        if (n) {
+            _metaVersion++;
+            try { saveMetadataDebounced(); } catch (e) { /* ignore */ }
+        }
+        return n;
+    } finally {
+        _offloading = false;
+    }
 }
 
 // ── Кэш тяжёлых проходов по чату ──

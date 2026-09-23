@@ -55,6 +55,24 @@ export function getAnonChannel() {
     return a;
 }
 
+// Она заглядывала в каналы этого чата: ставит экран списка и экран анонимки
+export function markAnonOpened() {
+    const a = getAnonChannel();
+    if (a.opened) return;
+    a.opened = true;
+    saveMeta();
+}
+
+// Анонимка живёт в ролевой, только когда каналами в этом чате пользуются.
+// Иначе её правило (~300 токенов) и «канал молчит — запости» уходили в каждый
+// запрос даже там, где телефон ни разу не открывали.
+function anonInUse() {
+    const c = getChannels();
+    const a = c.anon;
+    if (!a || typeof a !== 'object') return false;
+    return !!(a.opened || (a.posts || []).length || c.mine || c.list.some(x => x.subscribed));
+}
+
 // Свой канал в общем списке идёт первым — экранам удобнее один массив
 export function allChannels() {
     const c = getChannels();
@@ -656,8 +674,11 @@ const ANON_BUST_RE = /<!--\s*tel:anonbust:(\{[\s\S]*?\})\s*-->/gi;
 export function harvestAnonBust() {
     if (!anonEnabled()) return [];
     const c = getChannels();
+    // Нет канала — нет и её анонимок, пробивать нечего. Не заводим его зря
+    if (!c.anon) return [];
     const ch = getAnonChannel();
     if (!Array.isArray(c.bustSeen)) c.bustSeen = [];
+    const seenBefore = c.bustSeen.length;
     let chat = [];
     try { chat = SillyTavern.getContext()?.chat || []; } catch (e) { return []; }
     const seen = new Set(c.bustSeen);
@@ -695,7 +716,7 @@ export function harvestAnonBust() {
         }
     }
     if (c.bustSeen.length > 200) c.bustSeen = c.bustSeen.slice(-200);
-    saveMeta();
+    if (c.bustSeen.length !== seenBefore || hits.length) saveMeta();
     return hits;
 }
 
@@ -706,6 +727,7 @@ export function harvestAnonTags() {
     let chat = [];
     try { chat = SillyTavern.getContext()?.chat || []; } catch (e) { return 0; }
     const seen = new Set(c.anonSeen);
+    const seenBefore = c.anonSeen.length;
     let n = 0;
     for (let i = 0; i < chat.length; i++) {
         const msg = chat[i];
@@ -726,7 +748,8 @@ export function harvestAnonTags() {
         }
     }
     if (c.anonSeen.length > 300) c.anonSeen = c.anonSeen.slice(-300);
-    saveMeta();
+    // Каждый ход сюда заходят — сохраняем, только если что-то нашли
+    if (c.anonSeen.length !== seenBefore) saveMeta();
     return n;
 }
 
@@ -749,7 +772,7 @@ export function channelInjectLine() {
 // Анонимка — отдельной строкой: в ней и правило про тег, и то, что ролевая
 // обязана знать про её собственные анонимки и про уже пробитых авторов.
 export function anonInjectLine() {
-    if (!anonEnabled()) return '';
+    if (!anonEnabled() || !anonInUse()) return '';
     const ch = getAnonChannel();
     const handle = getUserHandle();
     const mine = ch.posts.filter(p => p.byUser).slice(0, 3);

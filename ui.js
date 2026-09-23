@@ -39,7 +39,7 @@ import {
     deleteComment, bumpViews, addSubs, matchPostByText, markChannelRead, unreadChannels,
     setChannelAvatar, clearChannelAvatar,
     CHAN_REACTS,
-    ANON_ID, ANON_NAME, anonEnabled, getAnonChannel, anonPostToUser, addAnonPosts,
+    ANON_ID, ANON_NAME, anonEnabled, getAnonChannel, markAnonOpened, anonPostToUser, addAnonPosts,
     postAnonAsUser, anonRevealPrice, canAffordAnonReveal,
     chargeAnonReveal, setAnonAuthor, anonAuthorNeedsLookup,
 } from './channels.js';
@@ -6059,6 +6059,9 @@ function renderChannels(screen) {
             ${ch.unread ? `<span class="gp-chan-unread">${ch.unread}</span>` : ''}
         </button>`;
     };
+
+    // Заглянула в каналы — с этого момента «Подслушано» живёт и в ролевой
+    if (anonEnabled()) markAnonOpened();
 
     setHtmlKeepScroll(screen, '.gp-chan-scroll', `
         <div class="gp-header gp-thread-header">
