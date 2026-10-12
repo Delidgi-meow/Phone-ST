@@ -5,8 +5,10 @@ import {
     getSettings, getThreadList, getThread, markRead, addManualContact, hideContact,
     randomNumber, getTotalUnread, fmtTime, getRpDateTime, keyOf, getHiddenMessageIndexes,
     addGroup, delGroup, updateGroupMembers, renameContact, banAccount,
-    isSmsBlocked, blockSmsContact, unblockSmsContact, saveMeta, invalidateChatCache, getMeta,
+    isSmsBlocked, blockSmsContact, unblockSmsContact, saveMeta, invalidateChatCache, getMeta, getPhoneMessageText,
 } from './state.js';
+import { phoneMessageSources, replacePhoneMessageTag } from './message-sources.js';
+import { roleplaySmsKey } from './roleplay-sms.js';
 import { updatePhoneInjection } from './prompts.js';
 import {
     getBank, fmtMoney, addTransaction, deleteTransaction, takeLoan, payLoanInstallment, deleteLoan,
@@ -39,7 +41,7 @@ import {
     deleteComment, bumpViews, addSubs, matchPostByText, markChannelRead, unreadChannels,
     setChannelAvatar, clearChannelAvatar,
     CHAN_REACTS,
-    ANON_ID, ANON_NAME, anonEnabled, getAnonChannel, anonPostToUser, addAnonPosts,
+    ANON_ID, ANON_NAME, anonEnabled, getAnonChannel, markAnonOpened, anonPostToUser, addAnonPosts,
     postAnonAsUser, anonRevealPrice, canAffordAnonReveal,
     chargeAnonReveal, setAnonAuthor, anonAuthorNeedsLookup,
 } from './channels.js';
@@ -1760,15 +1762,20 @@ async function rewriteSmsTag(m, t, mutate) {
         // по stripThink-версии и смещены, если модель писала в <think>),
         // затем — по сохранённым индексам как запасной вариант
         let start = -1, end = -1;
+        let sourceText = String(chatMsg.mes || '');
         if (m.tagText) {
-            const at = chatMsg.mes.indexOf(m.tagText);
-            if (at !== -1) { start = at; end = at + m.tagText.length; }
+            const source = phoneMessageSources(chatMsg).find(item => item.text.includes(m.tagText));
+            if (source) {
+                sourceText = source.text;
+                start = sourceText.indexOf(m.tagText);
+                end = start + m.tagText.length;
+            }
         }
-        if (start === -1 && Number.isInteger(m.tagStart) && Number.isInteger(m.tagEnd)) {
+        if (start === -1 && !m.tagText && Number.isInteger(m.tagStart) && Number.isInteger(m.tagEnd)) {
             start = m.tagStart; end = m.tagEnd;
         }
         if (start === -1) { logFail('перезапись тега', 'тег не найден в сообщении (правка/свайп?)'); return false; }
-        const tag = chatMsg.mes.slice(start, end);
+        const tag = sourceText.slice(start, end);
         const re = m.dir === 'out'
             ? /<!--\s*tel:out:(\{[\s\S]*?\})\s*-->/i
             : /<!--\s*tel:sms:(\{[\s\S]*?\})\s*-->/i;
@@ -1787,7 +1794,7 @@ async function rewriteSmsTag(m, t, mutate) {
         }
         mutate(j);
         const kind = m.dir === 'out' ? 'out' : 'sms';
-        chatMsg.mes = chatMsg.mes.slice(0, start) + `<!--tel:${kind}:${JSON.stringify(j)}-->` + chatMsg.mes.slice(end);
+        if (!replacePhoneMessageTag(chatMsg, tag, `<!--tel:${kind}:${JSON.stringify(j)}-->`)) return false;
         // Подпись чата считается по длине и хвосту последнего сообщения:
         // правка в середине её не меняет, и кэш отдал бы дорисованное фото
         // как «ещё не готово». Сбрасываем явно.
@@ -6060,6 +6067,9 @@ function renderChannels(screen) {
         </button>`;
     };
 
+    // Заглянула в каналы — с этого момента «Подслушано» живёт и в ролевой
+    if (anonEnabled()) markAnonOpened();
+
     setHtmlKeepScroll(screen, '.gp-chan-scroll', `
         <div class="gp-header gp-thread-header">
             <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
@@ -6953,17 +6963,19 @@ async function deleteSmsFromChat(msg) {
             return false;
         }
 
-        let text = chatMsg.mes;
+        let text = getPhoneMessageText(chatMsg);
+        let removedTag = '';
         let cut = false;
         // 1) по точному тексту тега: индексы из scanChat посчитаны по версии без
         //    <think> и съезжают, если модель писала в размышлениях
         if (msg.tagText) {
             const at = text.indexOf(msg.tagText);
-            if (at !== -1) { text = text.slice(0, at) + text.slice(at + msg.tagText.length); cut = true; }
+            if (at !== -1) { removedTag = msg.tagText; text = text.slice(0, at) + text.slice(at + msg.tagText.length); cut = true; }
         }
         // 2) по сохранённым индексам — только если там действительно наш тег
         if (!cut && Number.isInteger(msg.tagStart) && Number.isInteger(msg.tagEnd)
             && /^<!--\s*tel:(?:sms|out):/i.test(text.slice(msg.tagStart, msg.tagEnd))) {
+            removedTag = text.slice(msg.tagStart, msg.tagEnd);
             text = text.slice(0, msg.tagStart) + text.slice(msg.tagEnd);
             cut = true;
         }
@@ -6978,7 +6990,7 @@ async function deleteSmsFromChat(msg) {
                 const sameText = String(j.text || '') === String(msg.text || '');
                 return msg.dir === 'out' ? sameText : (keyOf(j.from || '') === keyOf(msg.from || '') && sameText);
             });
-            if (hit) { text = text.slice(0, hit.index) + text.slice(hit.index + hit[0].length); cut = true; }
+            if (hit) { removedTag = hit[0]; text = text.slice(0, hit.index) + text.slice(hit.index + hit[0].length); cut = true; }
         }
         if (!cut) {
             logFail('удаление смс', 'тег не найден (правка/свайп?)');
@@ -6999,7 +7011,18 @@ async function deleteSmsFromChat(msg) {
             await removeChatMessage(ctx, msg.idx);
             logOk('удаление смс', `сообщение #${msg.idx} целиком`);
         } else {
-            chatMsg.mes = text;
+            if (msg.dir === 'out' && removedTag) {
+                try {
+                    const data = JSON.parse(removedTag.match(/<!--\s*tel:out:(\{[\s\S]*?\})\s*-->/i)?.[1] || 'null');
+                    if (data?.origin === 'rp') {
+                        if (!chatMsg.extra) chatMsg.extra = {};
+                        const hidden = new Set(chatMsg.extra.glassphoneRpSmsHidden || []);
+                        hidden.add(roleplaySmsKey(data.quoteIndex, data.rpQuote || data.text));
+                        chatMsg.extra.glassphoneRpSmsHidden = [...hidden];
+                    }
+                } catch (_error) { /* An older outgoing marker. */ }
+            }
+            if (!replacePhoneMessageTag(chatMsg, removedTag, '')) return false;
             invalidateChatCache();
             await saveChatConditional();
             logOk('удаление смс', `тег в #${msg.idx}`);

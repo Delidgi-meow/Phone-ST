@@ -1,7 +1,9 @@
 import { generateRaw, user_avatar, getThumbnailUrl, saveSettingsDebounced } from '../../../../script.js';
 import { saveBase64AsFile } from '../../../utils.js';
 import { extensionNames, extension_settings } from '../../../extensions.js';
-import { getMeta, saveMeta, keyOf, scanChat, getSettings, stripThink, textMentionsName, stripHandle, isBanned, displayName, getRpDateTime, extractTemporalContext, isUserName, isAppJournal } from './state.js';
+import { getMeta, saveMeta, keyOf, scanChat, getSettings, stripThink, textMentionsName, stripHandle, isBanned, displayName, getRpDateTime, extractTemporalContext, isUserName, isAppJournal, getPhoneMessageText } from './state.js';
+import { buildPhoneImageContext, applyPhoneImagePresets, phoneLorebookOverrides } from './image-context.js';
+import { generatePhoneBlockPrompt } from './external-image-blocks.js';
 import { lang } from './i18n.js';
 import { getBank, addTransaction } from './bank.js';
 import { logReq, logOk, logFail } from './debug-log.js';
@@ -321,9 +323,10 @@ export function harvestSocialTags() {
     let migratedLegacyKeys = false;
     for (let msgIndex = 0; msgIndex < chat.length; msgIndex++) {
         const msg = chat[msgIndex];
-        if (!msg || !msg.mes || msg.is_system || msg.is_user) continue;
+        const sourceText = getPhoneMessageText(msg);
+        if (!msg || !sourceText || msg.is_user || (msg.is_system && !/<!--\s*tel:/i.test(sourceText))) continue;
         // Теги в CoT-блоках не считаются (иначе дубли постов)
-        const text = stripThink(msg.mes);
+        const text = stripThink(sourceText);
 
         // КЛЮЧ: контент + сообщение + ПОРЯДКОВЫЙ номер, НЕ позиция m.index —
         // позиция съезжает при любой правке текста (реакции/фото/чужие
@@ -2479,7 +2482,9 @@ export async function generateCommentAvatar(comment) {
         const prompt = `square social-media profile avatar, close-up head-and-shoulders portrait of ${subject}, one person, clean readable face, appearance and clothing typical for the story's country and era, simple unobtrusive background, no text, no logo, no watermark`;
         const temp = { author: comment.author || 'Account', ak: 'random', kind: 'avatar' };
         let src = '';
-        if (mod.builtin) {
+        if (getSettings().imageGenBlockKey) {
+            src = await generatePostImage({ ...temp, imgDesc: prompt, aspect: '1:1' });
+        } else if (mod.builtin) {
             src = await _generateViaBuiltin(temp, { prompt, wantChar: false, isUserPost: false, onStatus: null });
         } else {
             const dataUrl = await mod.pipeline.generateImageWithRetry(prompt, null, null, { aspectRatio: '1:1' });
@@ -2527,10 +2532,11 @@ async function probeImageExt(folder, allowIndexFallback) {
     try {
         const pipeline = await import(`${base}/src/pipeline.js`);
         if (typeof pipeline.generateImageWithRetry === 'function') {
-            let utils = null, settings = null;
+            let utils = null, settings = null, parser = null;
             try { utils = await import(`${base}/src/utils.js`); } catch (e) { /* нет */ }
             try { settings = await import(`${base}/src/settings.js`); } catch (e) { /* нет */ }
-            return { pipeline, utils, settings, folder };
+            try { parser = await import(`${base}/src/parser.js`); } catch (e) { /* нет */ }
+            return { pipeline, utils, settings, parser, folder };
         }
     } catch (e) { /* нет src/pipeline.js */ }
     if (allowIndexFallback) {
@@ -2725,7 +2731,7 @@ function buildImagePrompt(post, { anonymous = false, allowChar = false } = {}) {
 // ── Booru-теги: сцена → англ. danbooru-теги (для NovelAI/аниме-моделей) ──
 // NAI не понимает короткие описания на русском — нужны теги вида 1girl, solo,
 // long hair, ... Конвертируем сцену одним текстовым запросом.
-async function sceneToBooruTags(post, { anonymous }) {
+async function sceneToBooruTags(post, { anonymous, imageContext = '' }) {
     const scene = [post.imgDesc, post.caption].filter(Boolean).join('. ') || `photo posted by ${post.author}`;
     const nsfw = post.kind === 'of'
         ? 'This is adult NSFW content — include explicit danbooru tags matching the scene, do not sanitize.'
@@ -2741,6 +2747,7 @@ async function sceneToBooruTags(post, { anonymous }) {
     }
     const prompt = `Convert this scene into ONE line of English Danbooru-style image tags for an anime image model (NovelAI).
 Scene: ${scene}
+${imageContext ? `\nAppearance and object details from the image extension (use only for subjects actually in this scene):\n${imageContext}\nPreserve these established details when converting the scene to tags.\n` : ''}
 
 Rules:
 - Start with subject count (1girl / 1boy / 2girls / 1girl 1boy / etc.), add "solo" if only one person.
@@ -2888,13 +2895,30 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
     // Только для него ставим запрет на персону/главперсонажей.
     const anonymous = !isUserPost && !isContactPost && !isCharPost;
 
+    // Match on the original scene before translation drops Cyrillic names.
+    // The author is a subject hint only when they are actually in the frame.
+    const referenceMatchPrompt = [post.imgDesc, post.caption,
+        !post._behindCamera && !anonymous ? post.author : ''].filter(Boolean).join('\n');
+    const imageContext = st.imageGenExtensionContext !== false
+        ? buildPhoneImageContext(referenceMatchPrompt, nvSettings || imgBucket(), mod.parser)
+        : { hints: '', presetTags: [], lorebookDescriptions: [], references: null };
+
     let prompt;
-    if (st.imgTagMode) {
+    let externalInstruction = null;
+    if (st.imageGenBlockKey) {
+        const framing = post.framing || (post.kind === 'of' ? st.imgPromptOf : st.imgPromptIg) || '';
+        externalInstruction = await generatePhoneBlockPrompt({ ...post, framing }, {
+            imageContext: imageContext.hints, parser: mod.parser, onStatus, signal,
+        });
+        prompt = externalInstruction.prompt;
+    } else if (st.imgTagMode) {
         // Booru-режим: стиль/кадр из настроек (может быть тег-строкой) + сцена в теги
         if (onStatus) onStatus('Составляю теги...');
-        const tags = await sceneToBooruTags(post, { anonymous });
+        const tags = await sceneToBooruTags(post, { anonymous, imageContext: imageContext.hints });
         const framing = (post.framing || (post.kind === 'of' ? (st.imgPromptOf || '') : (st.imgPromptIg || ''))).trim();
-        prompt = [framing, tags].filter(Boolean).join(', ') || buildImagePrompt(post, { anonymous, allowChar: wantChar });
+        prompt = tags
+            ? [framing, tags].filter(Boolean).join(', ')
+            : buildImagePrompt(post, { anonymous, allowChar: wantChar });
         // Теги — англоязычные, имён в них не остаётся: без этого NPC-реф
         // в booru-режиме не подцепился бы никогда
         if (prompt && !anonymous) {
@@ -2904,10 +2928,15 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
     } else {
         prompt = buildImagePrompt(post, { anonymous, allowChar: wantChar });
     }
+    // Deterministic preset values survive conversion even if the text model
+    // omits a trait. Text-only lorebook entries also work without an image.
+    const details = [...imageContext.presetTags, ...imageContext.lorebookDescriptions];
+    if (details.length) prompt += '\n\n' + details.join('\n');
+    if (st.imageGenExtensionContext !== false) prompt = applyPhoneImagePresets(prompt, nvSettings || imgBucket());
 
     // Встроенный драйвер (форки без экспортов)
     if (mod.builtin) {
-        return _generateViaBuiltin(post, { prompt, wantChar, isUserPost: userInFrame, onStatus, signal });
+        return _generateViaBuiltin(post, { prompt, wantChar, isUserPost: userInFrame, onStatus, signal, instruction: externalInstruction });
     }
 
     // Защитная мутация: сохраняем и трогаем ТОЛЬКО существующие ключи
@@ -2915,6 +2944,8 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
     // ОТДЕЛЬНО от аватарок, поэтому платье юзерки лезло на фото контактов
     const keys = ['sendCharAvatar', 'sendUserAvatar', 'imageContextEnabled', 'overrideAspectRatio', 'overrideImageSize', 'model',
         'swSendOutfitImageBot', 'swSendOutfitImageUser'];
+    const lorebookOverrides = phoneLorebookOverrides(nvSettings, imageContext.references);
+    for (const key of Object.keys(lorebookOverrides)) keys.push(key);
     // Телефонный профиль подключения: временно применяем ЕГО поля (endpoint/
     // apiKey/model/aspect/...) поверх активных, основной чат не трогаем
     const phoneProfile = _imgProfile(st.imageGenProfileId);
@@ -2931,6 +2962,7 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
     const saved = {};
     if (nvSettings) {
         for (const k of keys) if (k in nvSettings) saved[k] = nvSettings[k];
+        Object.assign(nvSettings, lorebookOverrides);
         if (phoneProfile) {
             for (const k of Object.keys(phoneProfile)) {
                 if (k !== 'id' && k !== 'name' && k in nvSettings) nvSettings[k] = phoneProfile[k];
@@ -2957,13 +2989,19 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
     }
 
     const genOptions = {};
+    if (externalInstruction) {
+        for (const key of ['imageSize', 'quality', 'preset']) {
+            if (externalInstruction[key]) genOptions[key] = externalInstruction[key];
+        }
+    }
+    if (signal) genOptions.signal = signal;
     // post.aspect (сторис 9:16, стрим 16:9) важнее глобального квадрата
-    const wantAspect = post.aspect || (st.imageGenSquare !== false ? '1:1' : null);
+    const wantAspect = post.aspect || externalInstruction?.aspectRatio || (st.imageGenSquare !== false ? '1:1' : null);
     if (wantAspect) genOptions.aspectRatio = wantAspect;
 
     try {
         // style = null → расширение подставит СВОЙ активный стиль (resolveEffectiveStyle)
-        const dataUrl = await mod.pipeline.generateImageWithRetry(prompt, null, onStatus, genOptions);
+        const dataUrl = await mod.pipeline.generateImageWithRetry(prompt, externalInstruction?.style || null, onStatus, genOptions);
         if (!dataUrl || typeof dataUrl !== 'string') throw new Error('Пустой результат генерации');
         let src = dataUrl;
         if (typeof mod.utils?.saveImageToFile === 'function') {
@@ -2998,6 +3036,8 @@ const IMG_MARKERS = ['aspectRatio', 'sendCharAvatar', 'sendUserAvatar', 'npcList
 // ненастроенным, хотя рисовать готово.
 function cfgModel(v) {
     if (!v) return '';
+    if (v.apiType === 'novelai') return String(v.novelaiModel === '__custom__'
+        ? (v.novelaiCustomModel || '') : (v.novelaiModel || v.model || '')).trim();
     // У naistera свой список моделей: общее поле model относится к другому
     // провайдеру и осталось там с прошлой настройки
     if (v.apiType === 'naistera') return String(v.naisteraModel || v.model || '').trim();
@@ -3079,7 +3119,7 @@ async function _fetchB64(url) {
     } catch (e) { return null; }
 }
 
-async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, onStatus, signal = null }) {
+async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, onStatus, signal = null, instruction = null }) {
     const cfgBase = imgBucket() || {};
     const st = getSettings();
     // Телефонный профиль подключения: его поля поверх активных (фолбэк на базу)
@@ -3090,7 +3130,7 @@ async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, onStatu
 
     const model = effectiveModel(imgCfg);
     // post.aspect (сторис 9:16, стрим 16:9) важнее глобального квадрата
-    const aspect = post.aspect || (st.imageGenSquare !== false ? '1:1' : (imgCfg.aspectRatio || '1:1'));
+    const aspect = post.aspect || instruction?.aspectRatio || (st.imageGenSquare !== false ? '1:1' : (imgCfg.aspectRatio || '1:1'));
 
     // Стиль форка: телефонный (если выбран) или активный
     let style = '';
@@ -3100,6 +3140,7 @@ async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, onStatu
             || (imgCfg.styles || []).find(x => x && x.id === imgCfg.activeStyleId);
         style = String(s?.value ?? s?.style ?? '').trim();
     } catch (e) { /* ignore */ }
+    if (instruction?.style) style = instruction.style;
     let fullPrompt = style ? `[STYLE: ${style}]\n\n${prompt}` : prompt;
 
     // Рефы: телефон сам решает, чей реф нужен (галочки форка не смотрим —

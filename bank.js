@@ -1,5 +1,5 @@
 
-import { getMeta, saveMeta, getRpDateTime, stripThink } from './state.js';
+import { getMeta, saveMeta, getRpDateTime, stripThink, getPhoneMessageText } from './state.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -450,8 +450,9 @@ export function harvestBankTags() {
     const bankAmts = [];
     for (let i = 0; i < chat.length; i++) {
         const mm = chat[i];
-        if (!mm || !mm.mes || !/tel:bank/i.test(mm.mes)) continue;
-        const tt = stripThink(mm.mes);
+        const sourceText = getPhoneMessageText(mm);
+        if (!mm || !/tel:bank/i.test(sourceText)) continue;
+        const tt = stripThink(sourceText);
         BANK_TAG_RE.lastIndex = 0;
         let bm;
         while ((bm = BANK_TAG_RE.exec(tt)) !== null) {
@@ -464,11 +465,12 @@ export function harvestBankTags() {
 
     for (let msgIndex = 0; msgIndex < chat.length; msgIndex++) {
         const msg = chat[msgIndex];
-        if (!msg || !msg.mes) continue;
+        const sourceText = getPhoneMessageText(msg);
+        if (!msg || !sourceText) continue;
         // is_system пропускаем, НО наши смс-призраки (is_system на 1.5с) содержат
         // tel:sms банка — их тоже сканируем
-        if (msg.is_system && !/tel:(bank|sms)/i.test(msg.mes)) continue;
-        const text = stripThink(msg.mes);
+        if (msg.is_system && !/tel:(bank|sms)/i.test(sourceText)) continue;
+        const text = stripThink(sourceText);
         const containsBankTag = /<!--\s*tel:bank:/i.test(text);
         const msgSrc = String(msg.send_date || msg.extra?.gen_id || msgIndex);
         // Сначала снимаем то, что принёс прошлый вариант этого же ответа

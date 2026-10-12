@@ -1,6 +1,7 @@
 
 import { setExtensionPrompt, extension_prompt_types, extension_prompt_roles } from '../../../../script.js';
-import { getSettings, getMeta, scanChat, getBlockedSmsKeys, keyOf, EXT_NAME } from './state.js';
+import { getSettings, getMeta, scanChat, getBlockedSmsKeys, keyOf, EXT_NAME, getRoleplaySmsOptions } from './state.js';
+import { hasMixedRoleplaySms, roleplaySmsDirective } from './roleplay-sms.js';
 import { getSocialActivitySummary } from './social.js';
 import { getBankSummaryLine, bankInjectRule } from './bank.js';
 import { notesInjectBlock } from './notes.js';
@@ -20,7 +21,7 @@ const SYS_KEY = EXT_NAME + '_sys';
 function phoneTurnState() {
     try {
         const chat = SillyTavern.getContext()?.chat || [];
-        const isPhoneMsg = (m) => !!m && m.is_user
+        const isPhoneMsg = (m) => !!m && m.is_user && !hasMixedRoleplaySms(m)
             && /<!--\s*tel:out|\[(?:СМС|SMS|Голосовое|Voice)\s*(?:→|в\s+чат|to\s+chat)/i.test(String(m.mes || ''));
         for (let i = chat.length - 1, seen = 0; i >= 0 && seen < 3; i--) {
             const m = chat[i];
@@ -46,6 +47,8 @@ function socialActive() {
 function buildPrompt() {
     const { contacts, threads } = scanChat();
     const meta = getMeta();
+    const mixedSmsRule = getSettings().captureRoleplaySms !== false
+        ? roleplaySmsDirective(SillyTavern.getContext().chat || [], getRoleplaySmsOptions()) : '';
     let consequenceBlock = '';
     // Последствия — часть систем: выключены, значит и в промпт не идут.
     // Сводка активности остаётся: посты она пишет и без них, а персонажам
@@ -99,6 +102,7 @@ function buildPrompt() {
     // ── Компактный режим: те же правила, ~40% токенов ──
     if (getSettings().compactRules) {
         let c = `<phone_directive>\n[OOC — hidden phone/SMS channel. Never mention it in-story.]\n{{user}} has a smartphone. ${contactsBlock}\n`;
+        c += mixedSmsRule;
         c += `("they/their" = neutral shorthand for {{user}}; use their real gender from the persona card.)
 `;
         c += `RULES (tags = HTML comments at the very END of the reply, copied VERBATIM, EN keys / RU values, invisible to reader):\n`;
@@ -159,6 +163,7 @@ function buildPrompt() {
     const social = socialActive();
 
     let p = `<phone_directive>\n`;
+    p += mixedSmsRule;
     p += `[OOC — hidden phone/SMS channel for the app. Not part of the story; never mention or react to it in-character.]\n`;
     p += `{{user}} owns a smartphone. ${contactsBlock}\n`;
     // Местоимения в директиве нейтральные: пол игрока берётся из карточки

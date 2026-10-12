@@ -16,6 +16,14 @@ export const MONTHS_I18N = {
 
 // ── Точный словарь (ключ = русская строка после trim) ──
 const DICT = {
+    'Переносить мои СМС из ролевой': 'Import my outgoing SMS from roleplay',
+    'Внешний блок для всех картинок телефона': 'External block for all phone images',
+    'Обновить список блоков': 'Refresh block list',
+    'Без внешнего блока': 'No external block',
+    'Выбранный блок недоступен — выберите заново': 'Selected block is unavailable — select it again',
+    'Блок составляет промпт через свой API. Используются его инструкции, шаблон и контекст. Если выбран блок, отдельный перевод в Booru-теги не запускается.': 'The block builds prompts using its own API, instructions, template and context. A selected block replaces the separate Booru tag conversion.',
+    'Пресеты и лорбуки из расширения картинок': 'Presets and lorebooks from the image extension',
+    'Читать телефон из внешних блоков': 'Read phone content from external blocks',
     // Главный экран / приложения
     'Сообщения': 'Messages', 'Твиттер': 'Twitter', 'Банк': 'Bank', 'Магазин': 'Shop',
     'Оформление': 'Appearance', 'Телефон': 'Phone',

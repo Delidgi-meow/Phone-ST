@@ -3,7 +3,7 @@
 // Записи приходят двумя путями: она добавляет их сама или ролевая ставит тег
 // <!--tel:plan:{...}--> , когда о чём-то договорились.
 
-import { getMeta, saveMeta, getRpDateTime, stripThink } from './state.js';
+import { getMeta, saveMeta, getRpDateTime, stripThink, getPhoneMessageText } from './state.js';
 import { logSocialToChat, getUserName } from './social.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
@@ -242,8 +242,9 @@ export function harvestPlanTags() {
     let added = 0;
     for (let i = 0; i < chat.length; i++) {
         const msg = chat[i];
-        if (!msg || !msg.mes || msg.is_user || !/tel:plan/i.test(msg.mes)) continue;
-        const text = stripThink(msg.mes);
+        const sourceText = getPhoneMessageText(msg);
+        if (!msg || msg.is_user || !/tel:plan/i.test(sourceText)) continue;
+        const text = stripThink(sourceText);
         const occ = {};
         PLAN_TAG_RE.lastIndex = 0;
         let hit;

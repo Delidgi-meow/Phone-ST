@@ -1,11 +1,14 @@
 
 import { chat_metadata } from '../../../../script.js';
 import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
+import { saveBase64AsFile } from '../../../utils.js';
+import { readPhoneMessage } from './message-sources.js';
+import { captureRoleplaySms, extractRoleplaySms, hasMixedRoleplaySms } from './roleplay-sms.js';
 
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.35.0';
+export const GP_VERSION = '2.38.0';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -20,6 +23,7 @@ const defaultSettings = () => ({
     // Прятать смс-переписку из ленты чата (сообщения ОСТАЮТСЯ в истории и контексте
     // модели — скрывается только отображение; телефон это единственное «окно» в смс)
     hideSmsInChat: true,
+    captureRoleplaySms: true,
     // Профиль подключения для генерации соцсетей ('' = текущий API через generateRaw,
     // изолированно от пресета). Отдельный профиль дополнительно включает вижн.
     socialProfileId: '',
@@ -55,6 +59,8 @@ const defaultSettings = () => ({
     // Стили у новорака ГЛОБАЛЬНЫЕ (не входят в профиль подключения) — поэтому
     // телефону нужен свой выбор: на другой модели нужен другой стиль
     imageGenStyleId: '',
+    // One saved ExtBlocks block supplies prompts for every phone image.
+    imageGenBlockKey: '',
     // Макс. длина ответа для генерации соцсетей (0 = авто по задаче). Если модель
     // рвёт JSON из-за лимита токенов — поднять (действует как ПОЛ: не ниже задачи).
     socialMaxTokens: 0,
@@ -71,6 +77,10 @@ const defaultSettings = () => ({
     // (1girl/1boy, solo, hair, ...) — для NovelAI и аниме-моделей, которые не
     // понимают короткие описания на русском. Стоит доп. текстовый запрос.
     imgTagMode: false,
+    // Read telephone tags from ExtBlocks storage and rendered text as well.
+    externalBlocks: true,
+    // Reuse enabled image presets and matching image lorebook entries.
+    imageGenExtensionContext: true,
     // Обои телефона (URL файла; '' = стандартный стеклянный градиент)
     wallpaper: '',
     // Размыть обои (blur-фильтр на слое обоев)
@@ -342,6 +352,71 @@ let _metaVersion = 0;
 export function saveMeta() {
     _metaVersion++;
     try { saveMetadataDebounced(); } catch (e) { console.warn('[GlassPhone] saveMeta failed:', e); }
+    scheduleImageOffload();
+}
+
+// ── Фото из метаданных — в файлы ──
+// Загруженные ею снимки (каналы, сторис, инста, OF, тиндер, аватарки) ложились
+// в chat_metadata строкой base64: одна картинка канала — 150 КБ, и весь этот
+// груз переписывался в файл чата при каждом сохранении. Выносим такие строки
+// в /user/images/glassphone, в метаданных остаётся короткий путь. Проходит и по
+// старым чатам — при первом же сохранении.
+const IMG_DATA_RE = /^data:image\/(png|jpe?g|webp|gif);base64,/i;
+let _offloadTimer = null;
+let _offloading = false;
+
+function scheduleImageOffload() {
+    clearTimeout(_offloadTimer);
+    _offloadTimer = setTimeout(() => { offloadMetaImages(); }, 2000);
+}
+
+export async function offloadMetaImages() {
+    if (_offloading) return 0;
+    _offloading = true;
+    try {
+        const root = getMeta();
+        const hits = [];
+        const walk = (node, depth) => {
+            if (!node || typeof node !== 'object' || depth > 12) return;
+            for (const k of Object.keys(node)) {
+                const v = node[k];
+                if (typeof v === 'string') {
+                    if (v.length > 4096 && IMG_DATA_RE.test(v)) hits.push([node, k, v]);
+                } else if (v && typeof v === 'object') {
+                    walk(v, depth + 1);
+                }
+            }
+        };
+        walk(root, 0);
+        if (!hits.length) return 0;
+
+        const saved = new Map(); // одна и та же картинка — один файл
+        let n = 0;
+        for (const [node, k, v] of hits) {
+            let path = saved.get(v);
+            if (!path) {
+                const ext = (v.match(IMG_DATA_RE)[1] || 'jpeg').toLowerCase().replace('jpg', 'jpeg');
+                try {
+                    path = await saveBase64AsFile(v.replace(IMG_DATA_RE, ''), 'glassphone', `meta_${Date.now()}_${n}`, ext);
+                } catch (e) {
+                    console.warn('[GlassPhone] image offload failed:', e);
+                    continue;
+                }
+                if (!path) continue;
+                saved.set(v, path);
+            }
+            // Пока файл писался, могли переключить чат — чужие метаданные не трогаем
+            if (getMeta() !== root) return n;
+            if (node[k] === v) { node[k] = path; n++; }
+        }
+        if (n) {
+            _metaVersion++;
+            try { saveMetadataDebounced(); } catch (e) { /* ignore */ }
+        }
+        return n;
+    } finally {
+        _offloading = false;
+    }
 }
 
 // ── Кэш тяжёлых проходов по чату ──
@@ -350,11 +425,31 @@ export function saveMeta() {
 // а resolveAuthorKey звал scanChat внутри цикла по тегам, давая O(n²)
 // (чат 1000 сообщений ≈ 400+ мс на событие → заметные фризы).
 // Сигнатура дешёвая: длина чата + хвост последнего сообщения + версия метаданных.
+export function getPhoneMessageText(message) {
+    return readPhoneMessage(message, getSettings().externalBlocks !== false, stripThink);
+}
+
+export function getRoleplaySmsOptions() {
+    const context = SillyTavern.getContext();
+    return {
+        userNames: [context.name1, getMeta().userHandle, 'User', '{{user}}'].filter(Boolean),
+        otherNames: [context.name2, ...(getMeta().contacts || []).map(contact => contact.name)]
+            .filter(name => name && !isUserName(name)),
+    };
+}
+
+export function captureRoleplayOutgoing() {
+    if (getSettings().captureRoleplaySms === false) return 0;
+    const count = captureRoleplaySms(SillyTavern.getContext().chat || [], getPhoneMessageText, getRoleplaySmsOptions());
+    if (count) invalidateChatCache();
+    return count;
+}
+
 function chatSignature() {
     let chat = [];
     try { chat = SillyTavern.getContext()?.chat || []; } catch (e) { return 'x'; }
     const last = chat.length ? chat[chat.length - 1] : null;
-    const tail = last ? String(last.mes || '').slice(-160) : '';
+    const tail = last ? getPhoneMessageText(last).slice(-160) : '';
     const swipe = last?.swipe_id ?? '';
     return `${chat.length}|${swipe}|${tail}|${_metaVersion}`;
 }
@@ -566,6 +661,7 @@ function safeJson(raw) {
 // ── Регэкспы тегов ──
 const TAG_RE = /<!--\s*tel:(contact|sms):(\{[\s\S]*?\})\s*-->/gi;
 const OUT_RE = /<!--\s*tel:out:(\{[\s\S]*?\})\s*-->/i;
+const OUT_ALL_RE = /<!--\s*tel:out:(\{[\s\S]*?\})\s*-->/gi;
 // «Персонаж решил не отвечать на смс» — пустой ответ телефона
 const SILENT_RE = /<!--\s*tel:silent\s*-->/i;
 // Журнальная запись соцсетей (скрыта из ленты, но в контексте модели)
@@ -578,7 +674,7 @@ export function isAppJournal(msg) {
     return /^\s*<!--\s*tel:log\s*-->/i.test(String(msg.mes));
 }
 // Любой наш тег (для детекта смс-only сообщений)
-const ANY_TEL_RE = /<!--\s*tel:(sms|contact|out|silent|log)/i;
+const ANY_TEL_RE = /<!--\s*tel:(sms|contact|out|sent|silent|log)/i;
 // Видимый формат исходящей смс (парсим как fallback, если JSON битый)
 // Видимый формат двуязычный: [СМС → X] / [SMS → X] (телефон пишет по языку UI);
 // [Голосовое → X] / [Voice → X] — голосовое сообщение (текст = расшифровка)
@@ -1011,11 +1107,12 @@ function scanChatUncached() {
 
     for (let i = 0; i < chat.length; i++) {
         const msg = chat[i];
-        if (!msg || !msg.mes) continue;
+        const sourceText = getPhoneMessageText(msg);
+        if (!msg || !sourceText) continue;
         // Системные сообщения пропускаем, НО наши SMS-ответы (is_system с tel: тегами) — парсим
-        if (msg.is_system && !ANY_TEL_RE.test(msg.mes)) continue;
+        if (msg.is_system && !ANY_TEL_RE.test(sourceText)) continue;
         // Теги внутри CoT-блоков не считаются (иначе дубли сообщений)
-        const text = stripThink(msg.mes);
+        const text = stripThink(sourceText);
 
         let time = null;
         const realDate = parseRealDate(msg.send_date);
@@ -1025,14 +1122,15 @@ function scanChatUncached() {
 
         if (msg.is_user) {
             // Исходящая смс юзера
-            const om = text.match(OUT_RE);
-            if (om) {
+            const rpQuotes = extractRoleplaySms(text, getRoleplaySmsOptions());
+            for (const om of text.matchAll(OUT_ALL_RE)) {
                 const j = safeJson(om[1]) || {};
+                if (j.origin === 'rp' && !rpQuotes.some(quote => quote.quoteIndex === j.quoteIndex && quote.text === (j.rpQuote || j.text))) continue;
                 const stripped = text.replace(OUT_RE, '').trim();
                 const vis = stripped.match(OUT_VISIBLE_RE);
                 const visGroup = !vis ? stripped.match(OUT_VISIBLE_GROUP_RE) : null;
                 let to = j.to || (vis ? vis[2].trim() : null);
-                const body = vis ? vis[3].trim() : (visGroup ? visGroup[3].trim() : (j.text || ''));
+                const body = j.mixed ? String(j.text || '') : (vis ? vis[3].trim() : (visGroup ? visGroup[3].trim() : (j.text || '')));
                 const isVoice = !!j.voice || VOICE_KIND_RE.test(vis?.[1] || visGroup?.[1] || '');
                 // Групповой чат: to = "группа:Название" (или поле group)
                 const groupName = j.group || (typeof to === 'string' && to.match(/^группа:\s*(.+)$/i)?.[1]) || null;
@@ -1295,7 +1393,7 @@ function hiddenMessageIndexesUncached() {
         // Системные сообщения пропускаем, но наши SMS-ответы прячем
         if (msg.is_system && !ANY_TEL_RE.test(msg.mes) && !SILENT_RE.test(msg.mes)) continue;
         if (msg.is_user) {
-            if (OUT_RE.test(msg.mes)) out.push(i);
+            if (OUT_RE.test(msg.mes) && !hasMixedRoleplaySms(msg)) out.push(i);
             continue;
         }
         // Think-блоки не учитываем ни в детекте тегов, ни в «видимом остатке»
