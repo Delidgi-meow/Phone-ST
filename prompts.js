@@ -6,7 +6,7 @@ import { getSocialActivitySummary } from './social.js';
 import { getBankSummaryLine, bankInjectRule } from './bank.js';
 import { notesInjectBlock } from './notes.js';
 import { channelInjectLine, anonInjectLine } from './channels.js';
-import { plansInjectLine, plansInjectRule, getPlans } from './plans.js';
+import { plansInjectLine, plansInjectRule } from './plans.js';
 import { twitchInjectLine } from './twitch.js';
 import { tinderInjectLine, inAppMatchNames } from './tinder.js';
 import { pendingConsequences } from './social-events.js';
@@ -131,11 +131,9 @@ function buildPrompt() {
             if (chan) c += `[{{user}}'S CHANNELS] ${chan}\n5. A channel they follow publishes → <!--tel:chan:{"channel":"Name","text":"the post","photo":"what the picture shows, or omit"}-->. Never into their own channel.\n`;
         } catch (e) { /* ignore */ }
         try {
-            if (getPlans().length) {
-                c += `6. Договорились о дате/встрече → <!--tel:plan:{"date":"DD.MM.YYYY","time":"19:00","text":"...","who":"user|char|both"}-->\n`;
-                const plans = plansInjectLine();
-                if (plans) c += `\n${plans}\n`;
-            }
+            c += '\n' + plansInjectRule() + '\n';
+            const plans = plansInjectLine();
+            if (plans) c += '\n' + plans + '\n';
         } catch (e) { /* ignore */ }
         try {
             const notesBlock = notesInjectBlock();
@@ -233,10 +231,9 @@ function buildPrompt() {
             p += `A channel not listed above may appear this way too — give it a plain "channel" name and the app adds it. NEVER post into {{user}}'s OWN channel: those are written by them in the app, and such a tag is discarded. Do not spam: at most 1-2 channel posts per reply, and only when the story gives a reason.\n`;
         }
     } catch (e) { /* ignore */ }
-    // Календарь: правило ставим, только когда планы вообще заведены —
-    // пустой календарь не должен занимать место в директиве
+    // Calendar tag instructions are needed even before the first plan.
     try {
-        if (getPlans().length) p += `\n${plansInjectRule()}\n`;
+        p += `\n${plansInjectRule()}\n`;
         const plans = plansInjectLine();
         if (plans) p += `\n${plans}\n`;
     } catch (e) { /* ignore */ }

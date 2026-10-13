@@ -2,7 +2,8 @@ import { generateRaw, user_avatar, getThumbnailUrl, saveSettingsDebounced } from
 import { saveBase64AsFile } from '../../../utils.js';
 import { extensionNames, extension_settings } from '../../../extensions.js';
 import { getMeta, saveMeta, keyOf, scanChat, getSettings, stripThink, textMentionsName, stripHandle, isBanned, displayName, getRpDateTime, extractTemporalContext, isUserName, isAppJournal, getPhoneMessageText } from './state.js';
-import { buildPhoneImageContext, applyPhoneImagePresets, phoneLorebookOverrides } from './image-context.js';
+import { buildPhoneImageContext, applyPhoneImagePresets } from './image-context.js';
+import { generateIsolatedImage } from './image-provider.js';
 import { generatePhoneBlockPrompt } from './external-image-blocks.js';
 import { lang } from './i18n.js';
 import { getBank, addTransaction } from './bank.js';
@@ -2476,28 +2477,9 @@ export async function generateCommentAvatar(comment) {
     if (!comment || comment.ak !== 'random' || comment.avatar || comment.avatarPending) return comment?.avatar || '';
     comment.avatarPending = true;
     try {
-        const mod = await loadImageExt();
-        if (!mod) return '';
         const subject = `${comment.author || 'anonymous social media user'} (${comment.handle || makeHandle(comment.author)})`;
         const prompt = `square social-media profile avatar, close-up head-and-shoulders portrait of ${subject}, one person, clean readable face, appearance and clothing typical for the story's country and era, simple unobtrusive background, no text, no logo, no watermark`;
-        const temp = { author: comment.author || 'Account', ak: 'random', kind: 'avatar' };
-        let src = '';
-        if (getSettings().imageGenBlockKey) {
-            src = await generatePostImage({ ...temp, imgDesc: prompt, aspect: '1:1' });
-        } else if (mod.builtin) {
-            src = await _generateViaBuiltin(temp, { prompt, wantChar: false, isUserPost: false, onStatus: null });
-        } else {
-            const dataUrl = await mod.pipeline.generateImageWithRetry(prompt, null, null, { aspectRatio: '1:1' });
-            src = dataUrl;
-            if (typeof mod.utils?.saveImageToFile === 'function') {
-                try { src = await mod.utils.saveImageToFile(dataUrl, { mode: 'glassphone-avatar' }); } catch (e) { /* dataURL */ }
-            } else if (String(dataUrl || '').startsWith('data:')) {
-                try {
-                    const b64 = dataUrl.replace(/^data:image\/[a-z]+;base64,/i, '');
-                    src = await saveBase64AsFile(b64, 'glassphone', `avatar_${Date.now()}`, 'jpeg');
-                } catch (e) { /* dataURL */ }
-            }
-        }
+        const src = await generatePostImage({ author: comment.author || 'Account', ak: 'random', kind: 'avatar', imgDesc: prompt, framing: 'profile portrait', aspect: '1:1' });
         if (src) comment.avatar = src;
         saveMeta();
         return comment.avatar || '';
@@ -2630,23 +2612,12 @@ export async function fetchImageModels() {
     const base = `/scripts/extensions/third-party/${mod.folder}`;
     const provMod = await import(`${base}/src/providers.js`);
     const setMod = (typeof mod.settings?.getSettings === 'function') ? mod.settings : await import(`${base}/src/settings.js`);
-    const s = setMod.getSettings();
-    // Временная мутация (provider.fetchModels может сам перечитывать настройки) + откат
-    const saved = {};
-    if (profFields) {
-        for (const k of Object.keys(profFields)) {
-            if (k in s) { saved[k] = s[k]; s[k] = profFields[k]; }
-        }
-    }
-    try {
-        const provider = provMod.resolveActiveProvider(s);
-        if (!provider) throw new Error('провайдер расширения не настроен');
-        const models = await provider.fetchModels();
-        if (!Array.isArray(models) || models.length === 0) throw new Error('список пуст');
-        return models;
-    } finally {
-        for (const k of Object.keys(saved)) s[k] = saved[k];
-    }
+    const s = { ...setMod.getSettings(), ...(profFields || {}) };
+    const provider = provMod.resolveActiveProvider(s);
+    if (!provider) throw new Error('провайдер расширения не настроен');
+    const models = await provider.fetchModels(s);
+    if (!Array.isArray(models) || !models.length) throw new Error('список пуст');
+    return models;
 }
 
 // Текст промпта для картинки из данных поста.
@@ -2803,8 +2774,7 @@ export function listIigStyles() {
     } catch (e) { return []; }
 }
 
-// Последовательная очередь (мы временно мутируем чужие настройки —
-// параллельные генерации увидели бы чужие флаги)
+// Sequential phone queue keeps request load predictable.
 let _imgGenChain = Promise.resolve();
 
 // Отмена генерации. Встроенный драйвер получает signal и рвёт сам запрос;
@@ -2827,21 +2797,20 @@ export class ImageGenCancelled extends Error {
 }
 
 export function generatePostImage(post, onStatus = null, cancelKey = null) {
-    const run = () => {
-        if (cancelKey) {
-            const ctl = new AbortController();
-            _imgAborts.set(cancelKey, ctl);
-            return _generatePostImage(post, onStatus, ctl.signal)
-                .then((src) => {
-                    // Пока ждали, кнопку могли нажать — результат уже не нужен
-                    if (ctl.signal.aborted) throw new ImageGenCancelled();
-                    return src;
-                })
-                .finally(() => { if (_imgAborts.get(cancelKey) === ctl) _imgAborts.delete(cancelKey); });
-        }
-        return _generatePostImage(post, onStatus);
+    const ctl = new AbortController();
+    if (cancelKey) {
+        _imgAborts.get(cancelKey)?.abort();
+        _imgAborts.set(cancelKey, ctl);
+    }
+    const run = async () => {
+        if (ctl.signal.aborted) throw new ImageGenCancelled();
+        const src = await _generatePostImage(post, onStatus, ctl.signal);
+        if (ctl.signal.aborted) throw new ImageGenCancelled();
+        return src;
     };
-    const p = _imgGenChain.then(run, run);
+    const p = _imgGenChain.then(run, run).finally(() => {
+        if (cancelKey && _imgAborts.get(cancelKey) === ctl) _imgAborts.delete(cancelKey);
+    });
     _imgGenChain = p.then(() => {}, () => {});
     return p;
 }
@@ -2939,56 +2908,30 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
         return _generateViaBuiltin(post, { prompt, wantChar, isUserPost: userInFrame, onStatus, signal, instruction: externalInstruction });
     }
 
-    // Защитная мутация: сохраняем и трогаем ТОЛЬКО существующие ключи
-    // swSendOutfitImage* — гардероб: расширение подмешивает картинки одежды
-    // ОТДЕЛЬНО от аватарок, поэтому платье юзерки лезло на фото контактов
-    const keys = ['sendCharAvatar', 'sendUserAvatar', 'imageContextEnabled', 'overrideAspectRatio', 'overrideImageSize', 'model',
-        'swSendOutfitImageBot', 'swSendOutfitImageUser'];
-    const lorebookOverrides = phoneLorebookOverrides(nvSettings, imageContext.references);
-    for (const key of Object.keys(lorebookOverrides)) keys.push(key);
-    // Телефонный профиль подключения: временно применяем ЕГО поля (endpoint/
-    // apiKey/model/aspect/...) поверх активных, основной чат не трогаем
+    // Settings belong to this request; never overwrite the image extension's state.
+    const requestSettings = structuredClone(nvSettings || {});
     const phoneProfile = _imgProfile(st.imageGenProfileId);
-    if (phoneProfile && nvSettings) {
-        for (const k of Object.keys(phoneProfile)) {
-            if (k !== 'id' && k !== 'name' && k in nvSettings && !keys.includes(k)) keys.push(k);
+    if (phoneProfile) {
+        for (const [key, value] of Object.entries(phoneProfile)) {
+            if (key !== 'id' && key !== 'name' && key in requestSettings) requestSettings[key] = value;
         }
     }
-    // Телефонный СТИЛЬ: стили глобальные, подменяем activeStyleId на время генерации
-    const phoneStyleId = st.imageGenStyleId && nvSettings && 'activeStyleId' in nvSettings
-        && (nvSettings.styles || []).some(x => x && x.id === st.imageGenStyleId)
-        ? st.imageGenStyleId : '';
-    if (phoneStyleId && !keys.includes('activeStyleId')) keys.push('activeStyleId');
-    const saved = {};
-    if (nvSettings) {
-        for (const k of keys) if (k in nvSettings) saved[k] = nvSettings[k];
-        Object.assign(nvSettings, lorebookOverrides);
-        if (phoneProfile) {
-            for (const k of Object.keys(phoneProfile)) {
-                if (k !== 'id' && k !== 'name' && k in nvSettings) nvSettings[k] = phoneProfile[k];
-            }
-        }
-        if (phoneStyleId) nvSettings.activeStyleId = phoneStyleId;
-        // ФОРСИРУЕМ намерение, а не уважаем чужие галочки: телефон сам решает,
-        // чей реф нужен этой генерации (свой пост → персона, пост/стрим
-        // главперсонажа → его карточка), и восстанавливает флаги в finally
-        if ('sendCharAvatar' in nvSettings) nvSettings.sendCharAvatar = !!wantChar;
-        if ('sendUserAvatar' in nvSettings) nvSettings.sendUserAvatar = !!userInFrame;
-        // Одежда идёт только за тем, кто в кадре: на чужом фото ей делать нечего
-        if ('swSendOutfitImageBot' in nvSettings) nvSettings.swSendOutfitImageBot = !!wantChar;
-        if ('swSendOutfitImageUser' in nvSettings) nvSettings.swSendOutfitImageUser = !!userInFrame;
-        if ('imageContextEnabled' in nvSettings) nvSettings.imageContextEnabled = false;
-        // Аспект поста (сторис 9:16, стрим 16:9, посты 1:1) должен победить
-        // оверрайды расширения — снимаем их, когда аспект задан
-        if (post.aspect || st.imageGenSquare !== false) {
-            if ('overrideAspectRatio' in nvSettings) nvSettings.overrideAspectRatio = false;
-            if ('overrideImageSize' in nvSettings) nvSettings.overrideImageSize = false;
-        }
-        const useModel = effectiveModel(nvSettings);
-        if (useModel && 'model' in nvSettings) nvSettings.model = useModel;
+    if (st.imageGenStyleId && requestSettings.styles?.some(style => style?.id === st.imageGenStyleId)) {
+        requestSettings.activeStyleId = st.imageGenStyleId;
     }
+    Object.assign(requestSettings, {
+        sendCharAvatar: !!wantChar, sendUserAvatar: !!userInFrame,
+        swSendOutfitImageBot: !!wantChar, swSendOutfitImageUser: !!userInFrame,
+        imageContextEnabled: false,
+    });
+    if (post.aspect || st.imageGenSquare !== false) {
+        requestSettings.overrideAspectRatio = false;
+        requestSettings.overrideImageSize = false;
+    }
+    const useModel = effectiveModel(requestSettings);
+    if (useModel) requestSettings.model = useModel;
 
-    const genOptions = {};
+    const genOptions = { providerSettings: requestSettings };
     if (externalInstruction) {
         for (const key of ['imageSize', 'quality', 'preset']) {
             if (externalInstruction[key]) genOptions[key] = externalInstruction[key];
@@ -3001,7 +2944,8 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
 
     try {
         // style = null → расширение подставит СВОЙ активный стиль (resolveEffectiveStyle)
-        const dataUrl = await mod.pipeline.generateImageWithRetry(prompt, externalInstruction?.style || null, onStatus, genOptions);
+        const dataUrl = await generateIsolatedImage(mod, prompt, externalInstruction?.style || null, onStatus, genOptions, imageContext.references);
+        if (signal?.aborted) throw new ImageGenCancelled();
         if (!dataUrl || typeof dataUrl !== 'string') throw new Error('Пустой результат генерации');
         let src = dataUrl;
         if (typeof mod.utils?.saveImageToFile === 'function') {
@@ -3014,11 +2958,12 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
                 src = await saveBase64AsFile(b64, 'glassphone', `iggen_${Date.now()}`, 'jpeg');
             } catch (e) { /* оставляем dataURL */ }
         }
+        if (signal?.aborted) throw new ImageGenCancelled();
         post.image = src;
         saveMeta();
         return src;
-    } finally {
-        if (nvSettings) for (const k of keys) if (k in saved) nvSettings[k] = saved[k];
+    } catch (error) {
+        throw error;
     }
 }
 

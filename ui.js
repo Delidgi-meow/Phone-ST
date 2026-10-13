@@ -5337,7 +5337,7 @@ function bindTinDraw(root) {
         const id = b.getAttribute('data-tindraw');
         const prof = id === 'me' ? getTinderMe() : findProfile(id);
         if (!prof) return;
-        if (!isImageGenAvailable()) { toast('Генерация картинок не настроена', 'fa-circle-exclamation'); return; }
+        if (!(await isImageGenAvailable())) { toast('Генерация картинок не настроена', 'fa-circle-exclamation'); return; }
         const key = `tin:${id === 'me' ? 'me' : prof.id}`;
         _imgGenBusy.add(key);
         render();
@@ -5348,7 +5348,7 @@ function bindTinDraw(root) {
                 else setProfileImage(prof.id, src);
             }
         } catch (err) {
-            if (!(err instanceof ImageGenCancelled)) toast(String(err?.message || err).slice(0, 70), 'fa-circle-exclamation');
+            if (err?.name !== 'ImageGenCancelled' && err?.name !== 'AbortError') toast(String(err?.message || err).slice(0, 70), 'fa-circle-exclamation');
         } finally {
             _imgGenBusy.delete(key);
             render();
@@ -5586,14 +5586,14 @@ function renderTinMe(screen) {
     const drawMine = async () => {
         const draft = saveTinderMe(collect());
         if (!draft.look) { toast('Опиши, как выглядишь', 'fa-circle-exclamation'); return; }
-        if (!isImageGenAvailable()) { toast('Генерация картинок не настроена', 'fa-circle-exclamation'); return; }
+        if (!(await isImageGenAvailable())) { toast('Генерация картинок не настроена', 'fa-circle-exclamation'); return; }
         _imgGenBusy.add('tin:me');
         render();
         try {
             const src = await drawTinderPhoto({ ...draft, id: 'me' }, true);
             if (src) { setTinderMePhoto(src); _tinMePhoto = null; }
         } catch (err) {
-            if (!(err instanceof ImageGenCancelled)) toast(String(err?.message || err).slice(0, 70), 'fa-circle-exclamation');
+            if (err?.name !== 'ImageGenCancelled' && err?.name !== 'AbortError') toast(String(err?.message || err).slice(0, 70), 'fa-circle-exclamation');
         } finally {
             _imgGenBusy.delete('tin:me');
             render();

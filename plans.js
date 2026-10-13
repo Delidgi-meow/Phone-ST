@@ -47,8 +47,8 @@ export function parsePlanDate(raw) {
     }
     const ymd = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
     if (ymd) return iso(Number(ymd[1]), Number(ymd[2]), Number(ymd[3]));
-    if (/^сегодня|today$/.test(s)) return rpToday();
-    if (/^завтра|tomorrow$/.test(s)) return shiftDays(rpToday(), 1);
+    if (/^(?:сегодня|today)$/.test(s)) return rpToday();
+    if (/^(?:завтра|tomorrow)$/.test(s)) return shiftDays(rpToday(), 1);
     if (/^послезавтра$/.test(s)) return shiftDays(rpToday(), 2);
     const inDays = s.match(/^через\s+(\d{1,3})\s*(?:дн|день|дня|дней)/);
     if (inDays) return shiftDays(rpToday(), Number(inDays[1]));
@@ -223,7 +223,7 @@ export function plansInjectLine() {
 }
 
 export function plansInjectRule() {
-    return `[PLAN] If in THIS reply a date or plan is set — a meeting, a shift, a doctor's appointment, a promise to come or call at some time — append a hidden comment at the END: <!--tel:plan:{"date":"DD.MM.YYYY","time":"19:00","text":"what exactly","who":"user|char|both"}--> ("who": whose plan it is — {{user}}'s, the character's, or both). "time" may be empty. One tag per plan, only for things that are really agreed.`;
+    return `[PLAN] If a concrete date or plan is agreed in the latest user message or THIS reply — a meeting, a shift, a doctor's appointment, a promise to come or call at some time — append a hidden comment at the END: <!--tel:plan:{"date":"DD.MM.YYYY","time":"19:00","text":"what exactly","who":"user|char|both"}--> ("who": whose plan it is — {{user}}'s, the character's, or both). "time" may be empty. One tag per plan, only for things that are really agreed. Also record confirmed plans when the calendar is empty. Use the in-world date, not the computer date; date may be YYYY-MM-DD, DD.MM.YYYY, today, tomorrow, сегодня or завтра. Do not repeat a plan already listed in the calendar. Do not turn hypothetical suggestions or refused invitations into plans.`;
 }
 
 // ── Теги из чата ──
@@ -240,6 +240,7 @@ export function harvestPlanTags() {
     try { chat = SillyTavern.getContext()?.chat || []; } catch (e) { return 0; }
     const seen = new Set(m.planTags);
     let added = 0;
+    let consumed = false;
     for (let i = 0; i < chat.length; i++) {
         const msg = chat[i];
         const sourceText = getPhoneMessageText(msg);
@@ -254,10 +255,15 @@ export function harvestPlanTags() {
             const n = occ[base] = (occ[base] || 0) + 1;
             const key = `${base}#${n}`;
             if (seen.has(key)) continue;
+            const j = safeJson(hit[1]);
+            if (!j || typeof j.text !== 'string' || !j.text.trim()) continue;
             seen.add(key);
             m.planTags.push(key);
-            const j = safeJson(hit[1]);
-            if (!j || !j.text) continue;
+            consumed = true;
+            const date = parsePlanDate(j.date);
+            const time = String(j.time || '').trim().slice(0, 5);
+            const who = PLAN_WHO[j.who] ? j.who : 'user';
+            if (m.plans.some(plan => !plan.done && plan.date === date && plan.time === time && plan.who === who && plan.text === j.text.trim().slice(0, 200))) continue;
             addPlan({
                 text: j.text,
                 date: j.date,
@@ -269,6 +275,6 @@ export function harvestPlanTags() {
         }
     }
     if (m.planTags.length > 300) m.planTags = m.planTags.slice(-300);
-    if (added) saveMeta();
+    if (added || consumed) saveMeta();
     return added;
 }

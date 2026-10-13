@@ -71,6 +71,7 @@ export async function parseExternalImagePrompt(raw, parser, blockName) {
     }
     // A block may return JSON inside an img instruction, a legacy IMG tag,
     // or its own XML wrapper. Parse balanced JSON, including escaped quotes.
+    const instructions = [];
     for (let start = text.indexOf('{'); start >= 0; start = text.indexOf('{', start + 1)) {
         let depth = 0, quoted = false, escaped = false;
         for (let index = start; index < text.length; index++) {
@@ -84,12 +85,15 @@ export async function parseExternalImagePrompt(raw, parser, blockName) {
             else if (char === '}' && --depth === 0) {
                 try {
                     const instruction = imageInstruction(JSON.parse(text.slice(start, index + 1)));
-                    if (instruction) return instruction;
+                    if (instruction) instructions.push(instruction);
                 } catch (_error) { /* Try the next object. */ }
+                start = index;
                 break;
             }
         }
     }
+    if (instructions.length > 1) throw new Error('Внешний блок вернул несколько картинок. Для телефона нужна одна.');
+    if (instructions.length === 1) return instructions[0];
     if (/data-iig-instruction|\[IMG:GEN|^\s*\{/i.test(text)) {
         throw new Error('Не удалось прочитать промпт картинки из выбранного блока.');
     }

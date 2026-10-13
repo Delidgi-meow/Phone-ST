@@ -567,6 +567,7 @@ jQuery(async () => {
             // Свайп уносит вариант ответа вместе с его деньгами: пересверяемся
             // сразу, иначе баланс держал бы списание до следующего сообщения
             try { harvestBankTags(); } catch (e) { /* ignore */ }
+            try { harvestPlanTags(); } catch (e) { console.warn('[GlassPhone] Calendar tags:', e); }
             checkNewIncoming({ silent: true });
             applyChatHiding();
             if (isPhoneOpen()) render();
@@ -586,6 +587,7 @@ jQuery(async () => {
                     resetIncomingCounters();
                     try { harvestSocialTags(); } catch (e) { /* ignore */ }
                     try { harvestBankTags(); } catch (e) { /* ignore */ }
+                    try { harvestPlanTags(); } catch (e) { console.warn('[GlassPhone] Calendar tags:', e); }
                     updateFabBadge();
                     updatePhoneInjection();
                     applyChatHiding();

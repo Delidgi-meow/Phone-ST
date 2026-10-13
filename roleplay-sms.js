@@ -13,13 +13,14 @@ export function extractRoleplaySms(text, { otherNames = [] } = {}) {
         const body = match[1].trim();
         if (!body || /^\[(?:СМС|SMS|Голосовое|Voice)\b/i.test(body) || /^\s*(?:const |let |var |\{|\/)/.test(body)) continue;
         const before = source.slice(Math.max(0, match.index - 180), match.index);
-        const clause = before.split(/[.!?;\n]|\s+(?:и|потом|затем|and|then)\s+/iu).at(-1) || '';
+        const clause = before.split(/[.!?;\n]/u).at(-1) || '';
         const after = source.slice(match.index + match[0].length, match.index + match[0].length + 90);
         // Never infer an outgoing message from a received notification,
         // quoted conversation, a social post, or another person's action.
         if (/(?:прочитал[аи]?|получил[аи]?|увидел[аи]?|пришло|входящее|сообщение\s+от|смс\s+от|цитат|подпись|опубликов|(?:^|\s)пост(?:\s|$)|read\s+(?:a\s+)?message|received|caption|posted)/iu.test(clause)) continue;
         if (/(?:он|она|они|бот|персонаж|he|she|they)\s+(?:\S+\s+){0,2}(?:пишет|написал[аи]?|ответил[аи]?|отправил[аи]?|набрал[аи]?|читает|writes|texts|sent|replied)/iu.test(clause)) continue;
         if (/^\s*[,—-]?\s*(?:написал|прислал|отправил|пишет|wrote|sent)\s+(?:он|она|бот|персонаж|he|she)(?![\p{L}\p{N}_])/iu.test(after)) continue;
+        if (/(?:хотел[аи]?|собирал(?:ся|ась)|думал[аи]?|черновик|не\s+(?:отправил[аи]?|написал[аи]?)|wanted\s+to|draft|did\s+not\s+send|never\s+sent)/iu.test(clause + ' ' + after)) continue;
         const actors = otherNames.flatMap(name => [name, String(name).split(/\s+/)[0]]).filter(Boolean);
         if (actors.some(name => new RegExp(`(^|[^\\p{L}])${escape(name)}\\s+(?:\\S+\\s+){0,2}(?:пишет|написал[аи]?|отправил[аи]?|ответил[аи]?|набрал[аи]?|writes|texts|sent)`, 'iu').test(clause))) continue;
         candidates.push({ quoteIndex, text: body });
@@ -35,60 +36,55 @@ export function resolveRoleplaySms(userMessage, userIndex, replyText, options = 
     if (!candidates.length) return [];
     const userNames = (options.userNames || []).map(norm);
     const isUser = name => userNames.includes(norm(name));
-    const recipients = new Map();
     const sent = new Map();
     for (const match of String(replyText || '').matchAll(TAGS)) {
         const data = parse(match[2]);
         if (!data) continue;
         if (match[1].toLowerCase() === 'sent') {
-            if (data.source !== userIndex || (data.from && !isUser(data.from))) continue;
+            if ((data.source !== userIndex && data.source !== userMessage.extra?.glassphoneRpSmsSource) || (data.from && !isUser(data.from))) continue;
             const candidate = candidates.find(item => item.quoteIndex === data.quoteIndex && item.text === String(data.text || '').trim());
             const target = data.chat || data.to;
             if (!candidate || typeof target !== 'string' || !target.trim() || target.length > 120 || /[\r\n]/.test(target) || (data.to && isUser(data.to))) continue;
             sent.set(candidate.quoteIndex, { ...candidate, to: String(data.to || ''), group: data.chat ? String(data.chat) : null });
-        } else if (data.from && !isUser(data.from) && (data.text || data.photo) && (!data.to || isUser(data.to))) {
-            const name = String(data.chat || data.from).trim();
-            recipients.set(`${data.chat ? 'group:' : ''}${norm(name)}`, { to: data.chat ? `группа:${name}` : name, group: data.chat ? name : null });
         }
     }
-    // Existing phone replies can identify the recipient without a new tag,
-    // but only a single quote and a single replying conversation are unambiguous.
-    if (candidates.length === 1 && sent.size === 0 && recipients.size === 1) {
-        sent.set(candidates[0].quoteIndex, { ...candidates[0], ...recipients.values().next().value });
-    }
     const hidden = new Set(userMessage.extra?.glassphoneRpSmsHidden || []);
-    const existing = new Set();
-    for (const match of String(userMessage.mes || '').matchAll(OUTGOING)) {
-        const data = parse(match[1]);
-        if (data?.origin === 'rp') existing.add(roleplaySmsKey(data.quoteIndex, data.rpQuote || data.text));
-    }
     return [...sent.values()].filter(item => {
         const key = roleplaySmsKey(item.quoteIndex, item.text);
-        return !hidden.has(key) && !existing.has(key);
+        return !hidden.has(key);
     });
 }
 
+// Reconcile every user turn with its current assistant replies after edits/swipes.
 export function captureRoleplaySms(chat, readMessage, options = {}) {
-    let userIndex = -1;
-    for (let index = chat.length - 1; index >= 0; index--) {
-        if (chat[index]?.is_user && !chat[index].is_system) { userIndex = index; break; }
+    let changed = 0;
+    const clean = text => String(text || '').replace(OUTGOING, (tag, json) => parse(json)?.origin === 'rp' ? '' : tag).trimEnd();
+    for (let userIndex = 0; userIndex < chat.length; userIndex++) {
+        const message = chat[userIndex];
+        if (!message?.is_user || message.is_system) continue;
+        let end = userIndex + 1;
+        while (end < chat.length && !chat[end]?.is_user) end++;
+        const replies = chat.slice(userIndex + 1, end).filter(item => item && !item.is_system).map(readMessage).join('\n');
+        const outgoing = resolveRoleplaySms(message, userIndex, replies, options);
+        const tags = outgoing.map(item => {
+            const data = { to: item.to, text: item.text, mixed: true, origin: 'rp', quoteIndex: item.quoteIndex, rpQuote: item.text };
+            if (item.group) data.group = item.group;
+            const json = JSON.stringify(data).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
+            return '<!--tel:out:' + json + '-->';
+        }).join('\n');
+        const update = text => clean(text) + (tags ? '\n' + tags : '');
+        const next = update(message.mes);
+        if (next === message.mes) continue;
+        if (outgoing.length) {
+            message.extra ||= {};
+            message.extra.glassphoneRpSmsSource ??= userIndex;
+        }
+        message.mes = next;
+        if (typeof message.extra?.display_text === 'string') message.extra.display_text = update(message.extra.display_text);
+        if (typeof message.swipes?.[message.swipe_id] === 'string') message.swipes[message.swipe_id] = next;
+        changed++;
     }
-    if (userIndex < 0 || userIndex === chat.length - 1) return 0;
-    const replies = chat.slice(userIndex + 1).filter(message => message && !message.is_user)
-        .map(readMessage).join('\n');
-    const message = chat[userIndex];
-    const outgoing = resolveRoleplaySms(message, userIndex, replies, options);
-    if (!outgoing.length) return 0;
-    const tags = outgoing.map(item => {
-        const data = { to: item.to, text: item.text, mixed: true, origin: 'rp', quoteIndex: item.quoteIndex, rpQuote: item.text };
-        if (item.group) data.group = item.group;
-        const json = JSON.stringify(data).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
-        return `<!--tel:out:${json}-->`;
-    }).join('\n');
-    message.mes = `${String(message.mes || '').trimEnd()}\n${tags}`;
-    if (typeof message.extra?.display_text === 'string') message.extra.display_text += `\n${tags}`;
-    if (typeof message.swipes?.[message.swipe_id] === 'string') message.swipes[message.swipe_id] = message.mes;
-    return outgoing.length;
+    return changed;
 }
 
 export function hasMixedRoleplaySms(message) {
