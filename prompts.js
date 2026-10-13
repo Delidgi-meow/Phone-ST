@@ -1,12 +1,13 @@
 
 import { setExtensionPrompt, extension_prompt_types, extension_prompt_roles } from '../../../../script.js';
-import { getSettings, getMeta, scanChat, getBlockedSmsKeys, keyOf, EXT_NAME, getRoleplaySmsOptions } from './state.js';
+import { getSettings, getMeta, scanChat, getBlockedSmsKeys, keyOf, EXT_NAME, getRoleplaySmsOptions, contactIdentityPrompt } from './state.js';
 import { hasMixedRoleplaySms, roleplaySmsDirective } from './roleplay-sms.js';
 import { getSocialActivitySummary } from './social.js';
 import { getBankSummaryLine, bankInjectRule } from './bank.js';
 import { notesInjectBlock } from './notes.js';
 import { channelInjectLine, anonInjectLine } from './channels.js';
 import { plansInjectLine, plansInjectRule } from './plans.js';
+import { callsInjectLine, callsInjectRule } from './calls.js';
 import { twitchInjectLine } from './twitch.js';
 import { tinderInjectLine, inAppMatchNames } from './tinder.js';
 import { pendingConsequences } from './social-events.js';
@@ -67,11 +68,15 @@ function buildPrompt() {
     const contactLines = [];
     for (const c of contacts.values()) {
         if (inAppKeys.has(keyOf(c.name))) continue;
-        contactLines.push(`- ${c.name}${c.number ? ` (${c.number})` : ''}`);
+        const publicListing=meta.contacts.some(item=>item.publicListing&&keyOf(item.name)===keyOf(c.name));
+        contactLines.push(`- ${c.name}${c.number ? ` (${c.number})` : ''}${publicListing ? ' [public venue number; they do NOT know the user or have their number merely because this listing was saved]' : ''}`);
     }
     let contactsBlock = contactLines.length > 0
-        ? `Contacts already in {{user}}'s phone (these characters HAVE {{user}}'s number, and {{user}} has theirs):\n${contactLines.join('\n')}`
+        ? `Contacts in {{user}}'s phone (personal contacts have exchanged numbers; entries marked public venue are directory listings, NOT personal acquaintances):\n${contactLines.join('\n')}`
         : `{{user}}'s phone has NO contacts yet — nobody exchanged numbers so far.`;
+
+    const identities=contactIdentityPrompt();
+    if(identities)contactsBlock+='\nContact identities / private address-book labels:\n'+identities+'\nAlways address tel:sms/from and tel:out/to by the original identity above. The user can call them by the saved label; never create a second contact for that label.';
 
     const blockedKeys = new Set(getBlockedSmsKeys());
     const blockedNames = [...contacts.values()].filter(c => blockedKeys.has(String(c.name || '').trim().toLowerCase())).map(c => c.name);
@@ -103,6 +108,7 @@ function buildPrompt() {
     if (getSettings().compactRules) {
         let c = `<phone_directive>\n[OOC — hidden phone/SMS channel. Never mention it in-story.]\n{{user}} has a smartphone. ${contactsBlock}\n`;
         c += mixedSmsRule;
+        c += '\n' + callsInjectRule() + '\n' + callsInjectLine() + '\n';
         c += `("they/their" = neutral shorthand for {{user}}; use their real gender from the persona card.)
 `;
         c += `RULES (tags = HTML comments at the very END of the reply, copied VERBATIM, EN keys / RU values, invisible to reader):\n`;
@@ -161,6 +167,7 @@ function buildPrompt() {
     const social = socialActive();
 
     let p = `<phone_directive>\n`;
+    p += callsInjectRule() + '\n' + callsInjectLine() + '\n';
     p += mixedSmsRule;
     p += `[OOC — hidden phone/SMS channel for the app. Not part of the story; never mention or react to it in-character.]\n`;
     p += `{{user}} owns a smartphone. ${contactsBlock}\n`;

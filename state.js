@@ -8,7 +8,7 @@ import { captureRoleplaySms, extractRoleplaySms, hasMixedRoleplaySms } from './r
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.38.1';
+export const GP_VERSION = '2.42.0';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -162,6 +162,9 @@ export function getMeta() {
     if (!Array.isArray(m.groups)) m.groups = [];
     // Переименования контактов (отображаемое имя поверх имени из чата), по ключу
     if (!m.names || typeof m.names !== 'object') m.names = {};
+    if (!m.contactIdentities || typeof m.contactIdentities !== 'object' || Array.isArray(m.contactIdentities)) m.contactIdentities = {};
+    for (const c of m.contacts) { const k=keyOf(c?.name); if(k&&!Object.hasOwn(m.contactIdentities,k))m.contactIdentities[k]={originalName:c.name,aliases:[]}; }
+    for (const k of Object.keys(m.names)) if(!k.startsWith('group:')&&!Object.hasOwn(m.contactIdentities,k))m.contactIdentities[k]={originalName:k,aliases:[]};
     // Забаненные аккаунты соцсетей (нормализованные ключи имени/ника)
     if (!Array.isArray(m.banned)) m.banned = [];
     // Интервалы блокировки SMS по ключу контакта. Храним интервалы индексов чата,
@@ -238,17 +241,52 @@ export function stripHandle(s) {
     return String(s || '').replace(/^@+/, '').trim();
 }
 
-// ── Отображаемое имя контакта (учитывает переименование) ──
-export function displayName(key, fallback) {
-    const m = getMeta();
-    return (m.names && m.names[key]) || fallback || key;
+// A contact keeps its original identity; address-book labels are personal aliases.
+export function resolveContactKey(value){
+    const raw=String(value||'').trim(),key=keyOf(raw);
+    if(!key||key.startsWith('group:'))return key;
+    const m=getMeta(),ids=m.contactIdentities;
+    if(Object.hasOwn(ids,key)||Object.hasOwn(m.names,key)||m.contacts.some(c=>keyOf(c.name)===key))return key;
+    const matches=new Set();
+    for(const k of new Set([...Object.keys(ids),...Object.keys(m.names),...Object.keys(m.handles)])){
+        const item=Object.hasOwn(ids,k)?ids[k]:null;
+        const names=[item?.originalName,m.names[k],...(Array.isArray(item?.aliases)?item.aliases:[]),m.handles[k]];
+        if(names.some(n=>n&&(keyOf(n)===key||keyOf(stripHandle(n))===keyOf(stripHandle(raw)))))matches.add(k);
+    }
+    return matches.size===1?[...matches][0]:key;
 }
-export function renameContact(key, newName) {
-    const m = getMeta();
-    const n = String(newName || '').trim();
-    if (n) m.names[key] = n.slice(0, 60);
-    else delete m.names[key];
+function rememberContact(name,key=resolveContactKey(name)){
+    if(!key||key.startsWith('group:'))return;
+    const m=getMeta(),ids=m.contactIdentities;
+    if(!Object.hasOwn(ids,key))ids[key]={originalName:String(name||key).trim(),aliases:[]};
+    const item=ids[key];
+    if(!Array.isArray(item.aliases))item.aliases=[];
+    if(!item.originalName||(item.originalName===key&&keyOf(name)===key))item.originalName=String(name||key).trim();
+}
+export function contactOriginalName(key,fallback=''){
+    const k=resolveContactKey(key),m=getMeta();
+    const record=Object.hasOwn(m.contactIdentities,k)?m.contactIdentities[k]:null;
+    return record?.originalName||m.contacts.find(c=>keyOf(c.name)===k)?.name||fallback||k;
+}
+export function displayName(key,fallback){
+    const m=getMeta(),k=resolveContactKey(key);
+    return (Object.hasOwn(m.names,k)&&m.names[k])||fallback||k;
+}
+export function renameContact(key,newName){
+    const m=getMeta(),k=resolveContactKey(key),n=String(newName||'').trim().slice(0,60);
+    if(k.startsWith('group:')){if(n)m.names[k]=n;else delete m.names[k];saveMeta();return;}
+    rememberContact(contactOriginalName(k),k);
+    const item=m.contactIdentities[k],old=m.names[k];
+    if(old&&old!==n&&!item.aliases.includes(old))item.aliases.push(old);
+    item.aliases=item.aliases.slice(-20);
+    if(n)m.names[k]=n;else delete m.names[k];
     saveMeta();
+}
+export function contactIdentityPrompt(){
+    return getThreadList().filter(t=>!t.isGroup).slice(0,60).map(t=>{
+        const alias=t.name===t.originalName?'':'; saved by the user as '+JSON.stringify(t.name);
+        return '- '+JSON.stringify(t.originalName)+': permanent contact key '+JSON.stringify(t.key)+alias+'. This is the same person; use their original identity/lore. A saved label is not a new character. The model remembers the saved label when interpreting what the user calls this person.';
+    }).join('\n');
 }
 
 // ── Бан аккаунтов соцсетей ──
@@ -1038,11 +1076,13 @@ function scanChatUncached() {
     const threads = new Map();
 
     const addContact = (name, number, source) => {
-        const k = keyOf(name);
+        const k = resolveContactKey(name);
         if (!k) return;
+        rememberContact(name,k);
+        const originalName=contactOriginalName(k,String(name).trim());
         const existing = contacts.get(k);
         if (!existing) {
-            contacts.set(k, { name: String(name).trim(), number: String(number || '').trim(), source });
+            contacts.set(k, { name: originalName, number: String(number || '').trim(), source });
         } else if (!existing.number && number) {
             existing.number = String(number).trim();
         }
@@ -1050,7 +1090,7 @@ function scanChatUncached() {
 
     // name может быть готовым ключом 'group:xxx' (displayName тогда обязателен)
     const pushMsg = (name, entry, displayName = null) => {
-        const k = String(name).startsWith('group:') ? String(name) : keyOf(name);
+        const k = String(name).startsWith('group:') ? String(name) : resolveContactKey(name);
         if (!k || k === 'group:') return;
         if (!threads.has(k)) {
             threads.set(k, {
@@ -1129,7 +1169,7 @@ function scanChatUncached() {
                 const stripped = text.replace(OUT_RE, '').trim();
                 const vis = stripped.match(OUT_VISIBLE_RE);
                 const visGroup = !vis ? stripped.match(OUT_VISIBLE_GROUP_RE) : null;
-                let to = j.to || (vis ? vis[2].trim() : null);
+                let to = j.contactKey || j.to || (vis ? vis[2].trim() : null);
                 const body = j.mixed ? String(j.text || '') : (vis ? vis[3].trim() : (visGroup ? visGroup[3].trim() : (j.text || '')));
                 const isVoice = !!j.voice || VOICE_KIND_RE.test(vis?.[1] || visGroup?.[1] || '');
                 // Групповой чат: to = "группа:Название" (или поле group)
@@ -1194,7 +1234,7 @@ function scanChatUncached() {
                 // Заблокированный контакт не создаёт пузырь/непрочитанное. Проверка
                 // идёт по историческому интервалу, поэтому блок переживает reload,
                 // а разблокировка не возвращает пропущенные сообщения задним числом.
-                if (!j.chat && wasSmsBlockedAt(j.from, i)) {
+                if (!j.chat && wasSmsBlockedAt(resolveContactKey(j.from), i)) {
                     continue;
                 }
                 const entry = {
@@ -1245,11 +1285,12 @@ function scanChatUncached() {
     const meta = getMeta();
     for (const c of meta.contacts) {
         if (!c || !c.name) continue;
-        const k = keyOf(c.name);
+        const k = resolveContactKey(c.name);
+        rememberContact(c.name,k);
         const existing = contacts.get(k);
         if (!existing) {
             contacts.set(k, { name: c.name, number: c.number || '', source: 'manual' });
-        } else if (c.number && !existing.number) {
+        } else if (c.number) {
             existing.number = c.number;
         }
     }
@@ -1303,6 +1344,7 @@ export function getThreadList() {
         list.push({
             key: k,
             name: displayName(k, (g && g.name) || (c && c.name) || (t && t.name) || k),
+            originalName: isGroup ? ((g && g.name) || (t && t.name) || k) : contactOriginalName(k,(c && c.name) || (t && t.name) || k),
             number: (c && c.number) || '',
             isGroup,
             members: g ? g.members : (isGroup ? [...new Set(msgs.filter(m => m.from).map(m => m.from))] : []),
@@ -1317,7 +1359,8 @@ export function getThreadList() {
 }
 
 export function getThread(key) {
-    return getThreadList().find(t => t.key === key) || null;
+    const resolved=resolveContactKey(key);
+    return getThreadList().find(t => t.key === resolved) || null;
 }
 
 export function getTotalUnread() {
@@ -1339,15 +1382,16 @@ export function markRead(key) {
 
 export function addManualContact(name, number) {
     const meta = getMeta();
-    const k = keyOf(name);
+    const k = resolveContactKey(name);
     if (!k) return false;
+    rememberContact(name,k);
     // Снимаем скрытие, если было
     meta.hidden = meta.hidden.filter(h => h.key !== k);
     const existing = meta.contacts.find(c => keyOf(c.name) === k);
     if (existing) {
         if (number) existing.number = number;
     } else {
-        meta.contacts.push({ name: String(name).trim(), number: String(number || '').trim() });
+        meta.contacts.push({ name: contactOriginalName(k,String(name).trim()), number: String(number || '').trim() });
     }
     saveMeta();
     return true;

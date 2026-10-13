@@ -1,3 +1,8 @@
+import { openPhoneContactEditor } from './contact-editor.js';
+import { openGroupComposer } from './group-composer.js';
+import { decorateThreadHeader } from './thread-profile.js';
+import { applyThreadAppearance, editThreadAppearance, clearThreadAppearance } from './thread-appearance.js';
+import { closePhoneSheet } from './phone-modal.js';
 
 import { sendMessageAsUser, Generate, generateQuietPrompt, saveSettingsDebounced, saveChatConditional } from '../../../../script.js';
 import { saveBase64AsFile } from '../../../utils.js';
@@ -47,6 +52,9 @@ import {
 } from './channels.js';
 import { casinoStats, spinSlots, spinRoulette, canBet } from './casino.js';
 import { getNews, refreshNews, shareNews, deleteNews } from './news.js';
+import { renderPhoneBrowser, renderPhoneMaps } from './web-ui.js';
+import { enhancePhoneHome, homeInteractionBusy, disposePhoneHome } from './home-layout.js';
+import { renderPhoneBook, callBadge, stopPhoneCallTimer, startPhoneCall } from './calls.js';
 import { getDiscord, findDServer, findDChannel, refreshDiscordServers, createOwnDServer, refreshDChannel, postToDChannel, deleteDServer, addDMember, delDMember } from './discord.js';
 import { getTwitch, findStream, refreshStreams, tickStream, donateToStream, startMyStream, tickMyStream, endMyStream, getTwitchNick, setTwitchNick } from './twitch.js';
 import { getNotes, addNote, updateNote, deleteNote, toggleNoteShared } from './notes.js';
@@ -91,6 +99,7 @@ function captureDrafts(root) {
     if (!root) return;
     const scope = draftScope();
     root.querySelectorAll('textarea[id], input[id]').forEach(el => {
+        if (/^gp-(?:web|map|call|book|dial|widget)-/.test(el.id)) return;
         if (el.type === 'file' || el.type === 'checkbox' || el.type === 'radio' || el.type === 'color') return;
         _drafts.set(`${scope}:${el.id}`, el.value);
     });
@@ -100,6 +109,7 @@ function restoreDrafts(root) {
     if (!root) return;
     const scope = draftScope();
     root.querySelectorAll('textarea[id], input[id]').forEach(el => {
+        if (/^gp-(?:web|map)-/.test(el.id)) return;
         if (el.type === 'file' || el.type === 'checkbox' || el.type === 'radio' || el.type === 'color') return;
         const saved = _drafts.get(`${scope}:${el.id}`);
         // Только в пустое поле: не затираем значения, выставленные рендером
@@ -484,6 +494,7 @@ export function applySkin() {
         const alpha = c.transparency / 100;
         const light = skin === 'zephyr' || skin === 'porcelain';
         const lcd = skin === 'lcd';
+        ph.style.setProperty('--gp-home-sheet-bg', 'color-mix(in srgb, '+(c.bg || (lcd ? '#c5d19c' : light ? '#f4f1f7' : '#26232a'))+' 93%, '+accentA+' 7%)');
         ph.style.setProperty('--gp-glass', lcd
             ? `rgba(255,255,230,${Math.min(.45, alpha + .12)})`
             : light ? `rgba(255,255,255,${Math.min(.9, alpha + .5)})` : `rgba(255,255,255,${alpha})`);
@@ -574,7 +585,9 @@ export function openPhone(threadKey = null) {
     // Стадии заказов двигает время ролевой: пока телефон был закрыт, курьер мог
     // выехать. Догоняем при открытии, иначе заказ висел бы «в сборке».
     notifyDeliveries();
-    if (threadKey) {
+    if (String(threadKey || '').startsWith('call:')) {
+        currentScreen = 'phone';
+    } else if (threadKey) {
         // Пришли по тосту в конкретный тред — экран блокировки только мешает
         currentScreen = 'thread';
         currentThreadKey = threadKey;
@@ -609,6 +622,10 @@ export function openPhone(threadKey = null) {
 }
 
 export function closePhone() {
+    document.getElementById('gp-screen')?.querySelectorAll('.gp-phone-sheet-shade').forEach(closePhoneSheet);
+    clearThreadAppearance();
+    disposePhoneHome(document.getElementById('gp-screen'));
+    stopPhoneCallTimer();
     flushCasinoSession(); // если закрыли телефон прямо из казино — итог всё равно уходит в журнал
     flushOrderToast();    // и про срок доставки собранной корзины скажем сразу
     // Недописанный текст переживает закрытие телефона
@@ -632,6 +649,8 @@ function tickClock() {
         const m = rpDt?.minutes ?? new Date().getMinutes();
         el.textContent = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
     }
+    const homeClock = document.querySelector('#gp-screen .gp-home-clock');
+    if (homeClock) { const h = rpDt?.hours ?? new Date().getHours(); const m = rpDt?.minutes ?? new Date().getMinutes(); homeClock.textContent = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'); }
     const rp = document.getElementById('gp-rpdate');
     if (rp) {
         rp.textContent = rpDt?.label || '';
@@ -643,11 +662,20 @@ function tickClock() {
 // Приложения со своим оформлением (дискорд, твич, сторис, экран блокировки)
 // рисуют фон сами и должны доходить до краёв корпуса — общие поля экрана им
 // только мешают.
-const BLEED_SCREENS = new Set(['discord', 'dchannel', 'twitch', 'stream', 'mystream', 'igstory', 'lock']);
+const BLEED_SCREENS = new Set(['discord', 'dchannel', 'twitch', 'stream', 'mystream', 'igstory', 'lock', 'browser', 'maps', 'phone', 'contacts', 'thread']);
 
 export function render() {
     const screen = document.getElementById('gp-screen');
     if (!screen || !isPhoneOpen()) return;
+    document.getElementById('gp-phone')?.classList.toggle('gp-home-active',currentScreen==='home');
+    screen.dataset.phoneView=currentScreen;
+    const modal=screen.querySelector('.gp-phone-sheet-shade');
+    if(modal&&modal.ownerRoot===getMeta()&&modal.dataset.phoneView===(currentScreen==='thread'?'thread:'+currentThreadKey:currentScreen))return;
+    if(modal)closePhoneSheet(modal);
+    if (currentScreen === 'home' && homeInteractionBusy()) return;
+    if (currentScreen !== 'home') disposePhoneHome(screen);
+    if(currentScreen!=='thread')clearThreadAppearance();
+    if (!['phone', 'contacts'].includes(currentScreen)) stopPhoneCallTimer();
     bindStopGen(screen);
     bindZoom(screen);
     screen.classList.toggle('gp-screen-bleed', BLEED_SCREENS.has(currentScreen));
@@ -684,6 +712,10 @@ export function render() {
     else if (currentScreen === 'ordchat') renderCourierChat(screen);
     else if (currentScreen === 'casino') renderCasino(screen);
     else if (currentScreen === 'news') renderNews(screen);
+    else if (currentScreen === 'browser') renderPhoneBrowser(screen, phoneWebApi());
+    else if (currentScreen === 'maps') renderPhoneMaps(screen, phoneWebApi());
+    else if (currentScreen === 'phone') renderPhoneBook(screen, phoneBookApi());
+    else if (currentScreen === 'contacts') renderPhoneBook(screen, phoneBookApi(), true);
     else if (currentScreen === 'chans') renderChannels(screen);
     else if (currentScreen === 'chan') renderChannel(screen);
     else if (currentScreen === 'chanpost') renderChanPost(screen);
@@ -698,6 +730,7 @@ export function render() {
     else if (currentScreen === 'stream') renderStream(screen);
     else if (currentScreen === 'mystream') renderMyStream(screen);
     else if (currentScreen === 'notes') renderNotes(screen);
+    else if (currentScreen === 'calendar') renderPlans(screen);
     else if (currentScreen === 'appearance') renderAppearance(screen);
     else renderHome(screen);
     // Возвращаем набранный текст: перерисовка (генерация картинки, публикация,
@@ -1205,6 +1238,14 @@ function renderHome(screen) {
                     <div class="gp-app-icon gp-app-msg">${ic('fa-comment-dots')}${unread > 0 ? `<span class="gp-app-badge">${unread > 9 ? '9+' : unread}</span>` : ''}</div>
                     <div class="gp-app-name">Сообщения</div>
                 </div>
+                <div class="gp-app" data-app="phone">
+                    <div class="gp-app-icon gp-app-phone">${ic('fa-phone')}${callBadge() ? `<span class="gp-app-badge">${callBadge()}</span>` : ''}</div>
+                    <div class="gp-app-name">Телефон</div>
+                </div>
+                <div class="gp-app" data-app="contacts">
+                    <div class="gp-app-icon gp-app-contacts">${ic('fa-address-book')}</div>
+                    <div class="gp-app-name">Контакты</div>
+                </div>
                 <div class="gp-app" data-app="tw">
                     <div class="gp-app-icon gp-app-tw">${brand('fa-x-twitter')}</div>
                     <div class="gp-app-name">Twitter</div>
@@ -1237,6 +1278,14 @@ function renderHome(screen) {
                     <div class="gp-app-icon gp-app-casino">${ic('fa-dice')}</div>
                     <div class="gp-app-name">Казино</div>
                 </div>
+                <div class="gp-app" data-app="browser">
+                    <div class="gp-app-icon gp-app-browser">${ic('fa-compass')}</div>
+                    <div class="gp-app-name">Браузер</div>
+                </div>
+                <div class="gp-app" data-app="maps">
+                    <div class="gp-app-icon gp-app-maps">${ic('fa-map-location-dot')}</div>
+                    <div class="gp-app-name">Карты</div>
+                </div>
                 <div class="gp-app" data-app="news">
                     <div class="gp-app-icon gp-app-news">${ic('fa-newspaper')}</div>
                     <div class="gp-app-name">Новости</div>
@@ -1249,10 +1298,8 @@ function renderHome(screen) {
                     <div class="gp-app-icon gp-app-twitch">${brand('fa-twitch')}${getTwitch().myStream ? '<span class="gp-app-badge gp-live-badge">LIVE</span>' : ''}</div>
                     <div class="gp-app-name">Twitch</div>
                 </div>
-                <div class="gp-app" data-app="notes">
-                    <div class="gp-app-icon gp-app-notes">${ic('fa-note-sticky')}${plansBadgeCount() > 0 ? `<span class="gp-app-badge">${plansBadgeCount()}</span>` : ''}</div>
-                    <div class="gp-app-name">Заметки</div>
-                </div>
+                <div class="gp-app" data-app="notes"><div class="gp-app-icon gp-app-notes">${ic('fa-note-sticky')}</div><div class="gp-app-name">Заметки</div></div>
+                <div class="gp-app" data-app="calendar"><div class="gp-app-icon gp-app-calendar">${ic('fa-calendar-days')}${plansBadgeCount()>0 ? `<span class="gp-app-badge">${plansBadgeCount()}</span>` : ''}</div><div class="gp-app-name">Календарь</div></div>
                 ${tinderEnabled() ? `
                 <div class="gp-app" data-app="tinder">
                     <div class="gp-app-icon gp-app-tinder">${ic('fa-fire')}${matchBadge() > 0 ? `<span class="gp-app-badge">${matchBadge()}</span>` : ''}</div>
@@ -1265,9 +1312,7 @@ function renderHome(screen) {
             </div>
         </div>`;
 
-    screen.querySelectorAll('.gp-app').forEach(el => {
-        el.addEventListener('click', () => goto(el.getAttribute('data-app')));
-    });
+    enhancePhoneHome(screen, { open: goto, render, toast, refreshAfterGesture: render });
 }
 
 // ── Экран «Оформление» ──
@@ -1418,6 +1463,11 @@ function renderAppearance(screen) {
             </section>
 
             <section class="gp-theme-section">
+                <h3>Переписки</h3>
+                <button class="gp-chat-defaults-entry" id="gp-chat-defaults" type="button">${ic('fa-comments')} <span>Обои и пузыри для всех чатов</span>${ic('fa-chevron-right')}</button>
+            </section>
+
+            <section class="gp-theme-section">
                 <h3>Мой аватар</h3>
                 <div class="gp-theme-wall-row">
                     <span class="gp-me-ava">${avatarHtml(getUserName(), avatarForAuthor('user'), 'gp-avatar gp-avatar-sm')}</span>
@@ -1539,6 +1589,8 @@ function renderAppearance(screen) {
         renderAppearance(screen);
         toast('Аватар убран', 'fa-check');
     });
+
+    screen.querySelector('#gp-chat-defaults')?.addEventListener('click', () => editThreadAppearance(screen,null,{render:()=>renderAppearance(screen),toast},{scope:'all'}));
 
     // ── Обои (перенесены из панели расширения) ──
     const wallFile = screen.querySelector('#gp-app-wall-file');
@@ -1709,11 +1761,11 @@ function renderList(screen) {
     setHtmlKeepScroll(screen, '.gp-list', `
         <div class="gp-header">
             <button class="gp-iconbtn" id="gp-home-btn">${ic('fa-chevron-left')}</button>
-            <div class="gp-title">Сообщения</div>
-            <button class="gp-iconbtn" id="gp-gen-chats" title="Сгенерировать чаты" ${_chatsGenBusy ? 'disabled' : ''}>${ic(_chatsGenBusy ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles')}</button>
-            <button class="gp-iconbtn" id="gp-add-btn" title="Добавить контакт">${ic('fa-plus')}</button>
+            <div class="gp-list-header-space"></div>
+            <button class="gp-iconbtn" id="gp-group-btn" title="Создать группу">${ic('fa-users')}</button>
+            <button class="gp-iconbtn" id="gp-add-btn" title="Добавить контакт">${ic('fa-user-plus')}</button>
         </div>
-        <div class="gp-list">
+        <div class="gp-list gp-message-list-flat">
             ${rows || `
             <div class="gp-empty">
                 <div class="gp-empty-icon">${ic('fa-comment-slash')}</div>
@@ -1723,11 +1775,9 @@ function renderList(screen) {
         </div>`);
 
     screen.querySelector('#gp-home-btn')?.addEventListener('click', () => goto('home'));
-    screen.querySelector('#gp-add-btn')?.addEventListener('click', () => {
-        currentScreen = 'add';
-        render();
-    });
-    screen.querySelector('#gp-gen-chats')?.addEventListener('click', () => genGroupChats());
+    const contactApi={render,toast,changed:()=>{updatePhoneInjection();applyChatHiding();},open:key=>{currentThreadKey=key;goto('thread');},generate:()=>genGroupChats()};
+    screen.querySelector('#gp-add-btn')?.addEventListener('click',()=>openPhoneContactEditor(screen,contactApi,{onSave:key=>contactApi.open(key)}));
+    screen.querySelector('#gp-group-btn')?.addEventListener('click',()=>openGroupComposer(screen,contactApi));
     screen.querySelectorAll('.gp-row').forEach(row => {
         row.addEventListener('click', () => {
             currentThreadKey = row.getAttribute('data-key');
@@ -1925,6 +1975,7 @@ function renderThread(screen) {
             ${!t.isGroup ? `<button class="gp-iconbtn${blocked ? ' gp-danger' : ''}" id="gp-sms-block" title="${blocked ? 'Разблокировать SMS' : 'Заблокировать SMS'}">${ic(blocked ? 'fa-lock-open' : 'fa-ban')}</button>` : ''}
             ${t.isGroup ? `<button class="gp-iconbtn" id="gp-add-member" title="Добавить участника">${ic('fa-user-plus')}</button>` : ''}
             ${t.isGroup && (t.members || []).length ? `<button class="gp-iconbtn" id="gp-kick-member" title="Убрать участника">${ic('fa-user-minus')}</button>` : ''}
+            <button class="gp-iconbtn" id="gp-thread-style" title="Обои переписки">${ic('fa-image')}</button>
             <button class="gp-iconbtn gp-danger" id="gp-del" title="Удалить ${t.isGroup ? 'чат' : 'контакт'}">${ic('fa-trash-can')}</button>
         </div>
         <div class="gp-msgs" id="gp-msgs">
@@ -1942,6 +1993,9 @@ function renderThread(screen) {
             <button class="gp-send" id="gp-send" ${sending ? 'disabled' : ''}>${ic('fa-paper-plane')}</button>
         </div>`;
 
+    decorateThreadHeader(screen,t,{render,toast,changed:()=>{updatePhoneInjection();applyChatHiding();},call:contact=>{const pending=startPhoneCall(contact);goto('phone');pending.finally(()=>render()).catch(e=>toast(e.message,'fa-circle-exclamation'));}});
+    applyThreadAppearance(screen,t.key);
+    screen.querySelector('#gp-thread-style')?.addEventListener('click',()=>editThreadAppearance(screen,t.key,{render,toast}));
     const msgs = screen.querySelector('#gp-msgs');
     if (msgs) msgs.scrollTop = msgs.scrollHeight;
 
@@ -2305,82 +2359,8 @@ async function doRegen(key) {
     }
 }
 
-// ── Экран «Новый контакт» ──
-function renderAdd(screen) {
-    screen.innerHTML = `
-        <div class="gp-header gp-thread-header">
-            <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
-            <div class="gp-title" style="flex:1">Новый контакт</div>
-        </div>
-        <div class="gp-add-form">
-            <div class="gp-add-avatar">${ic('fa-user')}</div>
-            <label class="gp-field">
-                <span>Имя</span>
-                <input type="text" id="gp-add-name" maxlength="60" placeholder="Как в ролевой, точно">
-            </label>
-            <label class="gp-field">
-                <span>Номер</span>
-                <input type="text" id="gp-add-number" maxlength="24" placeholder="Пусто = случайный">
-            </label>
-            <label class="gp-field">
-                <span>Ник (@) для соцсетей</span>
-                <input type="text" id="gp-add-handle" maxlength="20" placeholder="Пусто = авто из имени">
-            </label>
-            <button class="gp-primary" id="gp-add-save">${ic('fa-check')} Сохранить</button>
-            <div class="gp-add-hint">Имя должно совпадать с именем персонажа в чате — тогда его смс попадут в этот тред. Ник и аватар подтянутся в Твиттер/Инсту.</div>
-            <div class="gp-field" style="margin-top:10px">
-                <span>Групповой чат</span>
-            </div>
-            <label class="gp-field">
-                <span>Название</span>
-                <input type="text" id="gp-group-name" maxlength="40" placeholder="Например: Семья">
-            </label>
-            <div class="gp-group-members" id="gp-group-members">
-                ${getThreadList().filter(x => !x.isGroup).map(c => `
-                    <label class="gp-member-check"><input type="checkbox" value="${esc(c.name)}"><span>${esc(c.name)}</span></label>
-                `).join('') || '<div class="gp-add-hint">Сначала добавь контакты — участники выбираются из них</div>'}
-            </div>
-            <button class="gp-primary" id="gp-group-save">${ic('fa-users')} Создать чат</button>
-        </div>`;
-
-    screen.querySelector('#gp-back')?.addEventListener('click', () => {
-        currentScreen = 'list';
-        render();
-    });
-    // Живой предпросмотр авто-ника: транслит из имени («Вадим» → @vadim)
-    const nameInp = screen.querySelector('#gp-add-name');
-    const handleInp = screen.querySelector('#gp-add-handle');
-    nameInp?.addEventListener('input', () => {
-        if (!handleInp) return;
-        handleInp.placeholder = nameInp.value.trim() ? makeHandle(nameInp.value) : tr('Пусто = авто из имени');
-    });
-    screen.querySelector('#gp-add-save')?.addEventListener('click', () => {
-        const name = screen.querySelector('#gp-add-name')?.value.trim();
-        let number = screen.querySelector('#gp-add-number')?.value.trim();
-        const handle = screen.querySelector('#gp-add-handle')?.value.trim();
-        if (!name) { toast('Укажи имя контакта', 'fa-circle-exclamation'); return; }
-        if (!number) number = randomNumber();
-        addManualContact(name, number);
-        // Ник (@) для соцсетей — по ключу контакта
-        if (handle) setContactHandle(keyOf(name), handle);
-        updatePhoneInjection();
-        currentScreen = 'thread';
-        currentThreadKey = keyOf(name);
-        render();
-    });
-    screen.querySelector('#gp-group-save')?.addEventListener('click', () => {
-        const gname = screen.querySelector('#gp-group-name')?.value.trim();
-        const members = [...screen.querySelectorAll('#gp-group-members input:checked')].map(i => i.value);
-        if (!gname) { toast('Назови чат', 'fa-circle-exclamation'); return; }
-        if (members.length < 1) { toast('Выбери хотя бы одного участника', 'fa-circle-exclamation'); return; }
-        addGroup(gname, members);
-        updatePhoneInjection();
-        currentScreen = 'thread';
-        currentThreadKey = `group:${keyOf(gname)}`;
-        render();
-    });
-    screen.querySelector('#gp-add-name')?.focus();
-}
+// ── Compatibility route for callers that open the old add-contact screen. ──
+function renderAdd(screen){renderList(screen);const api={render,toast,changed:()=>{updatePhoneInjection();applyChatHiding();}};openPhoneContactEditor(screen,api,{onSave:key=>{currentThreadKey=key;goto('thread');}});}
 
 // ═══ TWITTER ═══
 
@@ -5657,25 +5637,9 @@ function renderNews(screen) {
 let _noteEditId = null;
 // Планы и важные даты — вторая вкладка заметок. Дни считаются по ролевому
 // времени: «сегодня» — это сегодня в истории.
-let _notesTab = 'notes';
+let _planRoot=null;
 let _planMonth = '';   // какой месяц открыт
 let _planDay = '';     // выбранный день
-
-function notesTabsHtml() {
-    const due = plansBadgeCount();
-    return `
-        <div class="gp-notes-tabs" role="tablist">
-            <button class="gp-notes-tab${_notesTab === 'notes' ? ' gp-active' : ''}" data-notestab="notes">Заметки</button>
-            <button class="gp-notes-tab${_notesTab === 'plans' ? ' gp-active' : ''}" data-notestab="plans">Календарь${due ? `<i>${due}</i>` : ''}</button>
-        </div>`;
-}
-
-function bindNotesTabs(screen) {
-    screen.querySelectorAll('[data-notestab]').forEach(b => b.addEventListener('click', () => {
-        _notesTab = b.getAttribute('data-notestab');
-        render();
-    }));
-}
 
 function planRowHtml(p) {
     return `
@@ -5694,7 +5658,8 @@ function planRowHtml(p) {
 }
 
 function renderPlans(screen) {
-    currentScreen = 'notes';
+    currentScreen = 'calendar';
+    if(_planRoot!==getMeta()){_planRoot=getMeta();_planDay='';_planMonth='';}
     const today = rpToday();
     if (!_planDay) _planDay = today;
     if (!_planMonth) _planMonth = monthOf(_planDay);
@@ -5720,10 +5685,10 @@ function renderPlans(screen) {
     setHtmlKeepScroll(screen, '.gp-notes-scroll', `
         <div class="gp-header gp-thread-header">
             <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
-            <div class="gp-title gp-title-app gp-notes-title">Заметки</div>
+            <div class="gp-title gp-title-app gp-notes-title">Календарь</div>
             <span style="width:32px"></span>
         </div>
-        ${notesTabsHtml()}
+        
         <div class="gp-notes-scroll">
             <div class="gp-cal">
                 <div class="gp-cal-head">
@@ -5752,7 +5717,6 @@ function renderPlans(screen) {
         </div>`);
 
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('home'));
-    bindNotesTabs(screen);
     screen.querySelector('#gp-cal-prev')?.addEventListener('click', () => { _planMonth = shiftMonth(_planMonth, -1); render(); });
     screen.querySelector('#gp-cal-next')?.addEventListener('click', () => { _planMonth = shiftMonth(_planMonth, 1); render(); });
     screen.querySelectorAll('[data-calday]').forEach(b => b.addEventListener('click', () => {
@@ -5792,7 +5756,6 @@ function renderPlans(screen) {
 
 function renderNotes(screen) {
     currentScreen = 'notes';
-    if (_notesTab === 'plans') { renderPlans(screen); return; }
     const notes = getNotes();
     const editing = _noteEditId ? notes.find(n => n.id === _noteEditId) : null;
     setHtmlKeepScroll(screen, '.gp-notes-scroll', `
@@ -5801,7 +5764,7 @@ function renderNotes(screen) {
             <div class="gp-title gp-title-app gp-notes-title">Заметки</div>
             <span style="width:32px"></span>
         </div>
-        ${notesTabsHtml()}
+        
         <div class="gp-notes-scroll">
             <div class="gp-notes-editor">
                 <textarea id="gp-note-text" rows="3" placeholder="Новая заметка..."></textarea>
@@ -5822,7 +5785,6 @@ function renderNotes(screen) {
     const area = screen.querySelector('#gp-note-text');
     if (editing && area) area.value = editing.text;
     screen.querySelector('#gp-back')?.addEventListener('click', () => { _noteEditId = null; goto('home'); });
-    bindNotesTabs(screen);
     screen.querySelector('#gp-note-save')?.addEventListener('click', () => {
         const text = area?.value.trim();
         if (!text) return;
@@ -7078,7 +7040,7 @@ async function doSend(key, opts = {}) {
     const shot = opts.shot || null;
     if (!text && !_smsDraftImage && !shot) return;
     const t = getThread(key);
-    const name = t ? t.name : key;
+    const name = t ? (t.originalName||t.name||t.key) : key;
     const isGroup = !!t?.isGroup;
     const draftImg = _smsDraftImage;
     _smsDraftImage = null;
@@ -7089,7 +7051,7 @@ async function doSend(key, opts = {}) {
     if (input && fromInput) input.value = '';
 
     // Сообщение чата: скрытый маркер + видимый текст (модель и без инжекции поймёт формат)
-    const markerBase = isGroup ? { to: `группа:${name}` } : { to: name };
+    const markerBase = isGroup ? { to: `группа:${name}` } : { to: name, contactKey:key };
     if (asVoice) markerBase.voice = true;
     if (shot) markerBase.shot = shot;
     const marker = `<!--tel:out:${JSON.stringify(markerBase)}-->`;
@@ -7357,4 +7319,29 @@ export function initUI() {
 // Консольные хелперы
 if (typeof window !== 'undefined') {
     window.glassPhoneOpen = () => openPhone();
+}
+
+// Browser/map sharing prepares a message; the user sends it from the SMS composer.
+function phoneWebApi() {
+    return {
+        render, toast,
+        home: () => goto('home'),
+        map: () => goto('maps'),
+        changed: () => { updatePhoneInjection(); applyChatHiding(); },
+        contacts: () => getThreadList().map(t => ({ key: t.key, name: t.name })),
+        share: (key, text) => {
+            currentThreadKey = key;
+            _drafts.set('thread:' + key + ':gp-input', text);
+            goto('thread');
+            const input = document.getElementById('gp-input');
+            if (input) { input.value = text; input.dispatchEvent(new Event('input', { bubbles: true })); input.focus(); }
+        },
+    };
+}
+
+function phoneBookApi() {
+    return { render, toast, home: () => goto('home'), phone: () => goto('phone'),
+        changed: () => { updatePhoneInjection(); applyChatHiding(); },
+        sms: key => { currentThreadKey = key; goto('thread'); },
+    };
 }

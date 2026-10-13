@@ -6,6 +6,7 @@ import { initUI, checkNewIncoming, resetIncomingCounters, updateFabBadge, render
 import { harvestSocialTags, setUserHandle, getUserHandle, listIigProfiles, listIigStyles, listImageBuckets, currentExtModel, stripFakeJournal } from './social.js';
 import { harvestBankTags } from './bank.js';
 import { harvestPlanTags } from './plans.js';
+import { harvestPhoneCalls } from './calls.js';
 import { harvestChannelTags, harvestAnonTags, harvestAnonBust, ANON_NAME } from './channels.js';
 import { maybeScamSms } from './scam.js';
 import { trDom } from './i18n.js';
@@ -525,6 +526,7 @@ jQuery(async () => {
                 const n = harvestPlanTags();
                 if (n > 0) toast(`В календарь: ${n}`, 'fa-calendar-check');
             } catch (e) { /* ignore */ }
+            try { for (const call of harvestPhoneCalls()) toast('Входящий звонок: ' + call.name, 'fa-phone', call.id); } catch (e) { console.warn('[GlassPhone] Calls:', e); }
             notifyBankReminders();
             notifyDeliveries();   // курьер выехал / заказ приехал
             // Мошенники: редкий скам-смс (сам себя гейтит кулдауном и шансом)

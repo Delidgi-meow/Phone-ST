@@ -16,6 +16,8 @@ export const MONTHS_I18N = {
 
 // ── Точный словарь (ключ = русская строка после trim) ──
 const DICT = {
+    'Контакты': 'Contacts', 'Виджеты': 'Widgets', 'Добавить виджет': 'Add widget', 'Главный экран': 'Home screen', 'Готово': 'Done', 'Недавние': 'Recents', 'Клавиши': 'Keypad',
+    'Браузер': 'Browser', 'Карты': 'Maps', 'Музеи': 'Museums', 'Выставки': 'Exhibitions', 'Кино': 'Movies', 'Театры': 'Theatres', 'Кафе': 'Cafes', 'Парки': 'Parks', 'Концерты': 'Concerts', 'Всё': 'All',
     'Переносить мои СМС из ролевой': 'Import my outgoing SMS from roleplay',
     'Внешний блок для всех картинок телефона': 'External block for all phone images',
     'Обновить список блоков': 'Refresh block list',
