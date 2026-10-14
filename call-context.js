@@ -67,7 +67,7 @@ function memory(ctx){
     const summary=ctx.extensionPrompts?.['1_memory']?.value;
     return typeof summary==='string'?clip(plain(summary),6000):'';
 }
-function loreText(result){
+export function loreText(result){
     const values=[result?.worldInfoBefore,result?.worldInfoAfter];
     const strings=value=>{
         if(typeof value==='string')return value;

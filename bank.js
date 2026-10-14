@@ -296,7 +296,7 @@ export function getBankSummaryLine() {
 // ── Одна компактная строка-правило для директивы (инжектится только если банк активен) ──
 export function bankInjectRule() {
     if (!bankActive()) return '';
-    return `[BANK] {{user}}'s phone has a bank app. If in THIS reply the story makes {{user}} spend or receive money (buys something, gets paid, someone transfers their cash), append a hidden comment at the END: <!--tel:bank:{"amount":-500,"label":"что купила"}--> (negative = spent, positive = received; amount is a number, no currency sign). One tag per transaction. This INCLUDES bank notification SMS: if you send {{user}} an SMS from a bank about money credited/debited, the tel:bank tag with the same amount is MANDATORY alongside it — the SMS alone does not move money in the app. Do NOT tag hypothetical or other characters' money — only {{user}}'s real transactions.`;
+    return '[BANK] Each actual change to {{user}}’s money in this reply: <!--tel:bank:{"amount":-500,"label":"purchase"}-->. Numeric amount: negative spent, positive received; one tag per new transaction. A bank notification SMS about a real debit/credit needs the matching bank tag too. Exclude hypothetical transactions, other people’s money and operations already recorded by the app.';
 }
 
 // ── Харвест тегов tel:bank + банковских СМС из чата ──

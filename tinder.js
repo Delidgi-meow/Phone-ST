@@ -283,32 +283,31 @@ function meLine() {
 
 export function tinderInjectLine(texting = false) {
     if (!tinderEnabled()) return '';
-    const t = getTinder();
-    const me = getTinderMe();
-    const matches = t.matches;
+    const matches = getTinder().matches, me = getTinderMe();
     if (!me && !matches.length) return '';
-
-    const out = [];
-    out.push(`[{{user}} uses a dating app (Tinder) on their phone.${me ? ` Their own profile — this is ALL a stranger there can see about them: ${meLine()}` : ''}]`);
-
-    if (!matches.length) return out.join('\n');
-
-    // Переписка идёт прямо сейчас: даём того, с кем говорят, целиком
-    const active = texting ? matches.filter(m => !m.irl).slice(0, 2) : [];
-    if (active.length) {
-        for (const m of active) {
-            out.push(`[MATCH {{user}} IS TEXTING${m.inApp ? ' inside the dating app — they have NOT exchanged phone numbers yet, so this is app chat, not SMS' : ' (they have each other\'s numbers now)'} — play them exactly as written, this is a real person with their own voice:\n${fullCard(m)}]`);
-        }
-        out.push(`[WHAT THEY KNOW ABOUT {{user}}: ONLY the dating profile above and whatever {{user}} has told them in these messages. They have never met. They do NOT know where {{user}} works, who they live with, who their friends are or what happened in their life — even if that appears elsewhere in this context. Do not let them use it. Asking is fine; knowing is not.]`);
+    const lines = ['[DATING APP]' + (me ? ' Public profile visible to matches: ' + meLine() : '')];
+    // Include a full match card only for the actual recipient, never arbitrary first matches.
+    let recipient = '';
+    if (texting) {
+        try {
+            const message = [...(SillyTavern.getContext().chat || [])].reverse().find(item => item?.is_user && !item.is_system);
+            const marker = /<!--\s*tel:out:(\{[\s\S]*?\})\s*-->/i.exec(String(message?.mes || ''));
+            const data = marker ? JSON.parse(marker[1]) : null;
+            recipient = keyOf(data?.to || '');
+        } catch (e) { /* Brief match list is sufficient if the recipient is unknown. */ }
     }
-
-    // Короткие строки: мэтч остаётся фактом мира и в обычной сцене
-    const lines = matches.slice(0, 6).map((m) => {
-        const days = Math.max(0, Math.round((Date.now() - (m.matchedAt || Date.now())) / 86400000));
-        const when = days === 0 ? 'today' : days === 1 ? 'yesterday' : `${days}d ago`;
-        const trait = String(m.temper || '').split(/(?<=\.)\s/)[0] || '';
-        return `- ${m.name}, ${m.age}${m.job ? `, ${m.job}` : ''} — matched ${when}${m.irl ? ', they have already met in person' : ', never met in person yet'}${trait ? `. ${trait}` : ''}`;
+    const active = recipient ? matches.filter(match => keyOf(match.name) === recipient).slice(0, 1) : [];
+    for (const match of active) {
+        lines.push('[CURRENT MATCH' + (match.inApp ? ' — app chat; no phone-number exchange' : ' — phone numbers exchanged') + ']\n' + fullCard(match));
+        if (!match.irl) lines.push('This match has not met {{user}} in person. They know only the dating profile and information actually shared in their messages, not private author context.');
+    }
+    const brief = matches.slice(0, 6).filter(match => !active.includes(match)).map(match => {
+        const days = Math.max(0, Math.round((Date.now() - (match.matchedAt || Date.now())) / 86400000));
+        const when = days === 0 ? 'today' : days === 1 ? 'yesterday' : days + 'd ago';
+        const trait = String(match.temper || '').split(/(?<=\.)\s/)[0] || '';
+        return '- ' + match.name + ', ' + match.age + (match.job ? ', ' + match.job : '') + ' — matched ' + when
+            + (match.irl ? '; met in person' : '; not met in person') + (trait ? '. ' + trait : '');
     });
-    out.push(`[{{user}}'S MATCHES]\n${lines.join('\n')}`);
-    return out.join('\n');
+    if (brief.length) lines.push('OTHER MATCHES:\n' + brief.join('\n'));
+    return lines.join('\n');
 }

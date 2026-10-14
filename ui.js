@@ -7157,9 +7157,7 @@ async function doSend(key, opts = {}) {
         // Extra блоки и другие скрипты. Результат вставляем призраком.
         const ctx = SillyTavern.getContext();
         const msgKind = asVoice ? 'VOICE message (they hear their voice; this is the transcript)' : 'message';
-        const quietPrompt = isGroup
-            ? `Continue the roleplay. The group chat «${name}» (members: ${(t.members || []).join(', ')}) just received this ${msgKind} from ${ctx?.name1 || 'User'}: "${text}"${draftImg ? ' (with a photo attached)' : ''}${shot ? ` (with a forwarded screenshot — ${shotLabel(shot)})` : ''}. Reply as the group members — ONLY hidden tel:sms tags with the "chat" field (RULE 3 — PHONE-ONLY MODE), one tag per message, several members may text. No visible prose.`
-            : `Continue the roleplay. ${name} just received this ${asVoice ? msgKind : 'SMS'} from ${ctx?.name1 || 'User'}: "${text}"${draftImg ? ' (with a photo attached)' : ''}${shot ? ` (with a forwarded screenshot — ${shotLabel(shot)}; react to what is IN it)` : ''}. Reply in-character with ONLY hidden tel:sms tags (RULE 3 — PHONE-ONLY MODE). No visible prose.`;
+        const quietPrompt = `The latest user entry is an app ${msgKind} addressed to ${isGroup ? 'group «' + name + '», members: ' + (t.members || []).join(', ') : name}. Use that entry’s message and attachments; do not repeat or rewrite the user’s words. Reply in the recipient’s voice with 1–5 hidden comments only: <!--tel:sms:{"from":"canonical sender","to":"{{user}}","text":"reply"${isGroup ? ',"chat":' + JSON.stringify(name) : ''}}-->. If unavailable/unwilling, use <!--tel:silent-->. Include newly applicable calendar/bank/clock tags. No visible narration, user actions or unrelated senders.`;
         const rawReply = await generateQuietPrompt(quietPrompt, false, false);
         if (rawReply && rawReply.trim()) {
             await insertGhostReply(name, rawReply.trim());

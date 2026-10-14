@@ -120,7 +120,7 @@ export async function generatePhoneBlockPrompt(post, { imageContext = '', parser
         ? [...(context.characters?.[context.characterId]?.data?.extensions?.ExtBlocks || []), ...(selected.set.global_blocks || [])]
         : BlockService.getAllBlocks();
     const allBlocks = [...new Map(available.map(item => [item.name, item])).values()];
-    const scene = [post.imgDesc, post.caption].filter(Boolean).join('\n');
+    const scene = post.imgDesc || post.caption || '';
     const macros = {
         phoneScene: scene, phoneAuthor: post.author || '', phoneApp: post.kind || 'ig',
         phoneCaption: post.caption || '', phoneImageContext: imageContext,
@@ -134,7 +134,7 @@ export async function generatePhoneBlockPrompt(post, { imageContext = '', parser
         messages = [{ role: 'system', content: `Block(s) prompt:\n${context.substituteParams(block.prompt || '', { dynamicMacros: macros })}\n\nBlock(s) template:\n${context.substituteParams(block.template || '', { dynamicMacros: macros })}` },
             ...ContextService.getBlockCombinedContext(block, messageId, allBlocks, macros)];
     }
-    messages.push({ role: 'user', content: `Generate ONE image prompt for this specific phone photo, using the configured block's format and instructions. The requested photo below is the current scene; do not replace it with a different moment from the roleplay. Return only the image instruction/tag or the image prompt, without commentary.\n\nPhone app: ${post.kind || 'ig'}\nPhoto author: ${post.author || ''}\nAuthor behind the camera: ${post._behindCamera ? 'yes' : 'not specified'}\nRequested photo:\n${scene}\n\nPhone framing: ${post.framing || ''}\n${imageContext ? `Image presets and lorebook details:\n${imageContext}\n` : ''}` });
+    messages.push({ role: 'user', content: `Create exactly one image instruction in the configured block’s format; no commentary. Use the requested photo, not another roleplay moment. Describe visible subjects only; captions and app names are context, not text/UI to draw unless explicitly requested.\nApp: ${post.kind || 'ig'}; photographer: ${post.author || ''}\nBehind camera: ${post._behindCamera ? post._cameraName || post.author || 'author' : 'unspecified'}\n${post.mms ? 'MMS: the user is the recipient, outside the frame unless explicitly pictured.\n' : ''}Requested photo:\n${scene}\nFraming: ${post.framing || ''}\n${imageContext ? 'Relevant appearance/preset details (only for pictured subjects):\n' + imageContext : ''}` });
     messages = await MacroService.checkAllMacros(messages);
     if (signal?.aborted) throw new DOMException('Генерация остановлена', 'AbortError');
     const presetName = block.api_preset || extension_settings.ExtBlocks.active_api_preset;

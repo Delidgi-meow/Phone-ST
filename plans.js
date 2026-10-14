@@ -219,11 +219,11 @@ export function plansInjectLine() {
         return `- ${fmtPlanDate(p.date)}${p.time ? ` ${p.time}` : ''} (in ${diff}d, ${whoOf(p)}): ${p.text}`;
     }).join('\n');
     const body = [lines, aheadLines, doneLines].filter(Boolean).join('\n');
-    return `[{{user}}'S CALENDAR — what has been agreed or planned. It is TRUE and binding: characters who took part in a plan remember it, may bring it up, hold {{user}} to it, be late, cancel or show up. Do not invent a different date for these. Lines marked DONE are already finished — {{user}} ticked them off: treat them as done, do not push for them again, and you may refer to them as something that happened.]\n${body}`;
+    return `[CALENDAR — confirmed plans; participants remember them. Keep listed dates and ownership. Characters may discuss, cancel or attend their own commitments; do not decide {{user}}’s actions. DONE entries are completed, not upcoming reminders.]\n${body}`;
 }
 
 export function plansInjectRule() {
-    return `[PLAN] If a concrete date or plan is agreed in the latest user message or THIS reply — a meeting, a shift, a doctor's appointment, a promise to come or call at some time — append a hidden comment at the END: <!--tel:plan:{"date":"DD.MM.YYYY","time":"19:00","text":"what exactly","who":"user|char|both"}--> ("who": whose plan it is — {{user}}'s, the character's, or both). "time" may be empty. One tag per plan, only for things that are really agreed. Also record confirmed plans when the calendar is empty. Use the in-world date, not the computer date; date may be YYYY-MM-DD, DD.MM.YYYY, today, tomorrow, сегодня or завтра. Do not repeat a plan already listed in the calendar. Do not turn hypothetical suggestions or refused invitations into plans.`;
+    return '[CALENDAR] Record each new confirmed plan agreed in the latest user message or this reply, even if the calendar is empty: <!--tel:plan:{"date":"DD.MM.YYYY","time":"19:00","text":"specific plan","who":"user|char|both"}-->. "who" selects the owner; time may be "". Resolve dates from the RP clock. Never duplicate listed plans or record suggestions, refusals or hypothetical events.';
 }
 
 // ── Теги из чата ──

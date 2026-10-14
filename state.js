@@ -8,7 +8,7 @@ import { captureRoleplaySms, extractRoleplaySms, hasMixedRoleplaySms } from './r
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.44.0';
+export const GP_VERSION = '2.45.0';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -61,8 +61,7 @@ const defaultSettings = () => ({
     imageGenStyleId: '',
     // One saved ExtBlocks block supplies prompts for every phone image.
     imageGenBlockKey: '',
-    // Макс. длина ответа для генерации соцсетей (0 = авто по задаче). Если модель
-    // рвёт JSON из-за лимита токенов — поднять (действует как ПОЛ: не ниже задачи).
+    // Верхний лимит ответа. 0 = бюджет задачи; короткие задачи не раздуваются.
     socialMaxTokens: 0,
     // Квадрат 1:1 для инста-постов
     imageGenSquare: true,
@@ -111,7 +110,7 @@ const defaultSettings = () => ({
     // сдвигает телефон и кнопку из-под неё. Определяется автоматически,
     // здесь — ручной оверрайд, если обёртка не отдала безопасные отступы.
     forceSafeArea: false,
-    // Компактные правила в инжекте (экономия ~60% токенов директивы)
+    // Компактные пояснения полей в уже сокращённой директиве
     compactRules: false,
     // Городская анонимка «Подслушано» в каналах
     anonChannel: true,
@@ -282,11 +281,11 @@ export function renameContact(key,newName){
     if(n)m.names[k]=n;else delete m.names[k];
     saveMeta();
 }
-export function contactIdentityPrompt(){
-    return getThreadList().filter(t=>!t.isGroup).slice(0,60).map(t=>{
-        const alias=t.name===t.originalName?'':'; saved by the user as '+JSON.stringify(t.name);
-        return '- '+JSON.stringify(t.originalName)+': permanent contact key '+JSON.stringify(t.key)+alias+'. This is the same person; use their original identity/lore. A saved label is not a new character. The model remembers the saved label when interpreting what the user calls this person.';
-    }).join('\n');
+export function contactIdentityPrompt() {
+    const aliases = getThreadList().filter(thread => !thread.isGroup && thread.name !== thread.originalName).slice(0, 60);
+    if (!aliases.length) return '';
+    return 'CONTACT LABELS (canonical name = user’s saved label). Same person and lore; use canonical names in phone tags and recognize the saved label:\n'
+        + aliases.map(thread => JSON.stringify(thread.originalName) + ' = ' + JSON.stringify(thread.name)).join('\n');
 }
 
 // ── Бан аккаунтов соцсетей ──

@@ -95,7 +95,9 @@ export function callsInjectLine(){
     const c=active();if(!c)return '';
     return '[PHONE CALL IN PROGRESS] '+getUserName()+(c.status==='active'?' is speaking by phone to ':' is waiting for a phone connection with ')+c.name+'. They are not necessarily together. Latest spoken lines: '+c.transcript.slice(-6).map(t=>(t.role==='user'?getUserName():c.name)+': '+t.text).join(' | ').slice(0,2200);
 }
-export function callsInjectRule(){return '[PHONE CALLS] A known contact may call '+getUserName()+" only when they plausibly have the user's number and the scene gives a reason, usually when apart. Append <!--tel:call:{\"from\":\"exact contact name\",\"to\":\"{{user}}\",\"reason\":\"why they call\"}--> once. Do not emit tel:sms for this call; acceptance and the conversation happen in the phone app. Public venue directory entries do not know the user's number merely because they were saved.";}
+export function callsInjectRule() {
+    return '[CALLS] A contact with the user’s number may call when the scene gives a reason, usually while apart: <!--tel:call:{"from":"canonical contact name","to":"{{user}}","reason":"why"}-->. One call event; no SMS substitute or second call during an active call. The app handles acceptance and dialogue. Saving a venue listing does not give it the user’s number.';
+}
 function contactEditor(screen,contact,api){return openPhoneContactEditor(screen,api,{contact,number:view().digits});}
 let callTimer=null;
 export function stopPhoneCallTimer(){clearInterval(callTimer);callTimer=null;}

@@ -776,37 +776,26 @@ export function channelInjectLine() {
 // обязана знать про её собственные анонимки и про уже пробитых авторов.
 export function anonInjectLine() {
     if (!anonEnabled() || !anonInUse()) return '';
-    const ch = getAnonChannel();
-    const handle = getUserHandle();
-    const mine = ch.posts.filter(p => p.byUser).slice(0, 3);
-    const known = ch.posts.filter(p => p.revealed && p.realAuthor).slice(0, 3);
-    const recent = ch.posts.filter(p => !p.byUser).slice(0, 3)
-        .map(p => `«${p.text.slice(0, 80)}»`).join('; ');
-    let s = `[«${ANON_NAME}» — the town's anonymous gossip channel on {{user}}'s phone, ${ch.subs} subscribers. Anyone submits posts WITHOUT a name: rumours about local people, confessions, questions someone would never ask to your face. A post aimed at a person names them by @handle — {{user}} is ${handle}.]\n`;
-    // Молчит давно — просим прямо. Мягкое «когда сюжет даст повод» модель
-    // пропускает ходов сорок подряд, и канал стоит мёртвый.
-    const silent = Math.max(0, chatLen() - (ch.lastPostAt || 0));
-    s += `[RULE — ANONYMOUS POST] Append at the END: <!--tel:anon:{"text":"the post exactly as the sender wrote it, no name","to":"@handle it is aimed at — omit if aimed at nobody","from":"who REALLY sent it: a NAME (a character from the story, or an invented «Имя Фамилия», plus who they are after a comma)"}-->. The "from" field is HIDDEN from {{user}}: never name the sender in visible prose, and never have a character admit it unprompted.\n`;
-    s += `WHAT COUNTS AS A REASON — any of these, and they happen constantly: something took place where strangers could see it (a street, a shop, a cafe, a stairwell, a workplace); somebody in town did something odd, shameful, generous or loud; a new person appeared; two people were seen together; a local business, a neighbour, a bus route or a dog caused a scandal; someone wants to ask or say a thing anonymously. It does NOT have to involve {{user}} — most posts are about other townspeople, named.\n`;
-    if (silent >= 8) {
-        s += `NOTE: nothing has been posted to «${ANON_NAME}» for ${silent} messages and the channel looks dead. Unless this scene is completely private and nothing public has happened at all, post ONE now — preferably about somebody other than {{user}}.\n`;
-    } else {
-        s += `At most 1-2 posts per reply, and not every reply — the channel should feel alive, not spammy.\n`;
+    const channel = getAnonChannel(), handle = getUserHandle();
+    const mine = channel.posts.filter(post => post.byUser).slice(0, 3);
+    const known = channel.posts.filter(post => post.revealed && post.realAuthor).slice(0, 3);
+    const recent = channel.posts.filter(post => !post.byUser).slice(0, 3).map(post => '«' + post.text.slice(0, 80) + '»').join('; ');
+    const silent = Math.max(0, chatLen() - (channel.lastPostAt || 0));
+    const lines = [
+        `[ANONYMOUS CHANNEL «${ANON_NAME}», ${channel.subs} subscribers; {{user}} is ${handle}]`,
+        'New submission: <!--tel:anon:{"text":"anonymous post","to":"optional @handle","from":"actual sender name, who they are"}-->. The app hides "from"; never expose the sender or make them confess unprompted.',
+        'Use publicly witnessed events, local concerns or a sender’s own confession; never leak private messages or closed-door scenes from author context. Most posts concern other townspeople. At most 1–2 posts when there is a plausible new reason; do not repeat old submissions.',
+        silent >= 8 ? `No new posts for ${silent} messages. A fresh public/local topic may fit; silence alone is not a reason to invent private knowledge.` : '',
+        recent ? 'Latest posts: ' + recent : ''
+    ];
+    const hidden = mine.filter(post => !post.bustedBy), exposed = mine.filter(post => post.bustedBy);
+    if (hidden.length) {
+        lines.push('{{user}}’s still-anonymous posts: ' + hidden.map(post => '«' + post.text.slice(0, 90) + '»').join('; ') + '. Others do not know who wrote them.');
+        lines.push('Rarely, a character with a specific motive and money may buy the author’s identity: <!--tel:anonbust:{"who":"buyer name","post":"identifying words from that post"}-->. Only that buyer learns it; do not trigger a random reveal.');
     }
-    if (recent) s += `Latest posts there: ${recent}.\n`;
-    if (mine.length) {
-        const open = mine.filter(p => !p.bustedBy);
-        const burnt = mine.filter(p => p.bustedBy);
-        if (open.length) {
-            s += `{{user}} has posted there anonymously themselves: ${open.map(p => `«${p.text.slice(0, 90)}»`).join('; ')}. The channel shows no name and NOBODY knows it was them.\n`;
-            s += `[RULE — SOMEBODY BUYS {{user}}'S NAME] The admin sells authors for money, same as {{user}} can buy others. When a character has both a real reason (the post hurt them or someone they care about, they suspect {{user}}, they are the jealous or vindictive sort) and the means, they may do it — append at the END: <!--tel:anonbust:{"who":"who bought it","post":"a few words from that anonymous post"}-->. Then that character KNOWS and acts on it: cold silence, a direct question, a scene. Rare and earned — not every reply, and never as a random event.\n`;
-        }
-        if (burnt.length) {
-            s += `ALREADY EXPOSED: ${burnt.map(p => `«${p.text.slice(0, 70)}» — ${p.bustedBy} paid and knows {{user}} wrote it`).join('; ')}. They may bring it up at any time; {{user}} has no idea they know unless it has already come up.\n`;
-        }
-    }
-    if (known.length) {
-        s += `{{user}} has paid to unmask these: ${known.map(p => `«${p.text.slice(0, 60)}» — sent by ${p.realAuthor}${p.realWho ? ` (${p.realWho})` : ''}`).join('; ')}. ONLY {{user}} knows this; the authors have no idea they were exposed. {{user}} may drop hints, and they would be rattled.\n`;
-    }
-    return s.trim();
+    if (exposed.length) lines.push('Already exposed to these buyers: ' + exposed.map(post => '«' + post.text.slice(0, 70) + '» → ' + post.bustedBy).join('; ') + '. {{user}} knows about the purchase only if it was disclosed.');
+    if (known.length) lines.push('Authors privately revealed to {{user}}: ' + known.map(post =>
+        '«' + post.text.slice(0, 60) + '» → ' + post.realAuthor + (post.realWho ? ' (' + post.realWho + ')' : '')
+    ).join('; ') + '. Others, including the authors, do not automatically know about this discovery.');
+    return lines.filter(Boolean).join('\n');
 }

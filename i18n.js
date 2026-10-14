@@ -16,6 +16,7 @@ export const MONTHS_I18N = {
 
 // ── Точный словарь (ключ = русская строка после trim) ──
 const DICT = {
+    'Верхняя граница; 0 = автоматически по задаче':'Upper limit; 0 = automatic for each task',
     'Звонки всегда используют карточку, лорбук и историю ролевой.':'Calls always use the character card, lorebook and roleplay history.',
     'Настройки':'Settings','Оформление телефона':'Phone appearance','Тема, иконки и главный экран':'Theme, icons and home screen',
     'Часы, дата и отдельные обои':'Clock, date and wallpaper','Оформление переписок':'Chat appearance','Общий стандарт обоев и пузырей':'Default wallpaper and bubbles',

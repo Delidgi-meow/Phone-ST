@@ -77,6 +77,6 @@ export function getSharedNotes() {
 export function notesInjectBlock() {
     const shared = getSharedNotes();
     if (!shared.length) return '';
-    const lines = shared.slice(0, 6).map(n => `- ${n.text.slice(0, 300)}`).join('\n');
-    return `[{{user}}'S NOTES — what they wrote in their phone's notes app and deliberately opened to you. Treat it as TRUE and current: their plans, intentions, reminders, things they keep in mind. USE it — let it steer what {{user}} remembers and does, and let the world test it; it is not decoration. Other characters know only what {{user}} has actually told or shown them.]\n${lines}`;
+    const lines = shared.slice(0, 6).map(note => '- ' + note.text.slice(0, 300)).join('\n');
+    return '[SHARED PHONE NOTES — user-written intentions/reminders, not proof that an event happened. Respect newer story facts. You may offer relevant reminders or opportunities; never decide what {{user}} remembers, feels or does. Characters know only notes actually shown or told to them.]\n' + lines;
 }
