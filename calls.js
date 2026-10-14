@@ -39,7 +39,7 @@ export function endPhoneCall(id){
 async function connect(call,forceIncoming=false){
     const root=getMeta();busy.add(call);call.status='connecting';saveMeta();
     try{
-        const reply=await generatePhoneCallReply({key:call.key,name:call.name,number:call.number,connected:forceIncoming,reason:call.reason||''},[], '');
+        const reply=await generatePhoneCallReply({key:call.key,name:call.name,originalName:call.originalName,number:call.number,direction:call.direction,connected:forceIncoming,reason:call.reason||''},[], '');
         if(getMeta()!==root||call.status!=='connecting')return;
         if(!reply.answered){call.status='unanswered';call.reason=reply.reason||L('Не отвечает','No answer');call.ended=Date.now();journal(call);}
         else{call.status='active';call.started=Date.now();if(reply.text)call.transcript.push({role:'contact',text:reply.text,at:Date.now()});}
@@ -50,7 +50,7 @@ async function connect(call,forceIncoming=false){
 export function startPhoneCall(contact){
     if(!String(contact?.number||'').trim())throw new Error(L('Сначала сохрани номер контакта','Save this contact’s phone number first'));
     if(active())throw new Error(L('Сначала заверши текущий звонок','End your current call first'));
-    const call={id:'call:'+uid(),key:contact.key||keyOf(contact.name),name:contact.name,number:contact.number||'',direction:'out',status:'connecting',at:Date.now(),when:getRpDateTime()?.label||'',transcript:[],unread:false};
+    const call={id:'call:'+uid(),key:contact.key||keyOf(contact.name),name:contact.name,originalName:contact.originalName,number:contact.number||'',direction:'out',status:'connecting',at:Date.now(),when:getRpDateTime()?.label||'',transcript:[],unread:false};
     const calls=getCalls();calls.history.unshift(call);calls.history=calls.history.slice(0,80);saveMeta();return connect(call);
 }
 export function acceptPhoneCall(id){if(active())throw new Error(L('Сначала заверши текущий звонок','End your current call first'));const call=findCall(id);if(!call||call.status!=='ringing')return Promise.resolve();call.unread=false;return connect(call,true);}
@@ -59,7 +59,7 @@ export async function speakOnPhone(id,text){
     if(!call||call.status!=='active'||!text||busy.has(call))return;
     busy.add(call);call.transcript.push({role:'user',text,at:Date.now()});saveMeta();
     try{
-        const reply=await generatePhoneCallReply({key:call.key,name:call.name,number:call.number,connected:true},call.transcript,text);
+        const reply=await generatePhoneCallReply({key:call.key,name:call.name,originalName:call.originalName,number:call.number,direction:call.direction,reason:call.reason||'',connected:true},call.transcript,text);
         if(getMeta()!==root||call.status!=='active')return;
         if(reply.text)call.transcript.push({role:'contact',text:reply.text,at:Date.now()});
         saveMeta();
@@ -85,7 +85,7 @@ export function harvestPhoneCalls(){
             const publicListing=root.contacts.some(c=>c.publicListing&&keyOf(c.name)===contact.key);
             if(publicListing&&!calls.history.some(c=>c.key===contact.key&&c.direction==='out'&&['active','ended'].includes(c.status)))continue;
             if(calls.history.some(c=>c.key===contact.key&&c.status==='ringing'))continue;
-            const call={id:'call:'+uid(),key:contact.key,name:contact.name,number:contact.number,direction:'in',status:'ringing',at:Date.now(),when:getRpDateTime()?.label||'',reason:String(data.reason||'').slice(0,300),transcript:[],unread:true};
+            const call={id:'call:'+uid(),key:contact.key,name:contact.name,originalName:contact.originalName,number:contact.number,direction:'in',status:'ringing',at:Date.now(),when:getRpDateTime()?.label||'',reason:String(data.reason||'').slice(0,300),transcript:[],unread:true};
             calls.history.unshift(call);incoming.push(call);
         }
     }

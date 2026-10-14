@@ -4928,3 +4928,70 @@ img[data-zoom] { cursor: zoom-in; }
 #gp-phone .gp-thread-appearance input[type=range]::-moz-range-thumb{width:12px;height:12px;border:2px solid var(--gp-accent-a);border-radius:50%;background:var(--gp-accent-a)}
 #gp-phone .gp-thread-appearance input[type=range]:focus-visible{outline:2px solid var(--gp-accent-a);outline-offset:3px;border-radius:8px}
 @media(max-height:720px){#gp-phone .gp-appearance-stage .gp-appearance-preview{height:116px;padding:12px;gap:8px}#gp-phone .gp-appearance-stage{padding-top:8px}#gp-phone .gp-appearance-shade>.gp-web-sheet>header{min-height:47px}}
+
+
+/* The lock screen has its own wallpaper and clock preferences. */
+#gp-phone .gp-lock-wallpaper{position:absolute;inset:0;border-radius:inherit;background-size:cover;background-position:center;pointer-events:none;z-index:1}
+#gp-phone.gp-lock-active>.gp-island,#gp-phone.gp-lock-active>.gp-statusbar,#gp-phone.gp-lock-active>#gp-screen,#gp-phone.gp-lock-active>.gp-homebar{position:relative;z-index:2}
+#gp-phone.gp-lock-no-wallpaper>.gp-wallpaper{visibility:hidden}
+#gp-phone .gp-lock-clock{font-size:min(var(--gp-lock-clock-size,68px),29vw);font-weight:var(--gp-lock-clock-weight,200);color:var(--gp-lock-clock-color,var(--gp-text));font-variant-numeric:tabular-nums;white-space:nowrap}
+#gp-phone .gp-lock-top{width:100%;color:var(--gp-lock-clock-color,var(--gp-text))}
+#gp-phone .gp-lock-date[hidden]{display:none!important}
+@supports(font-size:1cqw){#gp-phone .gp-lock-top{container-type:inline-size}#gp-phone .gp-lock-clock{font-size:min(var(--gp-lock-clock-size,68px),32cqw)}}
+#gp-phone .gp-lock-appearance-stage{padding:12px 16px 0;flex-shrink:0}
+#gp-phone .gp-lock-preview{position:relative;isolation:isolate;height:192px;border-radius:22px;border:1px solid var(--gp-border-soft);overflow:hidden;padding:22px 15px 15px;display:flex;flex-direction:column;align-items:center;background:var(--gp-glass)}
+#gp-phone .gp-lock-preview-wall{position:absolute;inset:0;z-index:-1;background-size:cover;background-position:center}
+#gp-phone .gp-lock-preview-inherit .gp-lock-preview-wall::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.55),rgba(0,0,0,.2) 18%,rgba(0,0,0,.3) 70%,rgba(0,0,0,.58))}
+#gp-phone .gp-lock-preview .gp-lock-date{font-size:11px}
+#gp-phone .gp-lock-preview-hint{margin-top:auto;font-size:11px;color:var(--gp-text);opacity:.6;padding-top:10px}
+#gp-phone .gp-lock-clock-controls{padding-top:17px;padding-bottom:15px}
+#gp-phone .gp-lock-weight{display:flex;gap:5px;margin:17px 0;padding:3px;background:var(--gp-glass);border-radius:12px}
+#gp-phone .gp-lock-weight>button{flex:1;min-width:0;padding:8px 3px;border:0;border-radius:9px;background:transparent;color:var(--gp-text-dim);font-size:10px}
+#gp-phone .gp-lock-weight>button.gp-active{background:var(--gp-glass-strong);color:var(--gp-text)}
+#gp-phone .gp-lock-theme-color{display:block;border:0;background:transparent;color:var(--gp-accent-a);padding:0;font-size:9px;margin-top:-5px}
+#gp-phone .gp-lock-show-date{display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--gp-border-soft);padding-top:15px;margin-top:17px;gap:12px;font-size:11px;color:var(--gp-text)}
+#gp-phone .gp-lock-show-date input{width:16px;height:16px;margin:0;accent-color:var(--gp-accent-a)}
+#gp-phone #gp-lock-wall-filename{display:block;text-align:center;font-size:9px;color:var(--gp-text-dim);margin-top:7px;overflow-wrap:anywhere}
+#gp-phone #gp-lock-appearance-reset{background:var(--gp-glass);color:var(--gp-text);border:1px solid var(--gp-border-soft)}
+@media(max-height:720px){#gp-phone .gp-lock-preview{height:164px;padding-top:17px}}
+
+
+/* All extension controls now live in the phone Settings app. */
+#gp-settings-storage[hidden]{display:none!important}
+#gp-phone .gp-app-settings{background:linear-gradient(145deg,#8c949f,#555e69);color:#fff}
+#gp-phone .gp-settings-header-space{width:30px;flex-shrink:0}
+#gp-phone .gp-phone-settings{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:8px 12px 22px;scrollbar-width:thin}
+#gp-phone .gp-phone-settings-links{border:1px solid var(--gp-border-soft);border-radius:20px;background:var(--gp-glass);overflow:hidden;margin-bottom:18px}
+#gp-phone .gp-phone-settings-links>button{display:flex;gap:11px;align-items:center;width:100%;border:0;background:transparent;color:var(--gp-text);padding:14px 13px;text-align:left}
+#gp-phone .gp-phone-settings-links>button+button{border-top:1px solid var(--gp-border-soft)}
+#gp-phone .gp-phone-settings-links>button>i:first-child{display:grid;place-items:center;flex:0 0 30px;height:30px;border-radius:9px;background:var(--gp-glass-strong);color:var(--gp-accent-a);font-size:14px}
+#gp-phone .gp-phone-settings-links>button>span{flex:1;min-width:0}
+#gp-phone .gp-phone-settings-links b{display:block;font-size:12px;font-weight:600}
+#gp-phone .gp-phone-settings-links small{display:block;font-size:9px;color:var(--gp-text-dim);margin-top:4px;line-height:1.4}
+#gp-phone .gp-phone-settings-links>button>i:last-child{font-size:10px;color:var(--gp-text-dim)}
+#gp-phone #gp-settings-drawer{--gp-settings-bg:var(--gp-home-sheet-bg,#26232a);--gp-settings-fg:var(--gp-text);--gp-settings-muted:var(--gp-text-dim);--gp-settings-border:var(--gp-border-soft);--gp-settings-accent:var(--gp-accent-a);border:0;border-radius:0;background:transparent;overflow:visible;font-family:inherit}
+#gp-phone #gp-settings-drawer .gp-settings-header{grid-template-columns:minmax(0,1fr) auto;border:1px solid var(--gp-border-soft);border-radius:18px;background:var(--gp-glass);padding:13px;margin-bottom:10px}
+#gp-phone #gp-settings-drawer .gp-settings-body{display:block;padding:0;background:transparent}
+#gp-phone #gp-settings-drawer .gp-settings-quick{display:flex;flex-direction:column;border:1px solid var(--gp-border-soft);border-radius:18px;overflow:hidden;background:var(--gp-glass);margin-bottom:15px;gap:0}
+#gp-phone #gp-settings-drawer .gp-settings-quick label{flex-direction:row-reverse;justify-content:space-between;border:0;border-bottom:1px solid var(--gp-border-soft);border-radius:0;min-height:43px;padding:10px 13px}
+#gp-phone #gp-settings-drawer .gp-settings-quick label:last-child{border-bottom:0}
+#gp-phone #gp-settings-drawer .gp-settings-group{border:1px solid var(--gp-border-soft);border-radius:18px;background:var(--gp-glass);margin-bottom:10px;padding:0 13px;overflow:hidden}
+#gp-phone #gp-settings-drawer .gp-settings-group summary{min-height:61px;gap:10px;grid-template-columns:20px minmax(0,1fr) 12px;padding:10px 0}
+#gp-phone #gp-settings-drawer .gp-settings-group summary b{font-size:12px;font-weight:600}
+#gp-phone #gp-settings-drawer .gp-settings-group summary small{margin-top:4px;line-height:1.4;font-size:9px}
+#gp-phone #gp-settings-drawer .gp-settings-group summary>i:first-child{font-size:16px;color:var(--gp-accent-a)}
+#gp-phone #gp-settings-drawer .gp-settings-group-body{padding:3px 0 16px}
+#gp-phone #gp-settings-drawer .gp-settings-grid{grid-template-columns:minmax(0,1fr);gap:15px}
+#gp-phone #gp-settings-drawer .gp-settings-wide{grid-column:auto}
+#gp-phone #gp-settings-drawer .gp-settings-field{font-size:10px;gap:7px}
+#gp-phone #gp-settings-drawer .text_pole{background:var(--gp-settings-bg)!important;color:var(--gp-text)!important;border:1px solid var(--gp-border-soft)!important;box-shadow:none!important;border-radius:10px!important;font-family:inherit;min-width:0;padding:8px 10px}
+#gp-phone #gp-settings-drawer select{color-scheme:dark;max-width:100%}
+#gp-phone #gp-settings-drawer .gp-settings-number{max-width:100%}
+#gp-phone #gp-settings-drawer textarea.text_pole{height:82px;min-height:62px}
+#gp-phone #gp-settings-drawer .menu_button{background:var(--gp-glass-strong);color:var(--gp-text);border:1px solid var(--gp-border-soft);border-radius:10px}
+#gp-phone #gp-settings-drawer .gp-settings-checks label{min-height:43px;gap:10px;padding:9px 0}
+#gp-phone #gp-settings-drawer .gp-settings-field>small{font-size:9px;line-height:1.6}
+#gp-phone #gp-settings-drawer .gp-settings-actions{flex-direction:column;gap:8px;margin-top:14px}
+#gp-phone #gp-settings-drawer .gp-settings-reset{width:100%;min-height:38px;white-space:normal;padding:10px}
+#gp-phone #gp-settings-drawer .gp-report-box{white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;font-size:9px}
+#gp-phone #gp-settings-drawer .gp-settings-footer{padding:13px 4px 0;margin-top:16px}

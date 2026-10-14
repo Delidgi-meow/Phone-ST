@@ -1,3 +1,4 @@
+import { buildPhoneCallContext } from './call-context.js';
 import { generateRaw, user_avatar, getThumbnailUrl, saveSettingsDebounced } from '../../../../script.js';
 import { saveBase64AsFile } from '../../../utils.js';
 import { extensionNames, extension_settings } from '../../../extensions.js';
@@ -3455,15 +3456,19 @@ Return ONE JSON object: {"city":"city / district","pages":[{"title":"title","url
 }
 
 export async function generatePhoneCallReply(contact, transcript = [], utterance = '') {
-    const original=contactOriginalName(contact.key||contact.name,contact.name);
-    const prompt=`${await taskHeader('respond to a phone call as '+String(original||contact.number||'the called person')+'.',{contactNames:[original]})}
-This is a PHONE CALL, not SMS or an in-person scene. The caller is ${getUserName()}; the recipient is ${JSON.stringify(original)} at ${JSON.stringify(contact.number||'')}. Respect their actual relationship, current location, setting, and availability. Do not write the user's speech, thoughts or actions. For a first outgoing connection decide if this person plausibly answers; if unavailable return answered:false and a short reason. For an accepted incoming call or an ongoing connected call return answered:true. Keep the spoken reply short, natural and conversational, 1-4 sentences; do not add narration, status blocks, HTML, phone tags or Markdown. Do not disclose private information this recipient cannot know.
-CONNECTED / INCOMING: ${!!contact.connected}
-REASON FOR AN INCOMING CALL: ${JSON.stringify(contact.reason||'')}
-CALL SO FAR: ${JSON.stringify(transcript.slice(-16))}
-USER'S CURRENT SPOKEN WORDS: ${JSON.stringify(String(utterance).slice(0,1500))}
-${JSON_RULES}
-Return one object {"answered":true,"text":"their spoken words","reason":"if unanswered"}.`;
+    const root=getMeta(),original=contactOriginalName(contact.key||contact.name,contact.originalName||contact.name);
+    const context=await buildPhoneCallContext(contact,transcript,utterance);
+    if(getMeta()!==root)throw new Error('Чат изменился во время подготовки звонка.');
+    const turns=transcript.filter(t=>t&&['user','contact'].includes(t.role)).slice(-20).map(t=>({speaker:t.role==='user'?getUserName():original,text:String(t.text||'').slice(0,1800)}));
+    const prompt=context+'\n\n'+
+        'CALL RULES: This is spoken dialogue over the phone. Respect the character’s current location, relationship and availability from the story. Do not write the user’s speech, thoughts or actions. For the first outgoing connection decide whether they can answer; otherwise return answered:false and a short reason. For an accepted incoming call or ongoing call return answered:true. Use the language of the current user utterance or roleplay history. Reply naturally in the character’s voice, 1–4 sentences. No narration, status blocks, HTML, phone tags or Markdown.\n'+
+        'CALL DIRECTION: '+(contact.direction==='in'?'the character called the user':'the user called the character')+'\n'+
+        'CHARACTER: '+JSON.stringify(original)+'; NUMBER: '+JSON.stringify(contact.number||'')+'\n'+
+        'ALREADY CONNECTED / ACCEPTED INCOMING: '+!!contact.connected+'\n'+
+        'INCOMING CALL REASON: '+JSON.stringify(contact.reason||'')+'\n'+
+        'CALL SO FAR: '+JSON.stringify(turns)+'\n'+
+        'USER CURRENT SPOKEN WORDS: '+JSON.stringify(String(utterance).slice(0,1500))+'\n'+
+        'Output exactly ONE JSON OBJECT: {"answered":true,"text":"their spoken words","reason":"if unanswered"}. No JSON array, no commentary or reasoning.';
     const reply=parseJsonObject(await socialGen(prompt,{maxTokens:700}));
     if(!reply||typeof reply.answered!=='boolean')throw new Error('Не удалось получить ответ на звонок. Попробуй ещё раз.');
     return {answered:reply.answered,text:String(reply.text||'').trim().slice(0,1800),reason:String(reply.reason||'').trim().slice(0,250)};

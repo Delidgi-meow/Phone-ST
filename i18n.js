@@ -16,6 +16,10 @@ export const MONTHS_I18N = {
 
 // ── Точный словарь (ключ = русская строка после trim) ──
 const DICT = {
+    'Звонки всегда используют карточку, лорбук и историю ролевой.':'Calls always use the character card, lorebook and roleplay history.',
+    'Настройки':'Settings','Оформление телефона':'Phone appearance','Тема, иконки и главный экран':'Theme, icons and home screen',
+    'Часы, дата и отдельные обои':'Clock, date and wallpaper','Оформление переписок':'Chat appearance','Общий стандарт обоев и пузырей':'Default wallpaper and bubbles',
+    'Часы и обои':'Clock and wallpaper','Показывать при открытии':'Show when opening','Переписки':'Conversations','Обои и пузыри для всех чатов':'Wallpaper and bubbles for all chats',
     'Контакты': 'Contacts', 'Виджеты': 'Widgets', 'Добавить виджет': 'Add widget', 'Главный экран': 'Home screen', 'Готово': 'Done', 'Недавние': 'Recents', 'Клавиши': 'Keypad',
     'Браузер': 'Browser', 'Карты': 'Maps', 'Музеи': 'Museums', 'Выставки': 'Exhibitions', 'Кино': 'Movies', 'Театры': 'Theatres', 'Кафе': 'Cafes', 'Парки': 'Parks', 'Концерты': 'Concerts', 'Всё': 'All',
     'Переносить мои СМС из ролевой': 'Import my outgoing SMS from roleplay',

@@ -11,7 +11,7 @@ const L=(ru,en)=>lang()==='en'?en:ru;
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const I=n=>'<i class="fa-solid '+n+'" aria-hidden="true"></i>';
 const canonical=app=>['socialhub','storyevent'].includes(app)?'events':app;
-const known=new Set(['list','tw','ig','events','of','bank','shop','chans','casino','browser','maps','news','discord','twitch','notes','tinder','appearance','phone','contacts','calendar']);
+const known=new Set(['list','tw','ig','events','of','bank','shop','chans','casino','browser','maps','news','discord','twitch','notes','tinder','appearance','settings','phone','contacts','calendar']);
 let state={page:0,editing:false,folder:'',suppress:0};
 let gesture=null;
 const mounts=new WeakMap();

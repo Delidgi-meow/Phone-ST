@@ -1,3 +1,4 @@
+import { registerPhoneSettings } from './phone-settings.js';
 
 import { eventSource, event_types, saveSettingsDebounced, saveChatConditional } from '../../../../script.js';
 import { getSettings, GP_VERSION, invalidateChatCache, factoryReset, wipePhoneTraces, captureRoleplayOutgoing } from './state.js';
@@ -27,12 +28,12 @@ if (!document.getElementById(cssId)) {
     document.head.appendChild(link);
 }
 
-// ── Панель настроек в Extensions ──
+// ── Controls for the Settings app inside the phone ──
 function setupSettingsPanel() {
     const s = getSettings();
     const html = `
-<div class="inline-drawer gp-settings-panel" id="gp-settings-drawer">
-    <div class="inline-drawer-toggle inline-drawer-header gp-settings-header">
+<div class="gp-settings-panel" id="gp-settings-drawer">
+    <div class="gp-settings-header">
         <div class="gp-settings-title">
             <span class="gp-settings-status-dot" aria-hidden="true"></span>
             <span><b>Телефон</b><small id="gp-settings-status"></small></span>
@@ -41,9 +42,9 @@ function setupSettingsPanel() {
             <option value="ru" ${s.lang !== 'en' ? 'selected' : ''}>Русский</option>
             <option value="en" ${s.lang === 'en' ? 'selected' : ''}>English</option>
         </select>
-        <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        
     </div>
-    <div class="inline-drawer-content gp-settings-body">
+    <div class="gp-settings-body">
         <div class="gp-settings-quick">
             <label><input type="checkbox" id="gp-set-enabled" ${s.isEnabled ? 'checked' : ''}><span>Включено</span></label>
             <label><input type="checkbox" id="gp-set-fab" ${s.showFab ? 'checked' : ''}><span>Плавающая кнопка</span></label>
@@ -56,7 +57,7 @@ function setupSettingsPanel() {
                 <label class="gp-settings-field"><span>Глубина инжекта</span><input type="number" id="gp-set-depth" class="text_pole gp-settings-number" min="0" max="100" step="1" value="${Math.max(0, Number(s.injectDepth) || 0)}"><small>0 — перед последним ходом</small></label>
                 <label class="gp-settings-field"><span>Макс. длина ответа</span><input type="number" id="gp-set-maxtokens" class="text_pole gp-settings-number" min="0" max="32000" step="256" value="${s.socialMaxTokens || 0}"><small>0 = авто</small></label>
                 <label class="gp-settings-field gp-settings-wide"><span>Профиль для соцсетей</span><span class="gp-settings-control-row"><select id="gp-set-profile" class="text_pole"></select><button class="menu_button gp-settings-icon-button" id="gp-profile-test" type="button" title="Проверить профиль (маленький запрос)" aria-label="Проверить профиль (маленький запрос)"><i class="fa-solid fa-plug-circle-check"></i></button></span></label>
-                <label class="gp-settings-field"><span>Контекст соцсетей</span><select id="gp-set-ctxmode" class="text_pole"><option value="rich" ${s.socialContextMode !== 'lite' ? 'selected' : ''}>История + лорбук + карточка бота</option><option value="lite" ${s.socialContextMode === 'lite' ? 'selected' : ''}>Изолированно (только срез чата)</option></select></label>
+                <label class="gp-settings-field"><span>Контекст соцсетей</span><select id="gp-set-ctxmode" class="text_pole"><option value="rich" ${s.socialContextMode !== 'lite' ? 'selected' : ''}>История + лорбук + карточка бота</option><option value="lite" ${s.socialContextMode === 'lite' ? 'selected' : ''}>Изолированно (только срез чата)</option></select><small>Звонки всегда используют карточку, лорбук и историю ролевой.</small></label>
                 <label class="gp-settings-field"><span>Твой ник (@)</span><input type="text" id="gp-set-handle" class="text_pole" maxlength="21" placeholder="авто из имени"></label>
                 <label class="gp-settings-field"><span>Узнать автора анонимки</span><input type="number" id="gp-set-anonprice" class="text_pole gp-settings-number" min="0" step="100" value="${Number(s.anonRevealPrice) || 2500}"><small>цена первого имени, дальше растёт</small></label>
                 <div class="gp-settings-checks gp-settings-wide">
@@ -113,7 +114,8 @@ function setupSettingsPanel() {
         <div class="gp-settings-footer"><small id="gp-version-label"></small></div>
     </div>
 </div>`;
-    $('#extensions_settings2').append(html);
+    const holder=document.createElement('div');holder.innerHTML=html;
+    registerPhoneSettings(holder.firstElementChild);
     // Значения назначаются как свойства DOM, не интерполируются в HTML:
     // кавычки и </textarea> в пользовательских промптах/CSS безопасны.
     $('#gp-set-imgmodel').val(s.imageGenModel || '');

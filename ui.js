@@ -1,3 +1,5 @@
+import { renderPhoneSettings, parkPhoneSettings } from './phone-settings.js';
+import { applyLockAppearance, clearLockAppearance, editLockAppearance } from './lock-appearance.js';
 import { openPhoneContactEditor } from './contact-editor.js';
 import { openGroupComposer } from './group-composer.js';
 import { decorateThreadHeader } from './thread-profile.js';
@@ -622,8 +624,10 @@ export function openPhone(threadKey = null) {
 }
 
 export function closePhone() {
+    parkPhoneSettings();
     document.getElementById('gp-screen')?.querySelectorAll('.gp-phone-sheet-shade').forEach(closePhoneSheet);
     clearThreadAppearance();
+    clearLockAppearance();
     disposePhoneHome(document.getElementById('gp-screen'));
     stopPhoneCallTimer();
     flushCasinoSession(); // если закрыли телефон прямо из казино — итог всё равно уходит в журнал
@@ -650,6 +654,7 @@ function tickClock() {
         el.textContent = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
     }
     const homeClock = document.querySelector('#gp-screen .gp-home-clock');
+    document.querySelectorAll('#gp-screen .gp-lock-clock').forEach(clock=>{clock.textContent=String(rpDt?.hours??new Date().getHours()).padStart(2,'0')+':'+String(rpDt?.minutes??new Date().getMinutes()).padStart(2,'0');});
     if (homeClock) { const h = rpDt?.hours ?? new Date().getHours(); const m = rpDt?.minutes ?? new Date().getMinutes(); homeClock.textContent = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'); }
     const rp = document.getElementById('gp-rpdate');
     if (rp) {
@@ -675,6 +680,8 @@ export function render() {
     if (currentScreen === 'home' && homeInteractionBusy()) return;
     if (currentScreen !== 'home') disposePhoneHome(screen);
     if(currentScreen!=='thread')clearThreadAppearance();
+    if(currentScreen!=='lock')clearLockAppearance();
+    if(currentScreen!=='settings')parkPhoneSettings();
     if (!['phone', 'contacts'].includes(currentScreen)) stopPhoneCallTimer();
     bindStopGen(screen);
     bindZoom(screen);
@@ -731,6 +738,7 @@ export function render() {
     else if (currentScreen === 'mystream') renderMyStream(screen);
     else if (currentScreen === 'notes') renderNotes(screen);
     else if (currentScreen === 'calendar') renderPlans(screen);
+    else if (currentScreen === 'settings') renderPhoneSettings(screen,{home:()=>goto('home'),appearance:()=>goto('appearance'),lock:()=>editLockAppearance(screen,{render,toast}),chats:()=>editThreadAppearance(screen,null,{render,toast},{scope:'all'})});
     else if (currentScreen === 'appearance') renderAppearance(screen);
     else renderHome(screen);
     // Возвращаем набранный текст: перерисовка (генерация картинки, публикация,
@@ -742,7 +750,9 @@ export function render() {
 
 const SHOP_SCREENS = new Set(['shop', 'shopcat', 'shoporders']);
 
+let appearanceReturn='home';
 function goto(screenName) {
+    if(screenName==='appearance'&&currentScreen!=='appearance')appearanceReturn=currentScreen==='settings'?'settings':'home';
     // Ушла из магазина — значит корзина собрана, пора сказать про доставку
     if (SHOP_SCREENS.has(currentScreen) && !SHOP_SCREENS.has(screenName)) flushOrderToast();
     currentScreen = screenName;
@@ -1185,6 +1195,7 @@ function renderLock(screen) {
             </div>
         </div>`;
 
+    applyLockAppearance(screen);
     const unlock = () => { goto('home'); };
     screen.querySelectorAll('[data-lock-note]').forEach(el => el.addEventListener('click', () => {
         const n = notes[parseInt(el.getAttribute('data-lock-note'))];
@@ -1305,6 +1316,7 @@ function renderHome(screen) {
                     <div class="gp-app-icon gp-app-tinder">${ic('fa-fire')}${matchBadge() > 0 ? `<span class="gp-app-badge">${matchBadge()}</span>` : ''}</div>
                     <div class="gp-app-name">Tinder</div>
                 </div>` : ''}
+                <div class="gp-app" data-app="settings"><div class="gp-app-icon gp-app-settings">${ic('fa-gear')}</div><div class="gp-app-name">Настройки</div></div>
                 <div class="gp-app" data-app="appearance">
                     <div class="gp-app-icon gp-app-appearance">${ic('fa-palette')}</div>
                     <div class="gp-app-name">Оформление</div>
@@ -1452,14 +1464,20 @@ function renderAppearance(screen) {
                             <span>${esc(t.name)}</span>
                         </button>`).join('')}
                 </div>
-                <label class="gp-theme-control">
-                    <span>Экран блокировки</span>
-                    <input id="gp-set-lock" type="checkbox" ${s.lockScreen !== false ? 'checked' : ''}>
-                </label>
+                
                 <label class="gp-theme-control">
                     <span>Метка времени в ответах</span>
                     <input id="gp-set-timetag" type="checkbox" ${s.timeTag !== false ? 'checked' : ''}>
                 </label>
+            </section>
+
+            <section class="gp-theme-section">
+                <h3>Экран блокировки</h3>
+                <label class="gp-theme-control">
+                    <span>Показывать при открытии</span>
+                    <input id="gp-set-lock" type="checkbox" ${s.lockScreen !== false ? 'checked' : ''}>
+                </label>
+                <button class="gp-chat-defaults-entry" id="gp-lock-appearance" type="button">${ic('fa-lock')} <span>Часы и обои</span>${ic('fa-chevron-right')}</button>
             </section>
 
             <section class="gp-theme-section">
@@ -1488,7 +1506,7 @@ function renderAppearance(screen) {
             </section>`}
         </div>`);
 
-    screen.querySelector('#gp-home-btn')?.addEventListener('click', () => goto('home'));
+    screen.querySelector('#gp-home-btn')?.addEventListener('click', () => goto(appearanceReturn));
     const carousel = screen.querySelector('#gp-theme-carousel');
     const activeCard = carousel?.querySelector('.gp-theme-card.gp-active');
     // Двигаем карусель вручную: scrollIntoView тащит за собой и вертикальный
@@ -1589,6 +1607,8 @@ function renderAppearance(screen) {
         renderAppearance(screen);
         toast('Аватар убран', 'fa-check');
     });
+
+    screen.querySelector('#gp-lock-appearance')?.addEventListener('click', () => editLockAppearance(screen,{render:()=>renderAppearance(screen),toast}));
 
     screen.querySelector('#gp-chat-defaults')?.addEventListener('click', () => editThreadAppearance(screen,null,{render:()=>renderAppearance(screen),toast},{scope:'all'}));
 
