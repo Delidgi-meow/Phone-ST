@@ -1,5 +1,6 @@
 
 import { getMeta, saveMeta, getRpDateTime, stripThink, getPhoneMessageText } from './state.js';
+import { normalizeCurrency, currencyInfo, roundCurrency, formatCurrency, currencyStep } from './currencies.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -18,7 +19,11 @@ function safeJson(raw) {
 // ── Хранилище ──
 export function getBank() {
     const m = getMeta();
-    if (!m.bank || typeof m.bank !== 'object') m.bank = {};
+    const fresh = !m.bank || typeof m.bank !== 'object' || Array.isArray(m.bank);
+    if (fresh) {
+        const opening = (20 + Math.floor(Math.random() * 181)) * 500;
+        m.bank = { balance:opening, currency:'RUB', openingBalance:opening, openingAt:Date.now() };
+    }
     const b = m.bank;
     if (typeof b.balance !== 'number') b.balance = 0;
     if (typeof b.currency !== 'string') b.currency = '₽';
@@ -35,6 +40,7 @@ export function getBank() {
     // Какой тег какую операцию породил: [{key, src, txId, amount, synced}].
     // Нужно, чтобы отменить списание, когда вариант ответа ушёл свайпом.
     if (!Array.isArray(b.txKeys)) b.txKeys = [];
+    if (fresh) saveMeta();
     return b;
 }
 
@@ -45,70 +51,53 @@ export function bankActive() {
 }
 
 export function setCurrency(sym) {
-    const b = getBank();
-    b.currency = String(sym || '₽').slice(0, 3) || '₽';
-    saveMeta();
+    return convertCurrency(sym);
 }
 
-// ── Смена валюты С КОНВЕРТАЦИЕЙ сумм ──
-// Примерные статичные курсы к рублю (для ролевой точность не критична)
-const CURRENCY_RATES = { '₽': 1, '$': 90, '€': 98, '£': 114, '¥': 0.6 };
-function normCurrency(sym) {
-    const s = String(sym || '').trim().toLowerCase();
-    if (/^(₽|р|руб|rub)/.test(s)) return '₽';
-    if (/^(\$|usd|дол)/.test(s)) return '$';
-    if (/^(€|eur|евро)/.test(s)) return '€';
-    if (/^(£|gbp|фунт)/.test(s)) return '£';
-    if (/^(¥|yen|jpy|иен)/.test(s)) return '¥';
-    return String(sym || '₽').trim().slice(0, 3) || '₽';
-}
-
-// Меняет валюту и АВТОМАТИЧЕСКИ конвертирует все суммы (баланс, операции,
-// кредиты, обязательные платежи, каталоги/заказы магазина). Возвращает
-// {converted, from, to}; converted=false — курс неизвестен, суммы не тронуты.
-export function convertCurrency(newSymRaw) {
+// Курс задаёт пользователь для своего мира; отсутствие курса сохраняет числа.
+// Сначала готовим весь пересчёт, чтобы ошибка не оставила половину банка в старой валюте.
+export function convertCurrency(newSymRaw, { factor = null } = {}) {
     const b = getBank();
-    const from = normCurrency(b.currency);
-    const to = normCurrency(newSymRaw);
+    const from = normalizeCurrency(b.currency);
+    const to = normalizeCurrency(newSymRaw);
     if (from === to) { b.currency = to; saveMeta(); return { converted: false, from, to }; }
-    const rf = CURRENCY_RATES[from], rt = CURRENCY_RATES[to];
-    b.currency = to;
-    if (!rf || !rt) { saveMeta(); return { converted: false, from, to }; }
-    const factor = rf / rt;
-    const cv = (x) => Math.round((Number(x) || 0) * factor);
-    b.balance = cv(b.balance);
-    for (const t of b.transactions) t.amount = cv(t.amount) || (t.amount > 0 ? 1 : -1);
-    for (const l of b.loans) {
-        l.principal = Math.max(1, cv(l.principal));
-        l.remaining = l.paidOff ? 0 : Math.max(0, cv(l.remaining));
-        l.monthly = Math.max(1, cv(l.monthly));
+    if (factor === null) { b.currency = to; markCurrencyHistory(b); saveMeta(); return { converted: false, from, to }; }
+    if (!Number.isFinite(factor) || factor <= 0) throw new RangeError('Invalid currency factor');
+    const updates = [];
+    const scale = 10 ** (currencyInfo(to).minor ?? 2);
+    function prepare(object, key) {
+        const value = (Number(object[key]) || 0) * factor;
+        if (!Number.isFinite(value) || Math.abs(value) * scale > Number.MAX_SAFE_INTEGER) throw new RangeError('Currency amount overflow');
+        updates.push([object, key, roundCurrency(value, to)]);
     }
-    for (const r of b.recurring) r.amount = Math.max(1, cv(r.amount));
-    // Магазин: кэшированные каталоги и история заказов — в новую валюту
-    try {
-        const m = getMeta();
-        const sh = m.shop;
-        if (sh) {
-            for (const cat of Object.values(sh.cats || {})) {
-                for (const st of (cat.stores || [])) {
-                    for (const it of (st.items || [])) it.price = Math.max(1, cv(it.price));
-                }
-            }
-            for (const o of (sh.orders || [])) o.price = Math.max(1, cv(o.price));
+    prepare(b, 'balance');
+    if (Number.isFinite(b.openingBalance)) prepare(b, 'openingBalance');
+    if (Number.isFinite(b.lastRpBalance)) prepare(b, 'lastRpBalance');
+    for (const t of b.transactions) prepare(t, 'amount');
+    for (const l of b.loans) for (const key of ['principal', 'remaining', 'monthly', 'propertyPrice', 'downPayment']) {
+        if (Number.isFinite(l[key])) prepare(l, key);
+    }
+    for (const r of b.recurring) prepare(r, 'amount');
+    for (const r of b.syncQueue) prepare(r, 'amount');
+    for (const r of b.txKeys) prepare(r, 'amount');
+    const shop = getMeta().shop;
+    if (shop) {
+        for (const cat of Object.values(shop.cats || {})) {
+            for (const store of (cat.stores || [])) for (const item of (store.items || [])) prepare(item, 'price');
         }
-    } catch (e) { /* ignore */ }
+        for (const order of (shop.orders || [])) prepare(order, 'price');
+    }
+    for (const [object, key, value] of updates) object[key] = value;
+    b.currency = to;
+    markCurrencyHistory(b);
     saveMeta();
     return { converted: true, from, to };
 }
 
 // ── Форматирование денег ──
+export function roundMoney(n) { return roundCurrency(n, getBank().currency); }
 export function fmtMoney(n) {
-    const b = getBank();
-    const neg = n < 0;
-    const num = Math.abs(Math.round(Number(n) || 0)).toLocaleString('ru-RU');
-    const c = b.currency;
-    const body = (c === '$' || c === '€' || c === '£') ? `${c}${num}` : `${num} ${c}`;
-    return neg ? `−${body}` : body;
+    return formatCurrency(n, getBank().currency);
 }
 
 // ── Транзакции (amount: + доход / − трата) ──
@@ -117,7 +106,7 @@ export function fmtMoney(n) {
 // дельтой инфоблока, потом ещё раз транзакцией из тега.
 export function addTransaction({ amount, label, category = 'другое', silent = false, historyOnly = false }) {
     const b = getBank();
-    const amt = Math.round(Number(amount) || 0);
+    const amt = roundMoney(amount);
     if (!amt) return null;
     const tx = {
         id: genId(), amount: amt,
@@ -127,7 +116,7 @@ export function addTransaction({ amount, label, category = 'другое', silen
     if (historyOnly) tx.synced = true;   // при удалении баланс не откатываем
     b.transactions.unshift(tx);
     if (!historyOnly) {
-        b.balance += amt;
+        b.balance = roundMoney(b.balance + amt);
         // Ждём, что ролевая повторит эту же операцию своими средствами
         b.syncQueue.push({ amount: amt, at: chatLen() });
         if (b.syncQueue.length > 20) b.syncQueue = b.syncQueue.slice(-20);
@@ -141,46 +130,88 @@ export function deleteTransaction(id) {
     const b = getBank();
     const tx = b.transactions.find(t => t.id === id);
     if (!tx) return;
-    if (!tx.synced) b.balance -= tx.amount; // откат баланса (кроме записей из инфоблока)
+    if (!tx.synced) b.balance = roundMoney(b.balance - tx.amount); // откат баланса (кроме записей из инфоблока)
     b.transactions = b.transactions.filter(t => t.id !== id);
     saveMeta();
 }
 
 // ── Кредиты (аннуитет) ──
-export function takeLoan({ name, amount, months, rate = 0.18, day = 1 }) {
+export function calculateLoan({ amount, months, rate = 0.18 }) {
+    const principal = roundMoney(amount);
+    const term = Math.max(1, Math.min(480, parseInt(months) || 12));
+    const annual = Math.max(0, Math.min(2, Number(rate) || 0));
+    const mr = annual / 12;
+    const monthly = principal > 0 ? Math.max(roundMoney(principal * mr) + currencyStep(getBank().currency), roundMoney(mr > 0
+        ? principal * mr / -Math.expm1(-term * Math.log1p(mr))
+        : principal / term)) : 0;
+    const projected = loanSchedule({remaining:principal, monthly, rate:annual, months:term, interestModel:'annuity'});
+    return { principal, months:term, rate:annual, monthly, total:roundMoney(projected.reduce((sum,row)=>sum+row.payment,0)) };
+}
+
+export function takeLoan({ name, amount, months, rate = 0.18, day = 1, kind = 'personal', propertyPrice = 0, downPayment = 0 }) {
     const b = getBank();
-    const principal = Math.round(Number(amount) || 0);
+    const mortgage = kind === 'mortgage';
+    const price = Math.max(0, roundMoney(propertyPrice));
+    const down = Math.max(0, roundMoney(downPayment));
+    if (mortgage && (!price || down >= price)) return null;
+    const { principal, months:m, rate:r, monthly } = calculateLoan({amount:mortgage ? price-down : amount, months, rate});
     if (principal <= 0) return null;
-    const m = Math.max(1, Math.min(360, parseInt(months) || 12));
-    const r = Math.max(0, Number(rate) || 0);
-    const mr = r / 12;
-    const monthly = mr > 0
-        ? Math.round(principal * mr * Math.pow(1 + mr, m) / (Math.pow(1 + mr, m) - 1))
-        : Math.round(principal / m);
     const loan = {
-        id: genId(), name: String(name || 'Кредит').slice(0, 40),
-        principal, remaining: monthly * m, monthly, months: m, rate: r,
+        id: genId(), name: String(name || (mortgage ? 'Ипотека' : 'Кредит')).slice(0, 40),
+        principal, remaining:principal, monthly, months:m, rate:r,
+        kind:['personal','auto','installment','mortgage'].includes(kind) ? kind : 'personal',
+        interestModel:'annuity', paymentsMade:0,
+        ...(mortgage ? {propertyPrice:price, downPayment:down} : {}),
         day: Math.max(1, Math.min(31, parseInt(day) || 1)),
         opened: Date.now(), paidOff: false, lastPaidMonth: null,
     };
     b.loans.unshift(loan);
-    // деньги приходят на баланс отдельной транзакцией
-    addTransaction({ amount: principal, label: `Кредит «${loan.name}»`, category: 'кредит', silent: true });
+    if (mortgage) {
+        if (down) addTransaction({ amount:-down, label:`Взнос за жильё «${loan.name}»`, category:'жильё', silent:true });
+    } else {
+        addTransaction({ amount:principal, label:`Кредит «${loan.name}»`, category:'кредит', silent:true });
+    }
     saveMeta();
     return loan;
+}
+
+export function loanPaymentAmount(loan) {
+    if (!loan || loan.paidOff) return 0;
+    const interest = loan.interestModel === 'annuity' ? roundMoney(loan.remaining * loan.rate / 12) : 0;
+    const final = loan.interestModel === 'annuity' && (loan.paymentsMade || 0) >= loan.months - 1;
+    return final ? roundMoney(loan.remaining + interest) : Math.min(roundMoney(loan.remaining + interest), loan.monthly);
+}
+
+export function loanSchedule(loan) {
+    const rows = [];
+    let remaining = loan.remaining;
+    const cap = Math.max(1, Math.min(480, (loan.months || 480) - (loan.paymentsMade || 0)));
+    for (let month = 1; remaining > 0 && month <= cap; month++) {
+        const interest = loan.interestModel === 'annuity' ? roundMoney(remaining * loan.rate / 12) : 0;
+        const payment = month === cap ? roundMoney(remaining + interest) : Math.min(roundMoney(remaining + interest), loan.monthly);
+        const principal = roundMoney(payment - interest);
+        if (principal <= 0) break;
+        remaining = roundMoney(Math.max(0, remaining - principal));
+        rows.push({ month, payment, interest, principal, remaining });
+    }
+    return rows;
 }
 
 export function payLoanInstallment(id, customAmount = null) {
     const b = getBank();
     const loan = b.loans.find(l => l.id === id);
     if (!loan || loan.paidOff) return;
-    const pay = Math.min(loan.remaining, Math.round(customAmount != null ? Number(customAmount) : loan.monthly));
+    const early = customAmount !== null;
+    if (!early && loan.lastPaidMonth === currentYearMonth()) return false;
+    const pay = early ? Math.min(loan.remaining, roundMoney(customAmount)) : loanPaymentAmount(loan);
     if (pay <= 0) return;
-    addTransaction({ amount: -pay, label: `Платёж по кредиту «${loan.name}»`, category: 'кредит', silent: true });
-    loan.remaining -= pay;
-    loan.lastPaidMonth = currentYearMonth();
+    const interest = !early && loan.interestModel === 'annuity' ? roundMoney(loan.remaining * loan.rate / 12) : 0;
+    addTransaction({ amount:-pay, label:`${early ? 'Досрочное погашение' : 'Платёж'} · ${loan.name}`, category:loan.kind === 'mortgage' ? 'ипотека' : 'кредит', silent:true });
+    loan.remaining = roundMoney(loan.remaining - Math.max(0, pay - interest));
+    if (!early) { loan.lastPaidMonth = currentYearMonth(); loan.paymentsMade = (loan.paymentsMade || 0) + 1; }
     if (loan.remaining <= 0) { loan.remaining = 0; loan.paidOff = true; }
     saveMeta();
+    return true;
 }
 
 export function deleteLoan(id) {
@@ -193,15 +224,18 @@ export function totalDebt() {
     return getBank().loans.reduce((s, l) => s + (l.remaining || 0), 0);
 }
 export function monthlyLoanPayment() {
-    return getBank().loans.reduce((s, l) => s + (l.paidOff ? 0 : l.monthly), 0);
+    return getBank().loans.reduce((s, l) => s + loanPaymentAmount(l), 0);
 }
 
 // ── Обязательные (регулярные) платежи ──
-export function addRecurring({ name, amount, day, category = 'подписка' }) {
+export function addRecurring({ name, amount, day, category = 'подписка', repeat = 'monthly', date = '' }) {
     const b = getBank();
+    const sum = Math.abs(roundMoney(amount));
+    if (!sum) return null;
+    if (repeat === 'once' && !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
     const rec = {
         id: genId(), name: String(name || '').slice(0, 40) || 'Платёж',
-        amount: Math.abs(Math.round(Number(amount) || 0)),
+        amount:sum, repeat:repeat === 'once' ? 'once' : 'monthly', date,
         day: Math.max(1, Math.min(31, parseInt(day) || 1)),
         category: String(category || 'подписка').slice(0, 24), lastPaidMonth: null,
     };
@@ -227,17 +261,34 @@ function currentDay() {
     return rp ? rp.day : new Date().getDate();
 }
 
+function dueDay(day) {
+    const [year,month] = currentYearMonth().split('-').map(Number);
+    return Math.min(Math.max(1, Number(day) || 1), new Date(year,month,0).getDate());
+}
+
+export function bankToday() {
+    return `${currentYearMonth()}-${String(currentDay()).padStart(2,'0')}`;
+}
+
+export function billPaid(bill) {
+    return bill.repeat === 'once' ? !!bill.paidAt : bill.lastPaidMonth === currentYearMonth();
+}
+
+export function loanPaidThisMonth(loan) { return loan.lastPaidMonth === currentYearMonth(); }
+
 export function payRecurring(id) {
     const b = getBank();
     const rec = b.recurring.find(r => r.id === id);
-    if (!rec) return;
+    if (!rec || billPaid(rec)) return false;
     addTransaction({ amount: -rec.amount, label: rec.name, category: rec.category, silent: true });
     rec.lastPaidMonth = currentYearMonth();
+    if (rec.repeat === 'once') rec.paidAt = Date.now();
     saveMeta();
+    return true;
 }
 
 export function monthlyObligations() {
-    return getBank().recurring.reduce((s, r) => s + r.amount, 0);
+    return getBank().recurring.reduce((s, r) => s + (r.repeat === 'once' ? 0 : r.amount), 0);
 }
 
 // Напоминания: обязательные платежи И кредиты, срок которых в этом RP-месяце
@@ -249,13 +300,19 @@ export function getBankReminders() {
     const ym = currentYearMonth();
     const due = [];
     for (const r of b.recurring) {
-        if (r.lastPaidMonth === ym) continue;
-        if (day >= r.day) due.push({ kind: 'bill', id: r.id, name: r.name, amount: r.amount, day: r.day, overdue: day > r.day });
+        if (billPaid(r)) continue;
+        if (r.repeat === 'once') {
+            if (r.date && r.date <= bankToday()) due.push({ kind:'bill', id:r.id, name:r.name, amount:r.amount, day:Number(r.date.slice(-2)), date:r.date, overdue:r.date < bankToday() });
+            continue;
+        }
+        const dueDate = dueDay(r.day);
+        if (day >= dueDate) due.push({ kind: 'bill', id: r.id, name: r.name, amount: r.amount, day:dueDate, overdue:day > dueDate });
     }
     for (const l of b.loans) {
         if (l.paidOff || !l.day) continue;
         if (l.lastPaidMonth === ym) continue;
-        if (day >= l.day) due.push({ kind: 'loan', id: l.id, name: l.name, amount: Math.min(l.remaining, l.monthly), day: l.day, overdue: day > l.day });
+        const dueDate = dueDay(l.day);
+        if (day >= dueDate) due.push({ kind: 'loan', id: l.id, name: l.name, amount:loanPaymentAmount(l), day:dueDate, overdue:day > dueDate });
     }
     return due;
 }
@@ -287,6 +344,8 @@ export function getBankSummaryLine() {
     const parts = [`bank balance ${fmtMoney(b.balance)}`];
     const debt = totalDebt();
     if (debt > 0) parts.push(`loan debt ${fmtMoney(debt)} (monthly ${fmtMoney(monthlyLoanPayment())})`);
+    const homes = b.loans.filter(l=>l.kind === 'mortgage' && !l.paidOff);
+    if (homes.length) parts.push(`mortgaged homes: ${homes.map(l=>l.name).join(', ').slice(0,120)}`);
     const oblig = monthlyObligations();
     if (oblig > 0) parts.push(`fixed monthly bills ${fmtMoney(oblig)}`);
     if (b.balance < 0) parts.push('they are in overdraft / broke');
@@ -296,7 +355,7 @@ export function getBankSummaryLine() {
 // ── Одна компактная строка-правило для директивы (инжектится только если банк активен) ──
 export function bankInjectRule() {
     if (!bankActive()) return '';
-    return '[BANK] Each actual change to {{user}}’s money in this reply: <!--tel:bank:{"amount":-500,"label":"purchase"}-->. Numeric amount: negative spent, positive received; one tag per new transaction. A bank notification SMS about a real debit/credit needs the matching bank tag too. Exclude hypothetical transactions, other people’s money and operations already recorded by the app.';
+    return `[BANK] Account currency: ${normalizeCurrency(getBank().currency)}. Each actual change to {{user}}’s money in this reply: <!--tel:bank:{"amount":-500,"label":"purchase"}-->. Numeric amount in the account currency: negative spent, positive received; one tag per new transaction. A bank notification SMS about a real debit/credit needs the matching bank tag too. Exclude hypothetical transactions, other people’s money and operations already recorded by the app.`;
 }
 
 // ── Харвест тегов tel:bank + банковских СМС из чата ──
@@ -311,7 +370,25 @@ const BANK_SENDER_RE = /банк|bank|сбер|тинькофф|tinkoff|альф
 const SPEND_RE = /списан|списание|покупк|оплат|платил|платеж|платёж|перевод\s+(отправлен|выполнен)|снятие|снят[оы]|аренда|штраф|комисси|debit(?:ed)?|charged|purchase|payment\s+(?:of|to|sent)|withdraw(?:al|n)?|spent|sent\s+to|\bfee\b/i;
 const INCOME_RE = /пополнен|пополнение|зачислен|поступлени|перевод\s+от(?![а-яё])|получен\s+перевод|возврат|зарплат|начислен|кэшбэк|cashback|credit(?:ed)?|deposit(?:ed)?|received|refund(?:ed)?|salary|payout|incoming\s+transfer|transfer\s+from|paid\s+(?:to\s+you|in)\b/i;
 // Сумма: «1 500 ₽ / 500 руб / 12.50$» ИЛИ валюта-префикс «$500 / €1,200.50»
-const AMOUNT_RE = /(\d[\d\s]{0,12}(?:[.,]\d{1,2})?)\s*(?:₽|руб|р\.|р\b|\$|€|£|usd|eur|dollars?|euros?|pounds?|rubles?)|(?:[$€£])\s?(\d[\d\s,]{0,12}(?:\.\d{1,2})?)/i;
+const AMOUNT_NUMBER = "\\d+(?:[ \\u00a0\\u202f,.'’]\\d{3})*(?:[.,]\\d{1,4})?";
+function bankAmountRegex() {
+    const info = currencyInfo(getBank().currency);
+    const aliases = { RUB:['₽','руб','рублей','рубля','rubles','ruble'], USD:['$','dollars','dollar'], EUR:['€','евро','euros','euro'], GBP:['£','pounds','pound'], JPY:['¥','￥','иен','иены','иена','yen'], CNY:['¥','元','юаней','юаня','юань','yuan','renminbi'], KRW:['₩','вон','воны','вона','won'], KPW:['₩','вон','воны','вона','won'] };
+    const tokens = [...new Set([info.code, info.symbol, ...(aliases[info.code] || [])])].sort((a,b) => b.length-a.length).map(reEscape).join('|');
+    return new RegExp(`(${AMOUNT_NUMBER})\\s*(?:${tokens})(?![a-zа-яё])|(?:${tokens})\\s*(${AMOUNT_NUMBER})`, 'i');
+}
+
+function parseMoneyNumber(raw) {
+    let text = String(raw).replace(/[\s'’]/g, '');
+    const last = Math.max(text.lastIndexOf(','), text.lastIndexOf('.'));
+    if (last >= 0) {
+        const tail = text.length - last - 1;
+        const minor = currencyInfo(getBank().currency).minor ?? 2;
+        const decimal = tail !== 3 || minor === 3 || (text.includes(',') && text.includes('.'));
+        text = decimal ? text.slice(0,last).replace(/[.,]/g,'') + '.' + text.slice(last+1) : text.replace(/[.,]/g,'');
+    }
+    return roundMoney(Number(text));
+}
 
 function reEscape(value) {
     return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -326,7 +403,7 @@ function parseRpBalance(raw, userName) {
     if (!name || !raw) return null;
     const text = String(raw).replace(/&nbsp;/gi, ' ').replace(/[\u00a0\u202f]/g, ' ');
     const n = reEscape(name);
-    const amount = '([+-]?\\d(?:[\\d ]{0,18}\\d)?)\\s*(?:₽|руб(?:лей|ля)?|р\\b|\\$|€|£)?';
+    const amount = `([+-]?${AMOUNT_NUMBER})`;
     // Слово-маркер денег двуязычное: деньги / money / balance / cash
     const moneyWord = '(?:деньги|money|balance|cash)';
     const patterns = [
@@ -338,7 +415,7 @@ function parseRpBalance(raw, userName) {
     for (const pattern of patterns) {
         const match = text.match(pattern);
         if (!match) continue;
-        const value = Math.round(Number(String(match[1]).replace(/\s/g, '')) || 0);
+        const value = parseMoneyNumber(match[1]);
         if (Number.isFinite(value)) return { value, index: match.index || 0 };
     }
     return null;
@@ -348,20 +425,31 @@ function chatLen() {
     try { return SillyTavern.getContext()?.chat?.length || 0; } catch (e) { return 0; }
 }
 
+function currencyMessageKey(msg, index) {
+    return String(msg?.send_date || msg?.extra?.gen_id || `index:${index}`);
+}
+
+function markCurrencyHistory(bank) {
+    try {
+        const chat = SillyTavern.getContext()?.chat || [];
+        bank.currencyHistory = [...new Set(chat.map(currencyMessageKey))];
+    } catch { bank.currencyHistory = []; }
+}
+
 // Ищет в очереди телефонную операцию ровно на ту же сумму неподалёку.
 // Нашли — операция уже проведена, ролевая лишь описывает её: транзакция
 // пишется без повторного списания.
 // Запись НЕ удаляем, а помечаем: ту же трату следом покажет и инфоблок,
 // и его дельту тоже нужно чем-то гасить. Из очереди всё уйдёт на сверке.
 function takeSynced(b, amount, msgIndex) {
-    const amt = Math.round(Number(amount) || 0);
+    const amt = roundMoney(amount);
     if (!amt || !Array.isArray(b.syncQueue) || !b.syncQueue.length) return false;
     // Окно по ходам: старые покупки не должны глотать законные траты ролевой.
     // x.at <= msgIndex обязательно: записи «из будущего» — те же теги,
     // что обработаны этим же проходом (их at = chatLen() > msgIndex), и два
     // одинаковых перевода в одном сообщении съедали друг друга
     const hit = b.syncQueue.find(x => !x.confirmed
-        && Math.round(Number(x.amount) || 0) === amt
+        && roundMoney(x.amount) === amt
         && (Number(x.at) || 0) <= msgIndex
         && (msgIndex - (Number(x.at) || 0)) <= 10);
     if (!hit) return false;
@@ -387,7 +475,7 @@ function revertSwipedAway(b, msg, currentSrc) {
         if (!others.has(rec.src)) { keep.push(rec); continue; }
         const tx = b.transactions.find(t => t.id === rec.txId);
         if (tx) {
-            if (!tx.synced) b.balance -= tx.amount;
+            if (!tx.synced) b.balance = roundMoney(b.balance - tx.amount);
             b.transactions = b.transactions.filter(t => t.id !== tx.id);
         }
         // Ключ забываем: вернётся этот свайп — операция посчитается заново
@@ -408,12 +496,11 @@ function parseBankSms(smsJson) {
     const from = String(smsJson.from || '');
     const text = String(smsJson.text || '');
     if (!BANK_SENDER_RE.test(from) && !BANK_SENDER_RE.test(text.slice(0, 40))) return null;
-    const am = text.match(AMOUNT_RE);
+    const amountRe = bankAmountRegex();
+    const am = text.match(amountRe);
     if (!am) return null;
-    // am[1] — суффиксная валюта (1 500 ₽), am[2] — префиксная ($500);
-    // запятая-разделитель тысяч ($1,200.50) убирается, десятичная , → .
-    const rawNum = (am[1] || am[2] || '').replace(/\s/g, '');
-    const amount = Math.round(parseFloat(rawNum.replace(/,(?=\d{3}(\D|$))/g, '').replace(',', '.')) || 0);
+    // am[1] — суффиксная валюта (1 500 ₽), am[2] — префиксная ($500).
+    const amount = parseMoneyNumber(am[1] || am[2] || '');
     if (!amount) return null;
     // Сначала ДОХОД: «Salary paid» / «Payment received» — это приход,
     // хотя слова paid/payment есть и в расходном списке
@@ -422,7 +509,7 @@ function parseBankSms(smsJson) {
     else if (SPEND_RE.test(text)) sign = -1;
     if (!sign) return null;
     // Метка: кусок текста без суммы, коротко
-    const label = text.replace(AMOUNT_RE, '').replace(/\s+/g, ' ').trim().slice(0, 50) || (sign < 0 ? 'Списание (смс банка)' : 'Пополнение (смс банка)');
+    const label = text.replace(amountRe, '').replace(/\s+/g, ' ').trim().slice(0, 50) || (sign < 0 ? 'Списание (смс банка)' : 'Пополнение (смс банка)');
     return { amount: sign * amount, label, category: 'смс банка' };
 }
 
@@ -438,6 +525,7 @@ export function harvestBankTags() {
     let added = 0;
     let balanceSynced = 0;
     const seen = new Set(b.seenTags);
+    const currencyHistory = new Set(b.currencyHistory || []);
     const seenRpBalances = new Set(b.seenRpBalances);
     let migratedLegacyKeys = false;
     // База для дельта-синка инфоблока: последнее известное значение
@@ -457,13 +545,15 @@ export function harvestBankTags() {
         let bm;
         while ((bm = BANK_TAG_RE.exec(tt)) !== null) {
             const j = safeJson(bm[1]);
-            const a = Math.abs(Math.round(Number(j?.amount) || 0));
+            const a = Math.abs(roundMoney(j?.amount));
             if (a) bankAmts.push({ i, a });
         }
     }
     const nearBankAmt = (i, a) => bankAmts.some(x => x.a === a && Math.abs(x.i - i) <= 8);
 
     for (let msgIndex = 0; msgIndex < chat.length; msgIndex++) {
+        // История до смены единицы уже учтена; её числа нельзя прочесть в новой валюте.
+        if (currencyHistory.has(currencyMessageKey(chat[msgIndex], msgIndex))) continue;
         const msg = chat[msgIndex];
         const sourceText = getPhoneMessageText(msg);
         if (!msg || !sourceText) continue;
@@ -511,7 +601,7 @@ export function harvestBankTags() {
                         b.balance = rpBalance.value;
                         b.syncQueue = [];
                     } else {
-                        let delta = rpBalance.value - rpBaseline;
+                        let delta = roundMoney(rpBalance.value - rpBaseline);
                         // Зачёт телефонных операций: покупку в магазине телефон уже
                         // списал, а модель, прочитав журнал, вычла её и у себя —
                         // применять дельту целиком значит списать дважды.
@@ -522,7 +612,7 @@ export function harvestBankTags() {
                             const comp = Math.sign(delta) * Math.min(Math.abs(delta), Math.abs(pending));
                             delta -= comp;
                         }
-                        if (delta) b.balance += delta;
+                        if (delta) b.balance = roundMoney(b.balance + delta);
                         b.syncQueue = [];   // инфоблок — точка сверки, копить дальше нечего
                     }
                     balanceSynced++;

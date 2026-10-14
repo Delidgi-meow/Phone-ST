@@ -1,4 +1,4 @@
-import { getMeta, getThread, keyOf, renameContact, addManualContact, saveMeta, isSmsBlocked, randomNumber } from './state.js';
+import { getMeta, getThread, resolveContactKey, renameContact, addManualContact, saveMeta, isSmsBlocked, randomNumber } from './state.js';
 import { getContactAvatar, setContactAvatar, handleFor, setContactHandle, compressImage } from './social.js';
 import { saveBase64AsFile } from '../../../utils.js';
 import { openPhoneSheet, closePhoneSheet } from './phone-modal.js';
@@ -38,7 +38,7 @@ export function openThreadProfile(screen,thread,api){
         if(!t.isGroup){
             const nick=shade.querySelector('#gp-profile-handle').value.trim();if(nick!==handle)setContactHandle(t.key,nick);
             const number=shade.querySelector('#gp-profile-number').value.trim();
-            let contact=getMeta().contacts.find(c=>keyOf(c.name)===t.key);if(!contact){addManualContact(t.originalName,number);contact=getMeta().contacts.find(c=>keyOf(c.name)===t.key);}if(contact)contact.number=number;
+            let contact=getMeta().contacts.find(c=>resolveContactKey(c.name)===t.key);if(!contact){addManualContact(t.originalName,number);contact=getMeta().contacts.find(c=>resolveContactKey(c.name)===t.key);}if(contact)contact.number=number;
             saveMeta();
         }
         api.changed();closePhoneSheet(shade);api.render();api.toast(L('Изменения сохранены','Changes saved'),'fa-check');

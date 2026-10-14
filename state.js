@@ -4,11 +4,12 @@ import { extension_settings, saveMetadataDebounced } from '../../../extensions.j
 import { saveBase64AsFile } from '../../../utils.js';
 import { readPhoneMessage } from './message-sources.js';
 import { captureRoleplaySms, extractRoleplaySms, hasMixedRoleplaySms } from './roleplay-sms.js';
+import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity, repairContactMetadata } from './contact-identity.js';
 
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.45.0';
+export const GP_VERSION = '2.47.0';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -145,6 +146,7 @@ export function getSettings() {
 }
 
 // ── Per-chat метаданные ──
+const repairedContactRoots = new WeakSet();
 export function getMeta() {
     const md = chat_metadata;
     if (!md[META_KEY]) {
@@ -162,7 +164,7 @@ export function getMeta() {
     // Переименования контактов (отображаемое имя поверх имени из чата), по ключу
     if (!m.names || typeof m.names !== 'object') m.names = {};
     if (!m.contactIdentities || typeof m.contactIdentities !== 'object' || Array.isArray(m.contactIdentities)) m.contactIdentities = {};
-    for (const c of m.contacts) { const k=keyOf(c?.name); if(k&&!Object.hasOwn(m.contactIdentities,k))m.contactIdentities[k]={originalName:c.name,aliases:[]}; }
+    for (const c of m.contacts) { const k=redirectedContactKey(m,keyOf(c?.name)); if(k&&!Object.hasOwn(m.contactIdentities,k))m.contactIdentities[k]={originalName:c.name,aliases:[]}; }
     for (const k of Object.keys(m.names)) if(!k.startsWith('group:')&&!Object.hasOwn(m.contactIdentities,k))m.contactIdentities[k]={originalName:k,aliases:[]};
     // Забаненные аккаунты соцсетей (нормализованные ключи имени/ника)
     if (!Array.isArray(m.banned)) m.banned = [];
@@ -170,6 +172,10 @@ export function getMeta() {
     // а не один флаг: после разблокировки сообщения, пришедшие во время блока,
     // не должны появляться задним числом при очередном пересканировании chat[].
     if (!m.smsBlocks || typeof m.smsBlocks !== 'object' || Array.isArray(m.smsBlocks)) m.smsBlocks = {};
+    if (!repairedContactRoots.has(m)) {
+        repairedContactRoots.add(m);
+        if (repairContactMetadata(m)) saveMeta();
+    }
     return m;
 }
 
@@ -242,30 +248,20 @@ export function stripHandle(s) {
 
 // A contact keeps its original identity; address-book labels are personal aliases.
 export function resolveContactKey(value){
-    const raw=String(value||'').trim(),key=keyOf(raw);
-    if(!key||key.startsWith('group:'))return key;
-    const m=getMeta(),ids=m.contactIdentities;
-    if(Object.hasOwn(ids,key)||Object.hasOwn(m.names,key)||m.contacts.some(c=>keyOf(c.name)===key))return key;
-    const matches=new Set();
-    for(const k of new Set([...Object.keys(ids),...Object.keys(m.names),...Object.keys(m.handles)])){
-        const item=Object.hasOwn(ids,k)?ids[k]:null;
-        const names=[item?.originalName,m.names[k],...(Array.isArray(item?.aliases)?item.aliases:[]),m.handles[k]];
-        if(names.some(n=>n&&(keyOf(n)===key||keyOf(stripHandle(n))===keyOf(stripHandle(raw)))))matches.add(k);
-    }
-    return matches.size===1?[...matches][0]:key;
+    return resolveIdentity(getMeta(),value);
 }
 function rememberContact(name,key=resolveContactKey(name)){
     if(!key||key.startsWith('group:'))return;
     const m=getMeta(),ids=m.contactIdentities;
-    if(!Object.hasOwn(ids,key))ids[key]={originalName:String(name||key).trim(),aliases:[]};
+    if(!Object.hasOwn(ids,key))ids[key]={originalName:cleanContactName(name||key),aliases:[]};
     const item=ids[key];
     if(!Array.isArray(item.aliases))item.aliases=[];
-    if(!item.originalName||(item.originalName===key&&keyOf(name)===key))item.originalName=String(name||key).trim();
+    if(!item.originalName||(item.originalName===key&&contactNameKey(name)===contactNameKey(key)))item.originalName=cleanContactName(name||key);
 }
 export function contactOriginalName(key,fallback=''){
     const k=resolveContactKey(key),m=getMeta();
     const record=Object.hasOwn(m.contactIdentities,k)?m.contactIdentities[k]:null;
-    return record?.originalName||m.contacts.find(c=>keyOf(c.name)===k)?.name||fallback||k;
+    return record?.originalName||m.contacts.find(c=>resolveIdentity(m,c.name)===k)?.name||fallback||k;
 }
 export function displayName(key,fallback){
     const m=getMeta(),k=resolveContactKey(key);
@@ -279,12 +275,15 @@ export function renameContact(key,newName){
     if(old&&old!==n&&!item.aliases.includes(old))item.aliases.push(old);
     item.aliases=item.aliases.slice(-20);
     if(n)m.names[k]=n;else delete m.names[k];
+    m.lastRenamedContact=k;
     saveMeta();
 }
 export function contactIdentityPrompt() {
-    const aliases = getThreadList().filter(thread => !thread.isGroup && thread.name !== thread.originalName).slice(0, 60);
+    const focus=getMeta().lastRenamedContact;
+    const aliases = getThreadList().filter(thread => !thread.isGroup && thread.name !== thread.originalName)
+        .sort((a,b)=>Number(b.key===focus)-Number(a.key===focus)).slice(0, 60);
     if (!aliases.length) return '';
-    return 'CONTACT LABELS (canonical name = user’s saved label). Same person and lore; use canonical names in phone tags and recognize the saved label:\n'
+    return 'CONTACT LABELS (canonical character = name saved by {{user}}). These are the same people, with the same lore and stable handles. Remember the saved label in conversations with that contact; never treat it as a new person or infer that unrelated characters know the address book. Use canonical character names in phone tags, not the saved labels:\n'
         + aliases.map(thread => JSON.stringify(thread.originalName) + ' = ' + JSON.stringify(thread.name)).join('\n');
 }
 
@@ -319,12 +318,12 @@ function currentChatLength() {
 }
 
 export function isSmsBlocked(key) {
-    const ranges = getMeta().smsBlocks[keyOf(key)];
+    const ranges = getMeta().smsBlocks[resolveContactKey(key)];
     return Array.isArray(ranges) && ranges.some(r => r && r.to == null);
 }
 
 export function blockSmsContact(key) {
-    const k = keyOf(key);
+    const k = resolveContactKey(key);
     if (!k || k.startsWith('group:')) return false;
     const meta = getMeta();
     if (!Array.isArray(meta.smsBlocks[k])) meta.smsBlocks[k] = [];
@@ -335,7 +334,7 @@ export function blockSmsContact(key) {
 }
 
 export function unblockSmsContact(key) {
-    const k = keyOf(key);
+    const k = resolveContactKey(key);
     const meta = getMeta();
     const ranges = meta.smsBlocks[k];
     if (!Array.isArray(ranges)) return false;
@@ -352,7 +351,7 @@ export function getBlockedSmsKeys() {
 }
 
 function wasSmsBlockedAt(key, chatIndex) {
-    const ranges = getMeta().smsBlocks[keyOf(key)];
+    const ranges = getMeta().smsBlocks[resolveContactKey(key)];
     if (!Array.isArray(ranges)) return false;
     return ranges.some(r => {
         if (!r || !Number.isFinite(Number(r.from))) return false;
@@ -1367,6 +1366,7 @@ export function getTotalUnread() {
 }
 
 export function markRead(key) {
+    key=resolveContactKey(key);
     const t = getThread(key);
     if (!t) return;
     const meta = getMeta();
@@ -1386,7 +1386,7 @@ export function addManualContact(name, number) {
     rememberContact(name,k);
     // Снимаем скрытие, если было
     meta.hidden = meta.hidden.filter(h => h.key !== k);
-    const existing = meta.contacts.find(c => keyOf(c.name) === k);
+    const existing = meta.contacts.find(c => resolveContactKey(c.name) === k);
     if (existing) {
         if (number) existing.number = number;
     } else {
@@ -1398,7 +1398,8 @@ export function addManualContact(name, number) {
 
 export function hideContact(key) {
     const meta = getMeta();
-    meta.contacts = meta.contacts.filter(c => keyOf(c.name) !== key);
+    key=resolveContactKey(key);
+    meta.contacts = meta.contacts.filter(c => resolveContactKey(c.name) !== key);
     const t = getThread(key);
     const atIdx = t && t.last ? t.last.idx : Number.MAX_SAFE_INTEGER;
     meta.hidden = meta.hidden.filter(h => h.key !== key);

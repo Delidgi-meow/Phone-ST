@@ -78,6 +78,7 @@ export function addPlan({ text, date, time = '', who = 'user', source = 'user' }
         time: String(time || '').trim().slice(0, 5),
         who: PLAN_WHO[who] ? who : 'user',
         done: false,
+        status:'open',
         source,
         at: Date.now(),
     };
@@ -106,6 +107,7 @@ export function togglePlan(id) {
     const p = getPlans().find(x => x.id === id);
     if (!p) return false;
     p.done = !p.done;
+    p.status=p.done?'done':'open';p.cancelled=false;
     // День отметки нужен инжекту: свежее «сделано» модель должна увидеть,
     // иначе галочка просто убирала пункт, и ролевая считала дело незакрытым
     if (p.done) p.doneDate = rpToday();
@@ -117,6 +119,16 @@ export function togglePlan(id) {
         } catch (e) { /* ignore */ }
     }
     return p.done;
+}
+
+export function setPlanStatus(id,status) {
+    const plan=getPlans().find(p=>p.id===id);
+    if(!plan||!['open','done','cancelled'].includes(status))return false;
+    const previous=plan.cancelled?'cancelled':plan.done?'done':'open';
+    if(previous===status)return false;
+    plan.status=status;plan.done=status!=='open';plan.cancelled=status==='cancelled';
+    if(plan.done)plan.doneDate=rpToday();else delete plan.doneDate;
+    saveMeta();return true;
 }
 
 export function deletePlan(id) {
@@ -211,19 +223,20 @@ export function plansInjectLine() {
     const lines = near.map((p) => {
         const diff = daysBetween(today, p.date);
         const when = diff < 0 ? `overdue by ${-diff}d` : diff === 0 ? 'TODAY' : diff === 1 ? 'tomorrow' : `in ${diff}d`;
-        return `- ${fmtPlanDate(p.date)}${p.time ? ` ${p.time}` : ''} (${when}, ${whoOf(p)}): ${p.text}`;
+        return `- [id:${p.id}] ${fmtPlanDate(p.date)}${p.time ? ` ${p.time}` : ''} (${when}, ${whoOf(p)}): ${p.text}`;
     }).join('\n');
-    const doneLines = justDone.map(p => `- DONE ${fmtPlanDate(p.date)} (${whoOf(p)}): ${p.text}`).join('\n');
+    const doneLines = justDone.map(p => `- [id:${p.id}] ${p.cancelled?'CANCELLED':'DONE'} ${fmtPlanDate(p.date)} (${whoOf(p)}): ${p.text}`).join('\n');
     const aheadLines = ahead.map((p) => {
         const diff = daysBetween(today, p.date);
-        return `- ${fmtPlanDate(p.date)}${p.time ? ` ${p.time}` : ''} (in ${diff}d, ${whoOf(p)}): ${p.text}`;
+        return `- [id:${p.id}] ${fmtPlanDate(p.date)}${p.time ? ` ${p.time}` : ''} (in ${diff}d, ${whoOf(p)}): ${p.text}`;
     }).join('\n');
     const body = [lines, aheadLines, doneLines].filter(Boolean).join('\n');
-    return `[CALENDAR — confirmed plans; participants remember them. Keep listed dates and ownership. Characters may discuss, cancel or attend their own commitments; do not decide {{user}}’s actions. DONE entries are completed, not upcoming reminders.]\n${body}`;
+    return `[CALENDAR — confirmed plans; participants remember them. Keep IDs, dates and ownership. Characters may discuss, cancel or attend their own commitments; do not decide {{user}}’s actions. DONE and CANCELLED entries are closed, not upcoming reminders.]\n${body}`;
 }
 
 export function plansInjectRule() {
-    return '[CALENDAR] Record each new confirmed plan agreed in the latest user message or this reply, even if the calendar is empty: <!--tel:plan:{"date":"DD.MM.YYYY","time":"19:00","text":"specific plan","who":"user|char|both"}-->. "who" selects the owner; time may be "". Resolve dates from the RP clock. Never duplicate listed plans or record suggestions, refusals or hypothetical events.';
+    const creation='[CALENDAR] Record each new confirmed plan agreed in the latest user message or this reply, even if the calendar is empty: <!--tel:plan:{"date":"DD.MM.YYYY","time":"19:00","text":"specific plan","who":"user|char|both"}-->. "who" selects the owner; time may be "". Resolve dates from the RP clock. Never duplicate listed plans or record suggestions, refusals or hypothetical events.';
+    return creation+(getPlans().length ? ' When established events complete or explicitly cancel an existing plan, append <!--tel:plan:{"id":"exact listed ID","status":"done|cancelled"}-->. Mere passage of time is not completion. Never invent user actions. A confirmed reschedule updates the same ID with "status":"open","date":"DD.MM.YYYY","time":"HH:MM"; do not create a second entry. Only an explicit renewed agreement reopens a closed plan.' : '');
 }
 
 // ── Теги из чата ──
@@ -256,14 +269,31 @@ export function harvestPlanTags() {
             const key = `${base}#${n}`;
             if (seen.has(key)) continue;
             const j = safeJson(hit[1]);
-            if (!j || typeof j.text !== 'string' || !j.text.trim()) continue;
+            if (!j) continue;
+            const statusAliases={done:'done',completed:'done',cancelled:'cancelled',canceled:'cancelled',open:'open',pending:'open'};
+            const status=typeof j.status==='string'?statusAliases[j.status.toLowerCase()]:null;
+            if(j.id||j.status){
+                if(!status)continue;
+                const normalize=text=>String(text||'').replace(/\s+/g,' ').trim().toLowerCase();
+                const candidates=j.id ? m.plans.filter(p=>p.id===j.id) : m.plans.filter(p=>normalize(p.text)===normalize(j.text)&&(!j.date||p.date===parsePlanDate(j.date))&&(!j.who||p.who===j.who));
+                if(candidates.length!==1)continue;
+                const plan=candidates[0];let changed=setPlanStatus(plan.id,status);
+                if(status==='open'){
+                    if(j.date){const next=parsePlanDate(j.date);if(next!==plan.date){plan.date=next;changed=true;}}
+                    if(typeof j.time==='string'&&/^(?:[01]\d|2[0-3]):[0-5]\d$|^$/.test(j.time)&&j.time!==plan.time){plan.time=j.time;changed=true;}
+                }
+                seen.add(key);m.planTags.push(key);consumed=true;
+                if(changed){added++;sortPlans(m.plans);}
+                continue;
+            }
+            if(typeof j.text!=='string'||!j.text.trim())continue;
             seen.add(key);
             m.planTags.push(key);
             consumed = true;
             const date = parsePlanDate(j.date);
             const time = String(j.time || '').trim().slice(0, 5);
             const who = PLAN_WHO[j.who] ? j.who : 'user';
-            if (m.plans.some(plan => !plan.done && plan.date === date && plan.time === time && plan.who === who && plan.text === j.text.trim().slice(0, 200))) continue;
+            if (m.plans.some(plan => plan.date === date && plan.time === time && plan.who === who && plan.text === j.text.trim().slice(0, 200))) continue;
             addPlan({
                 text: j.text,
                 date: j.date,

@@ -235,13 +235,14 @@ export function handleFor(ak, name) {
         return m.userHandle || makeHandle(getUserName());
     }
     if (typeof ak === 'string' && ak.startsWith('contact:')) {
-        const custom = m.handles[ak.slice(8)];
+        const custom = m.handles[resolveContactKey(ak.slice(8))];
         if (custom) return custom.startsWith('@') ? custom : '@' + custom;
     }
     return makeHandle(typeof ak==='string'&&ak.startsWith('contact:')?contactOriginalName(ak.slice(8),name):name);
 }
 export function setContactHandle(key, handle) {
     const m = getMeta();
+    key=resolveContactKey(key);
     const h = String(handle || '').trim().replace(/^@+/, '');
     if (h) m.handles[key] = '@' + h.slice(0, 20);
     else delete m.handles[key];
@@ -282,18 +283,19 @@ export function resolveAuthorKey(name) {
     if (!k) return 'random';
     try {
         const { contacts } = scanChat();
-        if (contacts.has(k)) return `contact:${k}`;
+        const canonical=resolveContactKey(raw);
+        if (contacts.has(canonical)) return `contact:${canonical}`;
         // Главный персонаж чата = контакт по умолчанию
         const mc = mainCharName();
-        if (mc && keyOf(mc) === k) return `contact:${k}`;
+        if (mc && resolveContactKey(mc) === canonical) return `contact:${canonical}`;
         // Матч по нику контакта: перебираем известные хэндлы
         const m = getMeta();
         for (const ckey of Object.keys(m.handles || {})) {
-            if (keyOf(stripHandle(m.handles[ckey])) === k) return `contact:${ckey}`;
+            if (keyOf(stripHandle(m.handles[ckey])) === k) return `contact:${resolveContactKey(ckey)}`;
         }
         // Ник главного персонажа / контактов по авто-нику
         for (const c of contacts.values()) {
-            if (keyOf(stripHandle(makeHandle(c.name))) === k) return `contact:${keyOf(c.name)}`;
+            if (keyOf(stripHandle(makeHandle(c.name))) === k) return `contact:${resolveContactKey(c.name)}`;
         }
     } catch (e) { /* ignore */ }
     return 'random';

@@ -7,7 +7,9 @@ import { initUI, checkNewIncoming, resetIncomingCounters, updateFabBadge, render
 import { harvestSocialTags, setUserHandle, getUserHandle, listIigProfiles, listIigStyles, listImageBuckets, currentExtModel, stripFakeJournal } from './social.js';
 import { harvestBankTags } from './bank.js';
 import { harvestPlanTags } from './plans.js';
-import { harvestPhoneCalls } from './calls.js';
+import { harvestPhoneCalls, getCalls } from './calls.js';
+import { clearPhoneNotifications } from './phone-notifications.js';
+import { notifyIncomingCall } from './ui.js';
 import { harvestChannelTags, harvestAnonTags, harvestAnonBust, ANON_NAME } from './channels.js';
 import { maybeScamSms } from './scam.js';
 import { trDom } from './i18n.js';
@@ -526,9 +528,9 @@ jQuery(async () => {
             // Планы и даты, о которых договорились в сцене
             try {
                 const n = harvestPlanTags();
-                if (n > 0) toast(`В календарь: ${n}`, 'fa-calendar-check');
+                if (n > 0) toast(`Календарь обновлён: ${n}`, 'fa-calendar-check');
             } catch (e) { /* ignore */ }
-            try { for (const call of harvestPhoneCalls()) toast('Входящий звонок: ' + call.name, 'fa-phone', call.id); } catch (e) { console.warn('[GlassPhone] Calls:', e); }
+            try { for (const call of harvestPhoneCalls()) notifyIncomingCall(call); } catch (e) { console.warn('[GlassPhone] Calls:', e); }
             notifyBankReminders();
             notifyDeliveries();   // курьер выехал / заказ приехал
             // Мошенники: редкий скам-смс (сам себя гейтит кулдауном и шансом)
@@ -584,6 +586,7 @@ jQuery(async () => {
         // ── Смена чата: новый источник правды, счётчики с нуля ──
         if (event_types.CHAT_CHANGED) {
             eventSource.on(event_types.CHAT_CHANGED, () => {
+                clearPhoneNotifications();
                 invalidateChatCache();
                 refreshPhoneImageBlocks();
                 setTimeout(() => {
@@ -592,6 +595,7 @@ jQuery(async () => {
                     try { harvestSocialTags(); } catch (e) { /* ignore */ }
                     try { harvestBankTags(); } catch (e) { /* ignore */ }
                     try { harvestPlanTags(); } catch (e) { console.warn('[GlassPhone] Calendar tags:', e); }
+                    try { for(const call of getCalls().history.filter(item=>item.status==='ringing'))notifyIncomingCall(call); } catch(e) { console.warn('[GlassPhone] Call notifications:',e); }
                     updateFabBadge();
                     updatePhoneInjection();
                     applyChatHiding();

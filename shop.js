@@ -1,7 +1,7 @@
 
 import { getMeta, saveMeta, getRpDateTime, rpTimeTagged } from './state.js';
 import { generateShopContent, logSocialToChat, getUserName, generateCourier, generateCourierReply } from './social.js';
-import { addTransaction, getBank, fmtMoney } from './bank.js';
+import { addTransaction, getBank, fmtMoney, roundMoney } from './bank.js';
 import { lang } from './i18n.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
@@ -88,7 +88,7 @@ async function _generateCategory(catId, onStatus) {
         items: (Array.isArray(st.items) ? st.items : []).filter(it => it && it.name).slice(0, 10).map(it => ({
             id: genId(),
             name: String(it.name).slice(0, 70),
-            price: Math.max(0, Math.round(Number(it.price) || 0)),
+            price: Math.max(0, roundMoney(it.price)),
             desc: String(it.desc || '').slice(0, 160),
         })),
     })).filter(st => st.items.length > 0);

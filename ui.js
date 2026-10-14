@@ -5,6 +5,11 @@ import { openGroupComposer } from './group-composer.js';
 import { decorateThreadHeader } from './thread-profile.js';
 import { applyThreadAppearance, editThreadAppearance, clearThreadAppearance } from './thread-appearance.js';
 import { closePhoneSheet } from './phone-modal.js';
+import { renderBankApp } from './bank-ui.js';
+import { renderChannelList } from './channel-list.js';
+import { notificationHost, showIncomingCallNotice } from './phone-notifications.js';
+import { applyAppSurface } from './app-surface.js';
+import { bankIcon } from './bank-icons.js';
 
 import { sendMessageAsUser, Generate, generateQuietPrompt, saveSettingsDebounced, saveChatConditional } from '../../../../script.js';
 import { saveBase64AsFile } from '../../../utils.js';
@@ -17,11 +22,7 @@ import {
 import { phoneMessageSources, replacePhoneMessageTag } from './message-sources.js';
 import { roleplaySmsKey } from './roleplay-sms.js';
 import { updatePhoneInjection } from './prompts.js';
-import {
-    getBank, fmtMoney, addTransaction, deleteTransaction, takeLoan, payLoanInstallment, deleteLoan,
-    totalDebt, monthlyLoanPayment, addRecurring, delRecurring, payRecurring, monthlyObligations,
-    getBankReminders, spendingByCategory, incomeExpenseTotals, bankBadgeCount, setCurrency, convertCurrency,
-} from './bank.js';
+import { getBank, fmtMoney, addTransaction, getBankReminders, bankBadgeCount } from './bank.js';
 import { SHOP_CATS, catById, getCategory, generateCategory, buyItem, findShopItem, getOrders, deleteOrder, getCustomCats, addCustomCat, delCustomCat, advanceOrders, orderLeft, fmtEta, findOrder, ensureCourier, orderChat, courierUnread, markCourierRead, writeToCourier, courierArrived } from './shop.js';
 import {
     getTweets, getIgPosts, postTweet, likeTweet, rtTweet, delTweet, addTweetReply, delTweetReply,
@@ -667,7 +668,7 @@ function tickClock() {
 // Приложения со своим оформлением (дискорд, твич, сторис, экран блокировки)
 // рисуют фон сами и должны доходить до краёв корпуса — общие поля экрана им
 // только мешают.
-const BLEED_SCREENS = new Set(['discord', 'dchannel', 'twitch', 'stream', 'mystream', 'igstory', 'lock', 'browser', 'maps', 'phone', 'contacts', 'thread']);
+const BLEED_SCREENS = new Set(['discord', 'dchannel', 'twitch', 'stream', 'mystream', 'igstory', 'lock', 'browser', 'maps', 'phone', 'contacts', 'thread', 'bank', 'banktx', 'bankloan', 'bankmortgage', 'bankrec', 'chans']);
 
 export function render() {
     const screen = document.getElementById('gp-screen');
@@ -709,10 +710,7 @@ export function render() {
     else if (currentScreen === 'of') renderOf(screen);
     else if (currentScreen === 'ofview' && currentPostId) renderOfView(screen);
     else if (currentScreen === 'ofnew') renderOfNew(screen);
-    else if (currentScreen === 'bank') renderBank(screen);
-    else if (currentScreen === 'banktx') renderBankTx(screen);
-    else if (currentScreen === 'bankloan') renderBankLoan(screen);
-    else if (currentScreen === 'bankrec') renderBankRec(screen);
+    else if (['bank','banktx','bankloan','bankmortgage','bankrec'].includes(currentScreen)) renderBankApp(screen,{view:currentScreen,navigate:goto,render,toast,updateInjection:updatePhoneInjection});
     else if (currentScreen === 'shop') renderShop(screen);
     else if (currentScreen === 'shopcat') renderShopCat(screen);
     else if (currentScreen === 'shoporders') renderShopOrders(screen);
@@ -744,6 +742,7 @@ export function render() {
     // Возвращаем набранный текст: перерисовка (генерация картинки, публикация,
     // новое сообщение) больше не стирает то, что юзер печатает
     restoreDrafts(screen);
+    applyAppSurface(screen,currentScreen);
     // Перевод отрендеренного экрана (en) / восстановление оригиналов (ru)
     try { trDom(screen); } catch (e) { /* ignore */ }
 }
@@ -1274,7 +1273,7 @@ function renderHome(screen) {
                     <div class="gp-app-name">OnlyFans</div>
                 </div>
                 <div class="gp-app" data-app="bank">
-                    <div class="gp-app-icon gp-app-bank">${ic('fa-building-columns')}${bankBadgeCount() > 0 ? `<span class="gp-app-badge">${bankBadgeCount()}</span>` : ''}</div>
+                    <div class="gp-app-icon gp-app-bank">${bankIcon('WalletCards')}${bankBadgeCount() > 0 ? `<span class="gp-app-badge">${bankBadgeCount()}</span>` : ''}</div>
                     <div class="gp-app-name">Банк</div>
                 </div>
                 <div class="gp-app" data-app="shop">
@@ -3735,297 +3734,6 @@ function renderOfNew(screen) {
     });
 }
 
-let _bankTxSign = -1; // -1 трата, +1 доход (для формы)
-
-const BANK_CATS = ['еда', 'транспорт', 'жильё', 'подписка', 'одежда', 'развлечения', 'красота', 'здоровье', 'подарок', 'зарплата', 'перевод', 'другое'];
-
-function txIcon(cat) {
-    const map = {
-        'еда': 'fa-utensils', 'транспорт': 'fa-car', 'жильё': 'fa-house', 'подписка': 'fa-repeat',
-        'одежда': 'fa-shirt', 'развлечения': 'fa-champagne-glasses', 'красота': 'fa-wand-magic-sparkles',
-        'здоровье': 'fa-heart-pulse', 'подарок': 'fa-gift', 'зарплата': 'fa-briefcase',
-        'перевод': 'fa-arrow-right-arrow-left', 'кредит': 'fa-landmark', 'ролевая': 'fa-masks-theater',
-    };
-    return map[cat] || 'fa-receipt';
-}
-
-function renderBank(screen) {
-    currentScreen = 'bank';
-    const b = getBank();
-    const { income, expense } = incomeExpenseTotals();
-    const debt = totalDebt();
-    const reminders = getBankReminders();
-    const cats = spendingByCategory(5);
-    const maxCat = cats.length ? cats[0].sum : 1;
-
-    const remBanner = reminders.length ? `
-        <div class="gp-bank-remind">
-            ${ic('fa-bell')} <b>Пора платить:</b>
-            ${reminders.map(r => `<span class="gp-bank-remind-item${r.overdue ? ' gp-overdue' : ''}">${esc(r.name)} — ${esc(fmtMoney(r.amount))}</span>`).join('')}
-        </div>` : '';
-
-    setHtmlKeepScroll(screen, '.gp-bank-scroll', `
-        <div class="gp-header gp-thread-header">
-            <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
-            <div class="gp-title gp-title-app gp-bank-title">Банк</div>
-            <button class="gp-iconbtn" id="gp-bank-cur" title="Валюта">${esc(b.currency)}</button>
-        </div>
-        <div class="gp-bank-scroll">
-            <div class="gp-bank-card ${b.balance < 0 ? 'gp-bank-neg' : ''}">
-                <div class="gp-bank-card-label">Баланс</div>
-                <div class="gp-bank-balance" id="gp-bank-balance">${esc(fmtMoney(b.balance))}</div>
-                <div class="gp-bank-io">
-                    <span class="gp-bank-in">+${esc(fmtMoney(income))}</span>
-                    <span class="gp-bank-out">−${esc(fmtMoney(expense))}</span>
-                </div>
-            </div>
-            ${remBanner}
-            <div class="gp-bank-actions">
-                <button class="gp-bank-act gp-bank-act-out" id="gp-bank-spend">${ic('fa-minus')} Трата</button>
-                <button class="gp-bank-act gp-bank-act-in" id="gp-bank-income">${ic('fa-plus')} Доход</button>
-                <button class="gp-bank-act" id="gp-bank-loans">${ic('fa-landmark')} Кредиты${debt > 0 ? ` <span class="gp-bank-chip">${esc(fmtMoney(debt))}</span>` : ''}</button>
-                <button class="gp-bank-act" id="gp-bank-recs">${ic('fa-file-invoice-dollar')} Платежи${monthlyObligations() > 0 ? ` <span class="gp-bank-chip">${esc(fmtMoney(monthlyObligations()))}/мес</span>` : ''}</button>
-            </div>
-            ${cats.length ? `
-            <div class="gp-bank-section">
-                <div class="gp-bank-section-h">Траты по категориям</div>
-                ${cats.map(c => `
-                    <div class="gp-bank-cat">
-                        <span class="gp-bank-cat-i">${ic(txIcon(c.category))}</span>
-                        <span class="gp-bank-cat-n">${esc(c.category)}</span>
-                        <span class="gp-bank-cat-bar"><span style="width:${Math.round(c.sum / maxCat * 100)}%"></span></span>
-                        <span class="gp-bank-cat-s">${esc(fmtMoney(c.sum))}</span>
-                    </div>`).join('')}
-            </div>` : ''}
-            <div class="gp-bank-section">
-                <div class="gp-bank-section-h">Операции</div>
-                ${b.transactions.length === 0
-                    ? `<div class="gp-empty-text" style="padding:14px 8px">Пока нет операций. Добавь трату или доход, или пусть их создаёт ролевая.</div>`
-                    : b.transactions.slice(0, 40).map(t => `
-                        <div class="gp-bank-tx">
-                            <span class="gp-bank-tx-i">${ic(txIcon(t.category))}</span>
-                            <span class="gp-bank-tx-body">
-                                <span class="gp-bank-tx-label">${esc(t.label)}</span>
-                                <span class="gp-bank-tx-cat">${esc(t.category)}</span>
-                            </span>
-                            <span class="gp-bank-tx-amt ${t.amount < 0 ? 'gp-neg' : 'gp-pos'}">${t.amount > 0 ? '+' : ''}${esc(fmtMoney(t.amount))}</span>
-                            <button class="gp-bank-tx-del" data-del-tx="${esc(t.id)}" title="Удалить">${ic('fa-xmark')}</button>
-                        </div>`).join('')}
-            </div>
-        </div>`);
-
-    screen.querySelector('#gp-back')?.addEventListener('click', () => goto('home'));
-    screen.querySelector('#gp-bank-spend')?.addEventListener('click', () => { _bankTxSign = -1; goto('banktx'); });
-    screen.querySelector('#gp-bank-income')?.addEventListener('click', () => { _bankTxSign = 1; goto('banktx'); });
-    screen.querySelector('#gp-bank-loans')?.addEventListener('click', () => goto('bankloan'));
-    screen.querySelector('#gp-bank-recs')?.addEventListener('click', () => goto('bankrec'));
-    screen.querySelector('#gp-bank-cur')?.addEventListener('click', () => {
-        const cur = prompt('Символ валюты (₽ $ € £ ...):', b.currency);
-        if (!cur || !cur.trim()) return;
-        // Смена валюты конвертирует ВСЕ суммы по примерному курсу
-        const res = convertCurrency(cur.trim());
-        render();
-        if (res.converted) toast(`Суммы конвертированы: ${res.from} → ${res.to}`, 'fa-arrow-right-arrow-left');
-        else if (res.from !== res.to) toast('Курс неизвестен — суммы не тронуты, сменён только символ', 'fa-circle-exclamation');
-    });
-    screen.querySelectorAll('[data-del-tx]').forEach(btn => btn.addEventListener('click', () => {
-        deleteTransaction(btn.getAttribute('data-del-tx'));
-        updatePhoneInjection(); render();
-    }));
-    updateFabBadge();
-}
-
-function renderBankTx(screen) {
-    currentScreen = 'banktx';
-    const income = _bankTxSign > 0;
-    screen.innerHTML = `
-        <div class="gp-header gp-thread-header">
-            <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
-            <div class="gp-title" style="flex:1">${income ? 'Новый доход' : 'Новая трата'}</div>
-        </div>
-        <div class="gp-add-form">
-            <label class="gp-field"><span>Сумма</span>
-                <input type="number" id="gp-tx-amount" inputmode="numeric" min="0" step="1" placeholder="0"></label>
-            <label class="gp-field"><span>Описание</span>
-                <input type="text" id="gp-tx-label" maxlength="60" placeholder="${income ? 'напр. зарплата' : 'напр. кофе'}"></label>
-            <label class="gp-field"><span>Категория</span>
-                <select id="gp-tx-cat" class="text_pole">${BANK_CATS.map(c => `<option value="${c}">${c}</option>`).join('')}</select></label>
-            <button class="gp-primary ${income ? '' : 'gp-primary-out'}" id="gp-tx-save">${ic('fa-check')} ${income ? 'Добавить доход' : 'Добавить трату'}</button>
-        </div>`;
-    screen.querySelector('#gp-back')?.addEventListener('click', () => goto('bank'));
-    if (!income) screen.querySelector('#gp-tx-cat').value = 'еда';
-    else screen.querySelector('#gp-tx-cat').value = 'зарплата';
-    screen.querySelector('#gp-tx-save')?.addEventListener('click', () => {
-        const amt = Math.abs(parseInt(screen.querySelector('#gp-tx-amount').value) || 0);
-        if (!amt) { toast('Укажи сумму', 'fa-circle-exclamation'); return; }
-        addTransaction({
-            amount: income ? amt : -amt,
-            label: screen.querySelector('#gp-tx-label').value.trim(),
-            category: screen.querySelector('#gp-tx-cat').value,
-        });
-        updatePhoneInjection();
-        goto('bank');
-        toast(income ? 'Доход добавлен' : 'Трата добавлена', 'fa-check');
-    });
-    screen.querySelector('#gp-tx-amount')?.focus();
-}
-
-function renderBankLoan(screen) {
-    currentScreen = 'bankloan';
-    const b = getBank();
-    setHtmlKeepScroll(screen, '.gp-bank-scroll', `
-        <div class="gp-header gp-thread-header">
-            <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
-            <div class="gp-title gp-title-app gp-bank-title">Кредиты</div>
-        </div>
-        <div class="gp-bank-scroll">
-            <div class="gp-bank-section">
-                <div class="gp-bank-section-h">Взять кредит</div>
-                <div class="gp-add-form" style="padding:6px 2px">
-                    <label class="gp-field"><span>Название</span><input type="text" id="gp-loan-name" maxlength="40" placeholder="напр. Айфон / Ремонт"></label>
-                    <label class="gp-field"><span>Сумма</span><input type="number" id="gp-loan-amount" inputmode="numeric" min="0" placeholder="0"></label>
-                    <div style="display:flex;gap:8px">
-                        <label class="gp-field" style="flex:1"><span>Срок (мес.)</span><input type="number" id="gp-loan-months" inputmode="numeric" min="1" max="360" value="12"></label>
-                        <label class="gp-field" style="flex:1"><span>Ставка, % год.</span><input type="number" id="gp-loan-rate" inputmode="numeric" min="0" max="200" value="18"></label>
-                        <label class="gp-field" style="flex:1"><span>Число платежа</span><input type="number" id="gp-loan-day" inputmode="numeric" min="1" max="31" value="10"></label>
-                    </div>
-                    <div class="gp-add-hint" id="gp-loan-preview"></div>
-                    <button class="gp-primary" id="gp-loan-take">Оформить</button>
-                </div>
-            </div>
-            <div class="gp-bank-section">
-                <div class="gp-bank-section-h">Мои кредиты</div>
-                ${b.loans.length === 0
-                    ? `<div class="gp-empty-text" style="padding:12px 8px">Кредитов нет</div>`
-                    : b.loans.map(l => `
-                        <div class="gp-bank-loan ${l.paidOff ? 'gp-paid' : ''}">
-                            <div class="gp-bank-loan-top">
-                                <span class="gp-bank-loan-name">${esc(l.name)}</span>
-                                <button class="gp-bank-tx-del" data-del-loan="${esc(l.id)}" title="Удалить">${ic('fa-xmark')}</button>
-                            </div>
-                            <div class="gp-bank-loan-info">
-                                ${l.paidOff ? `<span class="gp-pos">Погашен</span>` : `Осталось <b>${esc(fmtMoney(l.remaining))}</b> · ${esc(fmtMoney(l.monthly))}/мес${l.day ? `, ${l.day}-го числа` : ''}`}
-                            </div>
-                            ${l.paidOff ? '' : `<div class="gp-bank-loan-btns">
-                                <button class="gp-bank-pay" data-pay-loan="${esc(l.id)}">Внести ${esc(fmtMoney(Math.min(l.remaining, l.monthly)))}</button>
-                                <button class="gp-bank-pay gp-bank-early" data-early-loan="${esc(l.id)}" title="Досрочное погашение">Досрочно</button>
-                            </div>`}
-                        </div>`).join('')}
-            </div>
-        </div>`);
-
-    screen.querySelector('#gp-back')?.addEventListener('click', () => goto('bank'));
-    const preview = () => {
-        const amount = parseInt(screen.querySelector('#gp-loan-amount').value) || 0;
-        const months = Math.max(1, parseInt(screen.querySelector('#gp-loan-months').value) || 12);
-        const rate = (parseFloat(screen.querySelector('#gp-loan-rate').value) || 0) / 100;
-        const mr = rate / 12;
-        const monthly = amount <= 0 ? 0 : (mr > 0
-            ? Math.round(amount * mr * Math.pow(1 + mr, months) / (Math.pow(1 + mr, months) - 1))
-            : Math.round(amount / months));
-        const el = screen.querySelector('#gp-loan-preview');
-        if (el) el.textContent = amount > 0 ? `Платёж ~${fmtMoney(monthly)}/мес · всего вернёшь ~${fmtMoney(monthly * months)}` : '';
-    };
-    ['gp-loan-amount', 'gp-loan-months', 'gp-loan-rate'].forEach(id => screen.querySelector('#' + id)?.addEventListener('input', preview));
-    screen.querySelector('#gp-loan-take')?.addEventListener('click', () => {
-        const amount = parseInt(screen.querySelector('#gp-loan-amount').value) || 0;
-        if (amount <= 0) { toast('Укажи сумму кредита', 'fa-circle-exclamation'); return; }
-        takeLoan({
-            name: screen.querySelector('#gp-loan-name').value.trim(),
-            amount,
-            months: parseInt(screen.querySelector('#gp-loan-months').value) || 12,
-            rate: (parseFloat(screen.querySelector('#gp-loan-rate').value) || 0) / 100,
-            day: parseInt(screen.querySelector('#gp-loan-day').value) || 10,
-        });
-        updatePhoneInjection();
-        goto('bank');
-        toast('Кредит оформлен — деньги на счету', 'fa-money-bill-wave');
-    });
-    screen.querySelectorAll('[data-pay-loan]').forEach(btn => btn.addEventListener('click', () => {
-        payLoanInstallment(btn.getAttribute('data-pay-loan'));
-        updatePhoneInjection(); render();
-    }));
-    // Досрочное погашение: любая сумма вплоть до полного остатка
-    screen.querySelectorAll('[data-early-loan]').forEach(btn => btn.addEventListener('click', () => {
-        const loan = getBank().loans.find(l => l.id === btn.getAttribute('data-early-loan'));
-        if (!loan || loan.paidOff) return;
-        const raw = window.prompt(`${tr('Сумма досрочного платежа')} (${tr('Осталось')} ${fmtMoney(loan.remaining)}):`, String(loan.remaining));
-        if (raw === null) return;
-        const amt = Math.abs(parseInt(String(raw).replace(/\s/g, '')) || 0);
-        if (!amt) { toast('Укажи сумму', 'fa-circle-exclamation'); return; }
-        payLoanInstallment(loan.id, amt);
-        updatePhoneInjection(); render();
-        toast(loan.paidOff ? 'Кредит погашен полностью' : 'Досрочный платёж внесён', loan.paidOff ? 'fa-handshake' : 'fa-bolt');
-    }));
-    screen.querySelectorAll('[data-del-loan]').forEach(btn => btn.addEventListener('click', () => {
-        if (confirm('Удалить кредит из списка? (баланс не изменится)')) { deleteLoan(btn.getAttribute('data-del-loan')); render(); }
-    }));
-}
-
-function renderBankRec(screen) {
-    currentScreen = 'bankrec';
-    const b = getBank();
-    const rem = getBankReminders().filter(r => r.kind === 'bill').map(r => r.id);
-    setHtmlKeepScroll(screen, '.gp-bank-scroll', `
-        <div class="gp-header gp-thread-header">
-            <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
-            <div class="gp-title gp-title-app gp-bank-title">Обязательные платежи</div>
-        </div>
-        <div class="gp-bank-scroll">
-            <div class="gp-bank-section">
-                <div class="gp-bank-section-h">Добавить платёж</div>
-                <div class="gp-add-form" style="padding:6px 2px">
-                    <label class="gp-field"><span>Название</span><input type="text" id="gp-rec-name" maxlength="40" placeholder="напр. Аренда / Netflix"></label>
-                    <div style="display:flex;gap:8px">
-                        <label class="gp-field" style="flex:1"><span>Сумма/мес</span><input type="number" id="gp-rec-amount" inputmode="numeric" min="0" placeholder="0"></label>
-                        <label class="gp-field" style="flex:1"><span>Число месяца</span><input type="number" id="gp-rec-day" inputmode="numeric" min="1" max="31" value="1"></label>
-                    </div>
-                    <label class="gp-field"><span>Категория</span><select id="gp-rec-cat" class="text_pole">${BANK_CATS.map(c => `<option value="${c}"${c === 'подписка' ? ' selected' : ''}>${c}</option>`).join('')}</select></label>
-                    <button class="gp-primary" id="gp-rec-add">${ic('fa-plus')} Добавить</button>
-                </div>
-            </div>
-            <div class="gp-bank-section">
-                <div class="gp-bank-section-h">Мои платежи${monthlyObligations() > 0 ? ` — ${esc(fmtMoney(monthlyObligations()))}/мес` : ''}</div>
-                ${b.recurring.length === 0
-                    ? `<div class="gp-empty-text" style="padding:12px 8px">Обязательных платежей нет</div>`
-                    : b.recurring.map(r => `
-                        <div class="gp-bank-rec ${rem.includes(r.id) ? 'gp-bank-rec-due' : ''}">
-                            <span class="gp-bank-tx-i">${ic(txIcon(r.category))}</span>
-                            <span class="gp-bank-tx-body">
-                                <span class="gp-bank-tx-label">${esc(r.name)}</span>
-                                <span class="gp-bank-tx-cat">${esc(fmtMoney(r.amount))} · ${r.day}-го числа${rem.includes(r.id) ? ' · пора платить' : ''}</span>
-                            </span>
-                            <button class="gp-bank-pay gp-bank-pay-sm" data-pay-rec="${esc(r.id)}" title="Оплатить">Оплатить</button>
-                            <button class="gp-bank-tx-del" data-del-rec="${esc(r.id)}" title="Удалить">${ic('fa-xmark')}</button>
-                        </div>`).join('')}
-            </div>
-        </div>`);
-
-    screen.querySelector('#gp-back')?.addEventListener('click', () => goto('bank'));
-    screen.querySelector('#gp-rec-add')?.addEventListener('click', () => {
-        const amount = parseInt(screen.querySelector('#gp-rec-amount').value) || 0;
-        const name = screen.querySelector('#gp-rec-name').value.trim();
-        if (!name) { toast('Назови платёж', 'fa-circle-exclamation'); return; }
-        if (amount <= 0) { toast('Укажи сумму', 'fa-circle-exclamation'); return; }
-        addRecurring({
-            name, amount,
-            day: parseInt(screen.querySelector('#gp-rec-day').value) || 1,
-            category: screen.querySelector('#gp-rec-cat').value,
-        });
-        render();
-        toast('Платёж добавлен', 'fa-check');
-    });
-    screen.querySelectorAll('[data-pay-rec]').forEach(btn => btn.addEventListener('click', () => {
-        payRecurring(btn.getAttribute('data-pay-rec'));
-        updatePhoneInjection(); render();
-        toast('Оплачено', 'fa-check');
-    }));
-    screen.querySelectorAll('[data-del-rec]').forEach(btn => btn.addEventListener('click', () => {
-        delRecurring(btn.getAttribute('data-del-rec')); render();
-    }));
-    updateFabBadge();
-}
-
 let currentShopCat = null;
 const _shopBusy = new Set(); // категории в процессе генерации
 
@@ -5663,13 +5371,14 @@ let _planDay = '';     // выбранный день
 
 function planRowHtml(p) {
     return `
-    <div class="gp-plan${p.done ? ' gp-done' : ''}">
-        <label class="gp-plan-check"><input type="checkbox" data-plantoggle="${esc(p.id)}" ${p.done ? 'checked' : ''}></label>
+    <div class="gp-plan${p.done ? ' gp-done' : ''}${p.cancelled ? ' gp-plan-cancelled' : ''}">
+        <label class="gp-plan-check"><input type="checkbox" data-plantoggle="${esc(p.id)}" aria-label="${esc(p.text)}" ${p.done ? 'checked' : ''}></label>
         <div class="gp-plan-body">
             <div class="gp-plan-text">${esc(p.text)}</div>
             <div class="gp-plan-meta">
                 <span>${esc(fmtPlanDate(p.date))}${p.time ? ` · ${esc(p.time)}` : ''}</span>
                 <span class="gp-plan-who">${esc(PLAN_WHO[p.who] || PLAN_WHO.user)}</span>
+                ${p.cancelled ? '<span class="gp-plan-status">'+tr('Отменено')+'</span>' : p.done ? '<span class="gp-plan-status">'+tr('Выполнено')+'</span>' : ''}
                 ${p.source === 'rp' ? `<span class="gp-plan-src" title="Из ролевой">${ic('fa-comment')}</span>` : ''}
             </div>
         </div>
@@ -6024,122 +5733,26 @@ function drawChannelAvatar(ch) {
 
 function renderChannels(screen) {
     currentScreen = 'chans';
-    const c = getChannels();
-    // Каналы знакомых живут отдельной секцией: это люди, а не издания
-    const people = c.list.filter(x => x.person);
-    const subs = c.list.filter(x => !x.person && x.subscribed);
-    const found = c.list.filter(x => !x.person && !x.subscribed);
-
-    const row = (ch) => {
-        const last = ch.posts?.[0];
-        const sub = ch.mine
-            ? subsLine(ch)
-            : (last ? (last.text || last.imgDesc || 'фото') : (ch.desc || subsLine(ch)));
-        return `
-        <button class="gp-chan-row${ch.mine ? ' gp-chan-row-mine' : ''}" data-chanopenrow="${esc(ch.id)}">
-            ${chanAvatar(ch, 'gp-avatar')}
-            <span class="gp-chan-rowbody">
-                <span class="gp-chan-rowtop">
-                    <span class="gp-chan-rowname">${esc(ch.name)}</span>
-                    ${last ? `<span class="gp-chan-rowtime">${esc(timeAgo(last.time))}</span>` : ''}
-                </span>
-                <span class="gp-chan-rowsub">${esc(sub)}</span>
-            </span>
-            ${ch.unread ? `<span class="gp-chan-unread">${ch.unread}</span>` : ''}
-        </button>`;
-    };
-
-    // Заглянула в каналы — с этого момента «Подслушано» живёт и в ролевой
-    if (anonEnabled()) markAnonOpened();
-
-    setHtmlKeepScroll(screen, '.gp-chan-scroll', `
-        <div class="gp-header gp-thread-header">
-            <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
-            <div class="gp-title gp-title-app">${ic('fa-paper-plane')} Каналы</div>
-            <button class="gp-iconbtn" id="gp-chan-person" title="Канал знакомого" ${_chanBusy ? 'disabled' : ''}>${ic('fa-user-plus')}</button>
-            <button class="gp-iconbtn" id="gp-chan-find" title="Найти каналы" ${_chanBusy ? 'disabled' : ''}>${ic(_chanBusy ? 'fa-spinner fa-spin' : 'fa-magnifying-glass')}</button>
-        </div>
-        <div class="gp-chan-scroll">
-            ${anonEnabled() ? `<div class="gp-chan-section">Город</div>${row(getAnonChannel())}` : ''}
-            <div class="gp-chan-section">Мой канал</div>
-            ${c.mine ? row(c.mine) : `
-                <button class="gp-chan-create" id="gp-chan-create">
-                    ${ic('fa-plus')}<span>Завести свой канал</span>
-                </button>`}
-            ${people.length ? `<div class="gp-chan-section">Каналы знакомых</div>${people.map(row).join('')}` : ''}
-            ${subs.length ? `<div class="gp-chan-section">Подписки</div>${subs.map(row).join('')}` : ''}
-            ${found.length ? `<div class="gp-chan-section">Можно подписаться</div>${found.map(row).join('')}` : ''}
-            ${!subs.length && !found.length && !people.length ? `
-                <div class="gp-empty"><div class="gp-empty-icon">${ic('fa-paper-plane')}</div>
-                <div class="gp-empty-text">Поиск соберёт каналы этого города и мира,<br>а ${ic('fa-user-plus')} заведёт канал знакомого</div></div>` : ''}
-        </div>`);
-
-    screen.querySelector('#gp-back')?.addEventListener('click', () => goto('home'));
-    screen.querySelectorAll('[data-chanopenrow]').forEach(b => b.addEventListener('click', () => {
-        _chanId = b.getAttribute('data-chanopenrow');
-        markChannelRead(_chanId);
-        goto('chan');
-    }));
-    screen.querySelector('#gp-chan-create')?.addEventListener('click', () => {
-        const name = prompt('Как назовём канал?', '');
-        if (name === null || !name.trim()) return;
-        const desc = prompt('О чём он? (одной строкой)', '') || '';
-        try {
-            const ch = createMyChannel(name.trim(), desc.trim());
-            _chanId = ch.id;
-            updatePhoneInjection();
-            applyChatHiding();
-            goto('chan');
-            toast('Канал создан', 'fa-paper-plane');
-        } catch (e) {
-            toast(String(e?.message || e).slice(0, 60), 'fa-circle-exclamation');
-        }
+    renderChannelList(screen, {
+        busy:_chanBusy, home:()=>goto('home'), avatar:chanAvatar, subscribers:subsLine, timeAgo,
+        changed:()=>{updatePhoneInjection();applyChatHiding();},
+        open:id=>{_chanId=id;markChannelRead(id);goto('chan');},
+        discover:()=>chanBusyRun(async()=>{
+            const owner=getMeta(), arr=await generateChannels(allChannels().map(x=>x.name));
+            if(getMeta()!==owner)return;
+            const count=addFoundChannels(arr);
+            if(!count)throw new Error(tr('Каналов не нашлось — попробуй ещё раз'));
+            toast(tr('Найдено каналов')+': '+count,'fa-paper-plane');
+        }),
+        addPerson:who=>chanBusyRun(async()=>{
+            const owner=getMeta(), gen=await generatePersonChannel(who);
+            if(getMeta()!==owner)return;
+            if(!gen||!gen.name)throw new Error(who+' '+tr('не ведёт канал — попробуй ещё раз'));
+            const ch=addPersonChannel(who,gen);_chanId=ch.id;
+            updatePhoneInjection();applyChatHiding();goto('chan');
+            toast(tr('Канал добавлен'),'fa-paper-plane');
+        }),
     });
-    screen.querySelector('#gp-chan-person')?.addEventListener('click', () => {
-        const contacts = getThreadList().filter(t => !t.isGroup);
-        if (!contacts.length) { toast('Сначала заведи контакты', 'fa-circle-exclamation'); return; }
-        const overlay = document.createElement('div');
-        overlay.className = 'gp-member-overlay';
-        overlay.innerHTML = `
-            <div class="gp-member-overlay-panel">
-                <div class="gp-member-overlay-header">
-                    <span>Чей канал добавить?</span>
-                    <button class="gp-iconbtn" id="gp-chan-person-close">${ic('fa-xmark')}</button>
-                </div>
-                <div class="gp-member-overlay-list">
-                    ${contacts.map(t => `
-                        <button class="gp-share-row" data-chanperson="${esc(t.name)}">
-                            ${avatarHtml(t.name, getContactAvatar(t.key), 'gp-avatar gp-avatar-xs')}
-                            <span>${esc(t.name)}</span>
-                            ${ic('fa-chevron-right')}
-                        </button>`).join('')}
-                </div>
-            </div>`;
-        screen.appendChild(overlay);
-        const close = () => overlay.remove();
-        overlay.querySelector('#gp-chan-person-close')?.addEventListener('click', close);
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-        overlay.querySelectorAll('[data-chanperson]').forEach(b => b.addEventListener('click', () => {
-            const who = b.getAttribute('data-chanperson');
-            close();
-            chanBusyRun(async () => {
-                const gen = await generatePersonChannel(who);
-                if (!gen || !gen.name) throw new Error(`${who} не ведёт канал — попробуй ещё раз`);
-                const ch = addPersonChannel(who, gen);
-                _chanId = ch.id;
-                updatePhoneInjection();
-                applyChatHiding();
-                goto('chan');
-                toast(`Канал ${who} добавлен`, 'fa-paper-plane');
-            });
-        }));
-    });
-    screen.querySelector('#gp-chan-find')?.addEventListener('click', () => chanBusyRun(async () => {
-        const arr = await generateChannels(allChannels().map(x => x.name));
-        const n = addFoundChannels(arr);
-        if (!n) throw new Error('Каналов не нашлось — попробуй ещё раз');
-        toast(`Найдено каналов: ${n}`, 'fa-paper-plane');
-    }));
 }
 
 async function chanBusyRun(fn) {
@@ -7228,6 +6841,7 @@ export function toast(text, icon = 'fa-comment-dots', threadKey = null) {
     const style = toastStyleId();
     const el = document.createElement('div');
     el.className = `gp-toast gp-toast-${style} gp-toast-k-${toastKind(icon)}`;
+    el.style.setProperty('--gp-toast-duration',threadKey?'6.5s':'5s');
     const { title, sub } = splitToast(text, threadKey);
     // Бренд-иконки (twitter/instagram) — семейство fa-brands, остальные fa-solid
     const fam = /^fa-(x-twitter|twitter|instagram)$/.test(icon) ? 'fa-brands' : 'fa-solid';
@@ -7246,7 +6860,10 @@ export function toast(text, icon = 'fa-comment-dots', threadKey = null) {
         </span>
         <span class="gp-toast-time">${esc(toastClock())}</span>
         <svg class="gp-toast-arc" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="16"></circle></svg>`;
-    document.body.appendChild(el);
+    el.setAttribute('role','status');el.setAttribute('aria-live','polite');
+    const host=notificationHost();
+    const older=[...host.querySelectorAll('.gp-toast')];while(older.length>=3)older.shift().remove();
+    host.appendChild(el);
     requestAnimationFrame(() => el.classList.add('gp-toast-show'));
     if (threadKey) {
         el.style.cursor = 'pointer';
@@ -7258,7 +6875,15 @@ export function toast(text, icon = 'fa-comment-dots', threadKey = null) {
     setTimeout(() => {
         el.classList.remove('gp-toast-show');
         setTimeout(() => el.remove(), 400);
-    }, 4200);
+    }, threadKey ? 6500 : 5000);
+}
+
+export function notifyIncomingCall(call){
+    showIncomingCallNotice(call,{
+        open:openPhone,
+        changed:()=>{updatePhoneInjection();updateFabBadge();if(isPhoneOpen())render();},
+        error:message=>toast(message,'fa-circle-exclamation'),
+    });
 }
 
 // Сравниваем количество входящих по тредам с прошлым замером — новые → тост.
