@@ -12,6 +12,16 @@ function waitForRetry(ms, signal) {
     });
 }
 
+export async function imageProviderSupportsReferences(mod,settings){
+    if(mod.folder&&!mod.builtin){
+        try{const providers=await import('/scripts/extensions/third-party/'+mod.folder+'/src/providers.js');const provider=providers.resolveActiveProvider(settings);if(provider)return provider.supportsReferences?.(settings)!==false;}catch{/* A single-file fork uses the built-in driver below. */}
+    }
+    const model=String(settings.naisteraModel||settings.model||'').toLowerCase();
+    if(settings.apiType==='naistera')return ['grok','nano banana','grok-pro'].includes(model);
+    if(settings.apiType==='novelai')return false;
+    return !/dall[ -]?e/.test(model);
+}
+
 export async function generateIsolatedImage(mod, prompt, style, onStatus, options, sceneReferences = null) {
     const settings = options.providerSettings;
     throwIfAborted(options.signal);
@@ -26,8 +36,8 @@ export async function generateIsolatedImage(mod, prompt, style, onStatus, option
     providers.validateSettings(settings);
     const provider = providers.resolveActiveProvider(settings);
     if (!provider) throw new Error('Провайдер картинок не настроен');
-    const refsEnabled = settings.apiType !== 'novelai' || provider.supportsReferences(settings);
-    const matched = refsEnabled ? [...(sceneReferences || []), ...(mod.parser?.getMatchedAdditionalReferences?.(prompt) || [])] : [];
+    const refsEnabled = provider.supportsReferences?.(settings)!==false;
+    const matched = refsEnabled&&!options.referencePolicy ? [...(sceneReferences || []), ...(mod.parser?.getMatchedAdditionalReferences?.(prompt) || [])] : [];
     const seen = new Set();
     const matchedAdditionalRefs = matched.filter(ref => {
         const key = JSON.stringify([ref.name, ref.imagePath]);
@@ -35,10 +45,10 @@ export async function generateIsolatedImage(mod, prompt, style, onStatus, option
         seen.add(key);
         return true;
     }).sort((a, b) => (Number(b.priority) || 0) - (Number(a.priority) || 0));
-    const references = await provider.collectReferences({ prompt, messageId: options.messageId, matchedAdditionalRefs, providerOptions: options });
+    const references = refsEnabled&&options.referencePolicy!=='none' ? await provider.collectReferences({ prompt, messageId: options.messageId, matchedAdditionalRefs, providerOptions: options }) : [];
     throwIfAborted(options.signal);
     let requestPrompt = prompt;
-    if (settings.apiType !== 'gemini' && refsEnabled) {
+    if (settings.apiType !== 'gemini' && refsEnabled&&!options.referencePolicy) {
         const refs = await import('/scripts/extensions/third-party/' + mod.folder + '/src/references.js');
         const library = await refs.buildActiveCharacterLibraryPromptBlock(settings, prompt);
         if (library) requestPrompt += '\n\n' + library;

@@ -4,11 +4,13 @@ import { saveBase64AsFile } from '../../../utils.js';
 import { extensionNames, extension_settings } from '../../../extensions.js';
 import { getMeta, saveMeta, keyOf, scanChat, getSettings, stripThink, textMentionsName, stripHandle, isBanned, displayName, getRpDateTime, extractTemporalContext, isUserName, isAppJournal, getPhoneMessageText, contactOriginalName, contactIdentityPrompt, resolveContactKey } from './state.js';
 import { buildPhoneImageContext, applyPhoneImagePresets } from './image-context.js';
-import { generateIsolatedImage } from './image-provider.js';
+import { generateIsolatedImage, imageProviderSupportsReferences } from './image-provider.js';
+import { personaImageTags, isolateShopImageSettings, shopProductTags, shopBooruPrompt } from './shop-image.js';
 import { generatePhoneBlockPrompt } from './external-image-blocks.js';
 import { lang } from './i18n.js';
 import { getBank, addTransaction } from './bank.js';
 import { logReq, logOk, logFail } from './debug-log.js';
+import { addIgActivity } from './instagram-state.js';
 
 // App-generated text follows the interface language. Main-roleplay SMS follows
 // the roleplay; dedicated calls follow the current spoken turn.
@@ -21,6 +23,7 @@ import { ensureSocialSystems, settlePost, validateAndOfferEvent, applyEventResol
 const MAX_TWEETS = 50;
 const MAX_IG_POSTS = 30;
 const MAX_COMMENTS = 14;
+const MAX_IG_COMMENTS = 120;
 const MAX_OF_POSTS = 30;
 
 // ── Хранилище ──
@@ -69,8 +72,8 @@ export function addStory({ image = null, imgDesc = '', caption = '' }) {
     return story;
 }
 
-// Реакции на сторис юзера: быстрые «огонёчки» + 0-2 директа, которые прилетают
-// СМСками в телефон. Фото прикладывается к запросу — vision-модель реагирует
+// Реакции на сторис юзера: быстрые реакции и отдельные сообщения Instagram Direct.
+// Фото прикладывается к запросу — vision-модель реагирует
 // на то, что реально видит, а не на описание.
 export async function generateStoryReactions(story) {
     const m = getMeta();
@@ -83,7 +86,7 @@ Story: ${story.imgDesc || 'photo'}${story.caption ? ` — text on it: «${story.
 Contacts who could have seen it: ${names.join(', ') || 'random followers'}.
 Return:
 ${wantDesc ? '"photo" — one sentence describing what is ACTUALLY on the attached image (who/what, setting, clothes, mood).\n' : ''}"reactions" — 2-6 quick story reactions [{"author":"Имя","icon":"fire|heart|laugh|wow|sad"}] — authors from their contacts (or 1-2 invented followers); icon matches how THAT person would react in-character.
-"dms" — 0-2 direct replies that arrive as SMS on ${getUserName()}'s phone [{"from":"Имя СТРОГО из её контактов","text":"short in-character reply referencing what's ON the story"}] — ONLY if that person would really slide into DMs (close, flirty, worried, provoked); otherwise [].
+"dms" — 0-2 private Instagram Direct replies [{"from":"canonical name from the contacts","text":"short in-character reply referencing what's ON the story"}]. Keep them inside Instagram; never send an SMS. Only if this person would actually reply (close, flirty, worried, provoked); otherwise [].
 ${uiLangLine()}
 ${JSON_RULES}
 Format: [{${wantDesc ? '"photo":"...",' : ''}"reactions":[{"author":"Имя","icon":"fire"}],"dms":[{"from":"Имя","text":"..."}]}]`;
@@ -93,6 +96,7 @@ Format: [{${wantDesc ? '"photo":"...",' : ''}"reactions":[{"author":"Имя","ic
         prefill: wantDesc ? '[{"photo":"' : '[{"reactions":',
     });
     const r = Array.isArray(arr) ? arr[0] : null;
+    if(getMeta()!==m)return null;
     if (!r) return null;
     if (wantDesc && r.photo) {
         story.imgDesc = String(r.photo).trim().slice(0, 600);
@@ -128,6 +132,7 @@ ${uiLangLine()}
 ${JSON_RULES}
 Format: [{"author":"Имя","photo":"...","caption":"..."}]`;
     const arr = await socialGenArray(prompt, { maxTokens: 900, prefill: '[{"author":"' });
+    if(getMeta()!==m)return 0;
     const s = getSocial();
     if (!Array.isArray(s.stories)) s.stories = [];
     let added = 0;
@@ -529,11 +534,12 @@ export function addIgComment(postId, text, author = null, ak = 'user', replyTo =
     if (!Array.isArray(p.comments)) p.comments = [];
     const c = {
         id: genId(), author: author || getUserName(), ak,
-        text: String(text).slice(0, 300), time: Date.now(),
+        text: String(text).slice(0, 4000), time: Date.now(),
     };
     if (replyTo) c.replyTo = { id: replyTo.id, author: replyTo.author };
     p.comments.push(c);
-    if (p.comments.length > MAX_COMMENTS) p.comments = p.comments.slice(-MAX_COMMENTS);
+    if((p.ak==='user'||replyTo&&isUserName(replyTo.author))&&ak!=='user'&&!isUserName(c.author))addIgActivity({kind:'comment',author:c.author,ak:c.ak,target:'post',targetId:p.id,text:c.text,dedupe:'comment:'+c.id});
+    if (p.comments.length > MAX_IG_COMMENTS) p.comments = p.comments.slice(-MAX_IG_COMMENTS);
     saveMeta();
     return c;
 }
@@ -1704,19 +1710,20 @@ Format: [{"author":"Имя","handle":"@handle","text":"...","type":"contact|rand
 
 // Ответ автора-персонажа на реплику юзера (твит или инста-пост)
 export async function generateAuthorReply(kind, item, userText, replyTo = null) {
-    const prompt = `${await taskHeader(`write ONE short social-media reply as the character ${item.author}.`)}
+    const owner=getMeta(),isIg=kind==='ig';
+    const prompt = `${await taskHeader(`write ONE short social-media reply as the character ${item.author}.`,{contactNames:[item.author]})}
 ${item.author} posted this ${kind === 'tw' ? 'tweet' : 'Instagram post'}: "${kind === 'tw' ? item.text : (item.caption || item.imgDesc)}"
 ${getUserName()} replied to it: "${userText}"
 
-Write ${item.author}'s reply to ${getUserName()}: max 280 chars, in-character (use the roleplay excerpt to match their voice), natural social media tone, NO emojis.
+Write ${item.author}'s reply to ${getUserName()}: ${isIg?'1–2 complete sentences, about 350 characters':'max 280 chars'}, in-character (use the roleplay excerpt to match their voice), natural social media tone, NO emojis. Finish the thought and the final sentence.
 Output ONLY the reply text — no quotes, no labels, no JSON, no HTML comments, no <think>.
 ${uiLangLine()}`;
 
-    const raw = (await socialGen(prompt, { maxTokens: 256, image: (kind === 'ig' && item.image && (getSettings().visionInComments || !item.imgDesc)) ? item.image : null })).trim()
+    const raw = (await socialGen(prompt, { maxTokens: isIg?600:256, image: (kind === 'ig' && item.image && (getSettings().visionInComments || !item.imgDesc)) ? item.image : null })).trim()
         .replace(/<!--[\s\S]*?-->/g, '')
         .replace(/^["'«]|["'»]$/g, '').trim();
-    if (!raw) return null;
-    const text = raw.slice(0, 280);
+    if (!raw||getMeta()!==owner) return null;
+    const text = raw.slice(0, isIg?4000:280);
     const userReplyRef = replyTo || null;
     if (kind === 'tw') return addTweetReply(item.id, text, item.author, item.ak, userReplyRef);
     return addIgComment(item.id, text, item.author, item.ak, userReplyRef);
@@ -1724,6 +1731,7 @@ ${uiLangLine()}`;
 
 // Ответ конкретного персонажа на коммент юзера (юзер ответил НА конкретный коммент)
 export async function generateReplyToComment(kind, item, targetComment, userText) {
+    const owner=getMeta(),isIg=kind==='ig';
     const authorName = targetComment.author;
     const ak = targetComment.ak;
     const isContact = typeof ak === 'string' && ak.startsWith('contact:');
@@ -1737,15 +1745,15 @@ ${postDesc}
 ${authorName} commented: "${targetComment.text}"
 ${getUserName()} replied to ${authorName}'s comment: "${userText}"
 
-Write ${authorName}'s response to ${getUserName()}'s reply: max 280 chars, in-character, natural social media tone, NO emojis.
+Write ${authorName}'s response to ${getUserName()}'s reply: ${isIg?'1–2 complete sentences, about 350 characters':'max 280 chars'}, in-character, natural social media tone, NO emojis. Finish the thought and final sentence.
 Output ONLY the reply text — no quotes, no labels, no JSON, no HTML comments, no <think>.
 ${uiLangLine()}`;
 
-    const raw = (await socialGen(prompt, { maxTokens: 256 })).trim()
+    const raw = (await socialGen(prompt, { maxTokens: isIg?600:256 })).trim()
         .replace(/<!--[\s\S]*?-->/g, '')
         .replace(/^["'«]|["'»]$/g, '').trim();
-    if (!raw) return null;
-    const text = raw.slice(0, 280);
+    if (!raw||getMeta()!==owner) return null;
+    const text = raw.slice(0, isIg?4000:280);
     // Ответ привязан к реплике юзера (которая была ответом на targetComment)
     // Но мы вставляем как ответ на юзерский коммент — указываем replyTo на юзера
     if (kind === 'tw') return addTweetReply(item.id, text, authorName, ak);
@@ -2207,6 +2215,7 @@ Write ONE punchy status label, 2-5 words. Make it flavorful and specific to thei
 }
 
 export async function generateIgComments(post) {
+    const owner=getMeta();
     // Экономия: описание есть → фото не прикладываем (галочка visionInComments переопределяет)
     const willAttach = !!post.image && (getSettings().visionInComments || !post.imgDesc);
     // Комбо-режим: фото приложено и описания нет → просим В ТОМ ЖЕ запросе
@@ -2215,7 +2224,7 @@ export async function generateIgComments(post) {
     const photoLine = willAttach
         ? `The actual photo is ATTACHED to this request — LOOK at it and react to what you actually see.${post.imgDesc ? ` (fallback description if you cannot see images: ${post.imgDesc})` : ''}`
         : `Photo (description): ${post.imgDesc || (post.image ? 'their photo, no text description available' : '(no description)')}`;
-    const existing = (post.comments || []).map(c => `${c.author}: ${c.text}`).join('\n');
+    const existing = (post.comments || []).slice(-16).map(c => `${c.author}: ${String(c.text).slice(0,450)}`).join('\n');
     const formatLine = wantDesc
         ? `Format — STRICT JSON OBJECT: {"photo_description":"visible subjects and details, one concise paragraph (who/what, pose, clothes, setting, lighting, mood, details)","comments":[{"author":"Имя","text":"...","type":"contact|random","sentiment":"positive|neutral|negative"},...]}`
         : `Format: [{"author":"Имя","text":"...","type":"contact|random","sentiment":"positive|neutral|negative"},...]`;
@@ -2226,16 +2235,17 @@ Caption: "${post.caption || '(none)'}"
 ${existing ? `Existing comments (do not repeat):\n${existing}\n` : ''}
 ${contactsBlock()}
 
-Generate 4-7 comments: known characters in-character (reacting to the photo/caption — especially if the post is by ${getUserName()}) + random accounts. Instagram tone: compliments, questions, jokes. NO emojis at all. Max 200 chars each. Add sentiment="positive|neutral|negative" to every comment.
+Generate 4 NEW comments from 4 distinct commenters, including at least 2 plausible random accounts. Known characters may participate in-character when they would plausibly see this public post. Do not write as ${getUserName()} or as the post author ${post.author}; their own reply is handled separately. React to the actual photo/caption and recent public comments, without revealing private knowledge. Instagram tone: varied compliments, questions and jokes. NO emojis. Each comment is a complete thought, at most 200 characters, ending naturally. Add sentiment="positive|neutral|negative" to every comment.
 ${uiLangLine()}
 ${JSON_RULES}
 ${formatLine}`;
 
     const raw = await socialGen(prompt, {
-        maxTokens: wantDesc ? 2048 : 1536,
+        maxTokens: wantDesc ? 2600 : 2200,
         image: willAttach ? post.image : null,
         prefill: wantDesc ? '{"photo_description":"' : '[{"author":"',
     });
+    if(getMeta()!==owner)return 0;
     let parsed;
     if (wantDesc) {
         const obj = parseJsonObject(raw);
@@ -2250,21 +2260,26 @@ ${formatLine}`;
     } else {
         parsed = parseJsonArray(raw);
     }
-    if (!Array.isArray(parsed)) return 0;
+    if (!Array.isArray(parsed)) throw new Error('Не удалось прочитать комментарии. Можно повторить генерацию.');
     let added = 0;
     if (!Array.isArray(post.comments)) post.comments = [];
     for (const it of parsed) {
         if (!it || !it.author || !it.text) continue;
-        if (isBanned(it.author, it.handle)) continue;
-        if (post.comments.length >= MAX_COMMENTS) break;
-        post.comments.push({
+        if (isBanned(it.author, it.handle)||isUserName(it.author)) continue;
+        if(post.comments.some(comment=>comment.author===String(it.author)&&comment.text===String(it.text)))continue;
+        if (post.comments.length >= MAX_IG_COMMENTS) break;
+        const comment={
             id: genId(), author: String(it.author),
             ak: it.type === 'contact' ? resolveAuthorKey(it.author) : 'random',
-            text: String(it.text).slice(0, 300), sentiment: ['positive','neutral','negative'].includes(it.sentiment) ? it.sentiment : 'neutral', time: Date.now() - Math.floor(Math.random() * 600000),
-        });
+            text: String(it.text).slice(0, 4000), sentiment: ['positive','neutral','negative'].includes(it.sentiment) ? it.sentiment : 'neutral', time: Date.now() - Math.floor(Math.random() * 600000),
+        };
+        post.comments.push(comment);
+        if(post.ak==='user')addIgActivity({kind:'comment',author:comment.author,ak:comment.ak,target:'post',targetId:post.id,text:comment.text,dedupe:'comment:'+comment.id});
         added++;
     }
-    post.likes = Math.max(post.likes || 0, Math.floor(Math.random() * 40) + post.comments.length * 3);
+    const previousLikes=post.likes||0;
+    post.likes = Math.max(previousLikes, Math.floor(Math.random() * 40) + post.comments.length * 3);
+    if(post.ak==='user'&&post.likes>previousLikes)addIgActivity({kind:'likes',author:'Instagram',target:'post',targetId:post.id,text:String(post.likes),dedupe:'likes:'+post.id+':'+post.likes});
     saveMeta();
     return added;
 }
@@ -2671,6 +2686,7 @@ function npcNamesLine(searchIn, promptText = null) {
 }
 
 function buildImagePrompt(post, { anonymous = false, allowChar = false } = {}) {
+    if(post.kind==='shop')return [post.framing,post.imgDesc].filter(Boolean).join('. ');
     const st = getSettings();
     const parts = [];
     if (post.imgDesc) parts.push(post.imgDesc);
@@ -2710,11 +2726,12 @@ function buildImagePrompt(post, { anonymous = false, allowChar = false } = {}) {
 // NAI не понимает короткие описания на русском — нужны теги вида 1girl, solo,
 // long hair, ... Конвертируем сцену одним текстовым запросом.
 async function sceneToBooruTags(post, { anonymous, imageContext = '' }) {
+    const productOnly=post.kind==='shop'&&!post.tryOn;
     const scene = post.imgDesc || post.caption || `photo posted by ${post.author}`;
     const nsfw = post.kind === 'of'
         ? 'This is adult NSFW content — include explicit danbooru tags matching the scene, do not sanitize.'
         : '';
-    let who = anonymous
+    let who = productOnly ? 'Catalog item only. No humans, no faces, no body parts, no portrait. Show the whole described item, its correct color, shape, material and cut.' : anonymous
         ? 'The subject is a random stranger — use generic appearance tags, NOT any specific named main character.'
         : '';
     if (post.mms) {
@@ -2725,11 +2742,12 @@ async function sceneToBooruTags(post, { anonymous, imageContext = '' }) {
     }
     const prompt = `Convert this scene into ONE line of English Danbooru-style image tags for an anime image model (NovelAI).
 Scene: ${scene}
+${post.kind==='shop'?`Literal product name: ${post.productName||scene}. Product identity tags: ${shopProductTags(post).join(', ')}. Preserve that exact type of item; do not substitute a bag, backpack, armor or another garment.`:''}
 ${imageContext ? `\nAppearance and object details from the image extension (use only for subjects actually in this scene):\n${imageContext}\nPreserve these established details when converting the scene to tags.\n` : ''}
 
 Rules:
-- Start with subject count (1girl / 1boy / 2girls / 1girl 1boy / etc.), add "solo" if only one person.
-- Then: appearance (hair length+color, eye color, body), clothing OR state of undress, pose, facial expression, setting/background, lighting.
+${productOnly?'- Start with no humans, still life, product focus. Do not add 1girl, 1boy, portrait, hair or facial features. Then describe the exact object, color, material, shape, full item and background.':'- Start with subject count (1girl / 1boy / 2girls / 1girl 1boy / etc.), add "solo" if only one person. Then: appearance, clothing, pose, expression, setting/background, lighting.'}
+${post.kind==='shop'&&post.tryOn?'- This is a clothing fitting on the specified persona. Preserve provided face/hair/body traits; the catalog item replaces their old outfit. Frame the garment and body wearing it; no cropped face portrait.':''}
 - End with quality tags (masterpiece, best quality, highly detailed).
 - Comma-separated, lowercase, ENGLISH ONLY, tags NOT sentences, no Russian, no explanations.
 - Setting matters: clothing, interior, street and season tags must fit the story's country, era and place.
@@ -2804,12 +2822,14 @@ export class ImageGenCancelled extends Error {
 }
 
 export function generatePostImage(post, onStatus = null, cancelKey = null) {
+    const owner=getMeta();
     const ctl = new AbortController();
     if (cancelKey) {
         _imgAborts.get(cancelKey)?.abort();
         _imgAborts.set(cancelKey, ctl);
     }
     const run = async () => {
+        if(getMeta()!==owner)throw new ImageGenCancelled();
         if (ctl.signal.aborted) throw new ImageGenCancelled();
         const src = await _generatePostImage(post, onStatus, ctl.signal);
         if (ctl.signal.aborted) throw new ImageGenCancelled();
@@ -2832,12 +2852,23 @@ export function generatePostImage(post, onStatus = null, cancelKey = null) {
 // АСПЕКТ: по overrideAspectRatio/overrideImageSize расширение ИГНОРИРУЕТ наш аспект
 // (у юзера стоял 16:9). Снимаем оверрайды на время генерации → побеждает наш 1:1.
 async function _generatePostImage(post, onStatus = null, signal = null) {
+    const owner=getMeta();
     const mod = await loadImageExt();
+    if(getMeta()!==owner)throw new ImageGenCancelled();
     if (!mod) throw new Error('Картинко-расширение не найдено и картинко-API не настроен. Установи расширение генерации картинок или пропиши endpoint/key/model в его настройках.');
 
     const nvSettings = (typeof mod.settings?.getSettings === 'function') ? mod.settings.getSettings() : null;
 
     const st = getSettings();
+    const isShop=post.kind==='shop';
+    const sourceSettings=structuredClone(nvSettings||imgBucket()||{}),phoneProfile=_imgProfile(st.imageGenProfileId);
+    if(phoneProfile)for(const [key,value]of Object.entries(phoneProfile))if(key!=='id'&&key!=='name'&&key in sourceSettings)sourceSettings[key]=value;
+    const useModel=effectiveModel(sourceSettings);if(useModel)sourceSettings.model=useModel;
+    const shopBooru=isShop&&(st.imgTagMode||sourceSettings.apiType==='novelai'||/novelai|nai-diffusion/i.test(useModel));
+    const personaAvatarId=String(post.personaAvatarId||user_avatar||'');
+    const personaTags=isShop&&post.tryOn?personaImageTags(sourceSettings,personaAvatarId,post.author||getUserName()):'';
+    const tryOnAvatar=isShop&&post.tryOn&&!!personaAvatarId&&await imageProviderSupportsReferences(mod,sourceSettings);
+    if(isShop&&post.tryOn&&!tryOnAvatar&&!personaTags)throw new Error('Для примерки нужны теги внешности персоны в картинкорасширении или её аватарка и модель с поддержкой референсов.');
     const isUserPost = post.ak === 'user';
     const isContactPost = typeof post.ak === 'string' && post.ak.startsWith('contact:');
     // В кадре ли САМА юзерка на её собственном посте? По умолчанию она — ФОТОГРАФ:
@@ -2846,7 +2877,7 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
     // (\b не работает с кириллицей — ручные границы)
     const selfDesc = `${post.imgDesc || ''} ${post.caption || ''}`.trim();
     const SELF_RE = /(^|[^а-яёa-z0-9])(я|мы|меня|себя|себе|собой|селфи|selfie|me|myself|we)(?=$|[^а-яёa-z0-9])/i;
-    const userInFrame = isUserPost && (
+    const userInFrame = !!(isShop&&post.tryOn) || isUserPost && (
         !post.imgDesc || post.kind === 'of' || !!post.stream
         || textMentionsName(selfDesc, getUserName()) || SELF_RE.test(selfDesc)
     );
@@ -2860,13 +2891,13 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
     const charKey = keyOf(charName);
     // Точное совпадение ИЛИ (для ММС/стримов) имя контакта — часть имени карточки:
     // контакт «Вадим» vs карточка «Вадим Огнев» — реф должен подтянуться
-    const isCharPost = !isUserPost && !blogAuthorOut && charKey && (keyOf(post.author) === charKey
+    const isCharPost = !isShop && !isUserPost && !blogAuthorOut && charKey && (keyOf(post.author) === charKey
         || ((post.mms || post.stream) && !!charName && textMentionsName(charName, post.author)));
     // Имя автора из поиска убираем, когда он за камерой: иначе «пост Вадима»
     // сам по себе тянул его реф в каждый кадр
     const mentionsChar = !!charName && textMentionsName(
         `${post.imgDesc || ''} ${post.caption || ''} ${blogAuthorOut ? '' : (post.author || '')}`, charName);
-    const wantChar = isCharPost || mentionsChar;
+    const wantChar = !isShop&&(isCharPost || mentionsChar);
     // Анонимный рандом-аккаунт = НЕ юзер, НЕ контакт (НПС), НЕ главный персонаж.
     // Только для него ставим запрет на персону/главперсонажей.
     const anonymous = !isUserPost && !isContactPost && !isCharPost;
@@ -2875,7 +2906,7 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
     // The author is a subject hint only when they are actually in the frame.
     const referenceMatchPrompt = [post.imgDesc, post.caption,
         !post._behindCamera && !anonymous ? post.author : ''].filter(Boolean).join('\n');
-    const imageContext = st.imageGenExtensionContext !== false
+    const imageContext = isShop ? {hints:personaTags,presetTags:personaTags?[personaTags]:[],lorebookDescriptions:[],references:[]} : st.imageGenExtensionContext !== false
         ? buildPhoneImageContext(referenceMatchPrompt, nvSettings || imgBucket(), mod.parser)
         : { hints: '', presetTags: [], lorebookDescriptions: [], references: null };
 
@@ -2887,17 +2918,18 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
             imageContext: imageContext.hints, parser: mod.parser, onStatus, signal,
         });
         prompt = externalInstruction.prompt;
-    } else if (st.imgTagMode) {
+    } else if (st.imgTagMode || shopBooru) {
         // Booru-режим: стиль/кадр из настроек (может быть тег-строкой) + сцена в теги
         if (onStatus) onStatus('Составляю теги...');
         const tags = await sceneToBooruTags(post, { anonymous, imageContext: imageContext.hints });
-        const framing = (post.framing || (post.kind === 'of' ? (st.imgPromptOf || '') : (st.imgPromptIg || ''))).trim();
+        const framing = isShop?'':(post.framing || (post.kind === 'of' ? (st.imgPromptOf || '') : (st.imgPromptIg || ''))).trim();
+        if(shopBooru&&!tags)throw new Error('Не удалось собрать Danbooru-теги товара. Нажми перерисовку, чтобы повторить; запрос картинки не отправлен.');
         prompt = tags
             ? [framing, tags].filter(Boolean).join(', ')
             : buildImagePrompt(post, { anonymous, allowChar: wantChar });
         // Теги — англоязычные, имён в них не остаётся: без этого NPC-реф
         // в booru-режиме не подцепился бы никогда
-        if (prompt && !anonymous) {
+        if (prompt && !anonymous && !isShop) {
             prompt += npcNamesLine(
                 `${post.imgDesc || ''} ${post.caption || ''} ${post._behindCamera ? '' : (post.author || '')}`, prompt);
         }
@@ -2906,40 +2938,38 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
     }
     // Deterministic preset values survive conversion even if the text model
     // omits a trait. Text-only lorebook entries also work without an image.
-    if (st.imageGenExtensionContext !== false) prompt = applyPhoneImagePresets(prompt, nvSettings || imgBucket());
+    if (st.imageGenExtensionContext !== false&&!isShop) prompt = applyPhoneImagePresets(prompt, nvSettings || imgBucket());
     const details = [...new Set([...imageContext.presetTags, ...imageContext.lorebookDescriptions])]
         .filter(detail => detail && !prompt.includes(detail));
-    if (details.length) prompt += '\n\n' + details.join('\n');
+    if (details.length&&!shopBooru) prompt += '\n\n' + details.join('\n');
+    if(shopBooru){
+        if(externalInstruction){const tags=await sceneToBooruTags({...post,imgDesc:post.imgDesc+'\nImage instructions: '+prompt},{anonymous,imageContext:imageContext.hints});prompt=tags;}
+        prompt=shopBooruPrompt(prompt,post,personaTags);logOk('Danbooru товара',prompt);
+    }else if(isShop)prompt+='\n\n'+(post.tryOn?'CLOTHING FITTING: only the specified persona wears the exact catalog garment; preserve face/hair/body traits, replace the previous outfit, and show the garment clearly. No isolated face portrait.':'CATALOG ITEM ONLY: no humans, no faces, no portraits, no body parts. Depict the exact product and its material, color and shape.');
+    if(getMeta()!==owner)throw new ImageGenCancelled();
 
     // Встроенный драйвер (форки без экспортов)
     if (mod.builtin) {
-        return _generateViaBuiltin(post, { prompt, wantChar, isUserPost: userInFrame, onStatus, signal, instruction: externalInstruction });
+        return _generateViaBuiltin(post, { prompt, wantChar, isUserPost: userInFrame&&(!isShop||tryOnAvatar), onStatus, signal, instruction: externalInstruction });
     }
 
     // Settings belong to this request; never overwrite the image extension's state.
-    const requestSettings = structuredClone(nvSettings || {});
-    const phoneProfile = _imgProfile(st.imageGenProfileId);
-    if (phoneProfile) {
-        for (const [key, value] of Object.entries(phoneProfile)) {
-            if (key !== 'id' && key !== 'name' && key in requestSettings) requestSettings[key] = value;
-        }
-    }
+    const requestSettings = isShop?isolateShopImageSettings(sourceSettings,{tryOn:!!tryOnAvatar,avatarId:personaAvatarId,personaName:post.author||getUserName()}):sourceSettings;
     if (st.imageGenStyleId && requestSettings.styles?.some(style => style?.id === st.imageGenStyleId)) {
         requestSettings.activeStyleId = st.imageGenStyleId;
     }
     Object.assign(requestSettings, {
-        sendCharAvatar: !!wantChar, sendUserAvatar: !!userInFrame,
-        swSendOutfitImageBot: !!wantChar, swSendOutfitImageUser: !!userInFrame,
+        sendCharAvatar: !!wantChar, sendUserAvatar: isShop?!!tryOnAvatar:!!userInFrame,
+        naisteraSendCharAvatar:!!wantChar,naisteraSendUserAvatar:isShop?!!tryOnAvatar:!!userInFrame,
+        swSendOutfitImageBot: !!wantChar, swSendOutfitImageUser: !isShop&&!!userInFrame,
         imageContextEnabled: false,
     });
     if (post.aspect || st.imageGenSquare !== false) {
         requestSettings.overrideAspectRatio = false;
         requestSettings.overrideImageSize = false;
     }
-    const useModel = effectiveModel(requestSettings);
-    if (useModel) requestSettings.model = useModel;
-
     const genOptions = { providerSettings: requestSettings };
+    if(isShop){genOptions.referencePolicy=tryOnAvatar?'persona':'none';genOptions.includeReferencePromptBlocks=false;genOptions.referenceInstruction='The reference shows the exact persona identity. Preserve face, hair and body; replace the outfit with the catalog garment and show that garment clearly.';}
     if (externalInstruction) {
         for (const key of ['imageSize', 'quality', 'preset']) {
             if (externalInstruction[key]) genOptions[key] = externalInstruction[key];
@@ -2953,6 +2983,7 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
     try {
         // style = null → расширение подставит СВОЙ активный стиль (resolveEffectiveStyle)
         const dataUrl = await generateIsolatedImage(mod, prompt, externalInstruction?.style || null, onStatus, genOptions, imageContext.references);
+        if(getMeta()!==owner)throw new ImageGenCancelled();
         if (signal?.aborted) throw new ImageGenCancelled();
         if (!dataUrl || typeof dataUrl !== 'string') throw new Error('Пустой результат генерации');
         let src = dataUrl;
@@ -3108,8 +3139,9 @@ async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, onStatu
                 if (b) refs.push(b);
             }
         }
-        if (isUserPost && typeof user_avatar === 'string' && user_avatar) {
-            const b = await _fetchB64(`/User Avatars/${encodeURIComponent(user_avatar)}`);
+        const personaAvatar=post.kind==='shop'?post.personaAvatarId:user_avatar;
+        if (isUserPost && typeof personaAvatar === 'string' && personaAvatar) {
+            const b = await _fetchB64(`/User Avatars/${encodeURIComponent(personaAvatar)}`);
             if (b) refs.push(b);
         }
         // НПС без карточки (контакт/стример): единственный возможный реф —
@@ -3454,6 +3486,20 @@ Return ONE JSON object: {"city":"city / district","pages":[{"title":"title","url
     const result = parseJsonObject(await socialGen(prompt, { maxTokens: 3600 }));
     if (!result || (!Array.isArray(result.pages) && !Array.isArray(result.places))) throw new Error('Не удалось прочитать результаты поиска. Попробуй ещё раз.');
     return result;
+}
+
+export async function generateInstagramDmReply(thread) {
+    const owner=getMeta(),original=thread.author;
+    const turns=(thread.messages||[]).slice(-16).map(message=>({speaker:message.dir==='out'?getUserName():original,text:String(message.text||'').slice(0,1600),...(message.share?{shared:{app:message.share.app,author:message.share.author,text:message.share.text}}:{})}));
+    const prompt=`${await taskHeader('write one private Instagram Direct reply as '+JSON.stringify(original)+'.',{contactNames:[original]})}
+RECIPIENT: ${JSON.stringify(original)}. Saved by the user as ${JSON.stringify(displayName(thread.contactKey||'',original))}; this is the same person. The main character card describes only that character; for an NPC use their own established lore and personality.
+DIRECT HISTORY (chronological, private to these participants): ${JSON.stringify(turns)}
+Reply naturally to the latest user message/shared post or story. Refer to what is actually shared, keep your character's voice and relationship, do not invent the user's reply or actions. This is Instagram, not SMS or a phone call. No narration, HTML, phone tags or invented attachments. If a reply is implausible now, return an empty text. ${uiLangLine()}
+Return JSON only: {"text":"one concise message, at most 800 characters"}.`;
+    const result=parseJsonObject(await socialGen(prompt,{maxTokens:650,prefill:'{"text":"'}));
+    if(getMeta()!==owner)throw new Error('Чат изменился');
+    if(!result||typeof result.text!=='string')throw new Error('Не удалось прочитать ответ Direct');
+    return {text:result.text.trim().slice(0,1000)};
 }
 
 export async function generatePhoneCallReply(contact, transcript = [], utterance = '') {

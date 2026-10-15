@@ -1,7 +1,7 @@
 import { registerPhoneSettings } from './phone-settings.js';
 
 import { eventSource, event_types, saveSettingsDebounced, saveChatConditional } from '../../../../script.js';
-import { getSettings, GP_VERSION, invalidateChatCache, factoryReset, wipePhoneTraces, captureRoleplayOutgoing } from './state.js';
+import { getSettings, getMeta, GP_VERSION, invalidateChatCache, factoryReset, wipePhoneTraces, captureRoleplayOutgoing } from './state.js';
 import { updatePhoneInjection } from './prompts.js';
 import { initUI, checkNewIncoming, resetIncomingCounters, updateFabBadge, render, isPhoneOpen, closePhone, applySkin, applyWallpaper, applyChatHiding, toast, notifyBankReminders, notifyDeliveries, deliverScamSms } from './ui.js';
 import { harvestSocialTags, setUserHandle, getUserHandle, listIigProfiles, listIigStyles, listImageBuckets, currentExtModel, stripFakeJournal } from './social.js';
@@ -10,6 +10,9 @@ import { harvestPlanTags } from './plans.js';
 import { harvestPhoneCalls, getCalls } from './calls.js';
 import { clearPhoneNotifications } from './phone-notifications.js';
 import { notifyIncomingCall } from './ui.js';
+import { openInstagram, instagramEventVisible } from './ui.js';
+import { harvestInstagramTags, flushInstagramJournal } from './instagram.js';
+import { igEventText } from './instagram-state.js';
 import { harvestChannelTags, harvestAnonTags, harvestAnonBust, ANON_NAME } from './channels.js';
 import { maybeScamSms } from './scam.js';
 import { trDom } from './i18n.js';
@@ -485,9 +488,22 @@ jQuery(async () => {
         getSettings();
         setupSettingsPanel();
         initUI();
+        let instagramJournalTimer;
+        window.addEventListener('gp:instagram',({detail})=>{
+            if(detail?.owner!==getMeta())return;
+            const event=detail.event;
+            if(getSettings().isEnabled&&!instagramEventVisible(event))toast('Instagram · '+igEventText(event),'fa-instagram',null,()=>openInstagram(event));
+            clearTimeout(instagramJournalTimer);
+            instagramJournalTimer=setTimeout(async()=>{await flushInstagramJournal();updatePhoneInjection();applyChatHiding();if(isPhoneOpen())render();},250);
+        });
         updatePhoneInjection();
         // Первичный замер входящих без тостов
-        setTimeout(() => resetIncomingCounters(), 800);
+        setTimeout(() => {
+            resetIncomingCounters();
+            harvestInstagramTags();flushInstagramJournal();
+            try { for (const call of getCalls().history.filter(item => item.status === 'ringing')) notifyIncomingCall(call); }
+            catch (error) { console.warn('[GlassPhone] Call notifications:', error); }
+        }, 800);
 
         // ── Новые сообщения: пересчёт тредов, тосты, бейдж, обновление инжекции ──
         const onNewMessage = () => {
@@ -498,6 +514,7 @@ jQuery(async () => {
             // убираем, пока телефон не спрятал весь ответ
             try { stripFakeJournal(); } catch (e) { /* ignore */ }
             checkNewIncoming();
+            try { harvestInstagramTags(); } catch(error) { console.warn('[GlassPhone] Instagram:',error); }
             // Персонаж запостил из ролевой (теги tel:tweet / tel:insta) → в ленты + тост
             try {
                 const { tweets, posts } = harvestSocialTags();
@@ -587,6 +604,7 @@ jQuery(async () => {
         if (event_types.CHAT_CHANGED) {
             eventSource.on(event_types.CHAT_CHANGED, () => {
                 clearPhoneNotifications();
+                clearTimeout(instagramJournalTimer);
                 invalidateChatCache();
                 refreshPhoneImageBlocks();
                 setTimeout(() => {
@@ -596,6 +614,7 @@ jQuery(async () => {
                     try { harvestBankTags(); } catch (e) { /* ignore */ }
                     try { harvestPlanTags(); } catch (e) { console.warn('[GlassPhone] Calendar tags:', e); }
                     try { for(const call of getCalls().history.filter(item=>item.status==='ringing'))notifyIncomingCall(call); } catch(e) { console.warn('[GlassPhone] Call notifications:',e); }
+                    try { harvestInstagramTags();flushInstagramJournal(); } catch(error) { console.warn('[GlassPhone] Instagram:',error); }
                     updateFabBadge();
                     updatePhoneInjection();
                     applyChatHiding();

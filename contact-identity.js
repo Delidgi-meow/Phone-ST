@@ -100,10 +100,11 @@ export function repairContactMetadata(meta) {
         const previous=contacts.get(key), name=ids[key]?.originalName || contact.name;
         if (!previous) contacts.set(key,{...contact,name});
         else {
+            const previousNumber=previous.number;
             if(raw===key){const number=previous.number;Object.assign(previous,contact,{name});if(!previous.number)previous.number=number;}
             if (!previous.number && contact.number) previous.number=contact.number;
-            if (previous.number && contact.number && previous.number !== contact.number) {
-                const record=ids[key];record.numbers=[...new Set([...(record.numbers || []),previous.number,contact.number])];
+            if (previousNumber && contact.number && previousNumber !== contact.number) {
+                const record=ids[key];record.numbers=[...new Set([...(record.numbers || []),previousNumber,contact.number])];
             }
             for (const [field,value] of Object.entries(contact)) if (previous[field] == null) previous[field]=value;
         }

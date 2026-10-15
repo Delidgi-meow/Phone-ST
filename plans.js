@@ -271,7 +271,7 @@ export function harvestPlanTags() {
             const j = safeJson(hit[1]);
             if (!j) continue;
             const statusAliases={done:'done',completed:'done',cancelled:'cancelled',canceled:'cancelled',open:'open',pending:'open'};
-            const status=typeof j.status==='string'?statusAliases[j.status.toLowerCase()]:null;
+            const status=typeof j.status==='string'&&Object.hasOwn(statusAliases,j.status.toLowerCase())?statusAliases[j.status.toLowerCase()]:null;
             if(j.id||j.status){
                 if(!status)continue;
                 const normalize=text=>String(text||'').replace(/\s+/g,' ').trim().toLowerCase();

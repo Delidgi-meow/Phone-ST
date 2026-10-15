@@ -44,7 +44,7 @@ export function delCustomCat(id) {
 }
 
 export function catById(id) {
-    return SHOP_CATS.find(c => c.id === id) || getCustomCats().find(c => c.id === id) || null;
+    return SHOP_CATS.find(c => c.id === id) || getCustomCats().find(c => c.id === id) || getShop().searchQueries.find(c=>c.id===id) || null;
 }
 
 export function getShop() {
@@ -53,6 +53,7 @@ export function getShop() {
     const s = m.shop;
     if (!s.cats || typeof s.cats !== 'object') s.cats = {};
     if (!Array.isArray(s.orders)) s.orders = [];
+    if (!Array.isArray(s.searchQueries)) s.searchQueries = [];
     return s;
 }
 
@@ -69,18 +70,21 @@ export function shopActive() {
 // Последовательная очередь генераций
 let _genChain = Promise.resolve();
 export function generateCategory(catId, onStatus) {
-    const run = () => _generateCategory(catId, onStatus);
+    const owner=getMeta();
+    const run = () => {if(getMeta()!==owner)throw new Error('Чат изменился');return _generateCategory(catId, onStatus);};
     const p = _genChain.then(run, run);
     _genChain = p.then(() => {}, () => {});
     return p;
 }
 
 async function _generateCategory(catId, onStatus) {
+    const owner=getMeta();
     const cat = catById(catId);
     if (!cat) throw new Error('Неизвестная категория');
     onStatus?.('Загружаю каталог...');
     const currency = getBank().currency;
     const arr = await generateShopContent(cat.name, cat.hint, currency);
+    if(getMeta()!==owner)throw new Error('Чат изменился');
     if (!Array.isArray(arr) || arr.length === 0) throw new Error('Каталог не сгенерировался — попробуй ещё раз');
     const stores = arr.map(st => ({
         id: genId(),
@@ -95,6 +99,39 @@ async function _generateCategory(catId, onStatus) {
     if (stores.length === 0) throw new Error('Пустой каталог');
     getShop().cats[catId] = { stores, at: Date.now() };
     saveMeta();
+    return stores;
+}
+
+const searchText=value=>String(value||'').normalize('NFC').toLowerCase().replace(/ё/g,'е').replace(/\s+/g,' ').trim();
+export function findShopProducts(query=''){
+    const terms=searchText(query).split(' ').filter(Boolean), results=[], seen=new Set();
+    const catalogs=Object.entries(getShop().cats).sort((a,b)=>(b[1]?.at||0)-(a[1]?.at||0));
+    for(const [catId,data] of catalogs){
+        for(const store of data?.stores||[])for(const item of store?.items||[]){
+            if(!item?.name)continue;
+            const title=searchText(item.name), text=searchText(item.name+' '+item.desc+' '+store.name);
+            if(terms.length&&!terms.every(term=>text.includes(term)))continue;
+            const key=searchText(store.name)+'|'+title+'|'+item.price;if(seen.has(key))continue;seen.add(key);
+            results.push({catId,storeId:store.id,storeName:store.name,item,score:terms.filter(term=>title.includes(term)).length});
+        }
+    }
+    return results.sort((a,b)=>b.score-a.score).slice(0,80);
+}
+
+export async function searchShopProducts(query){
+    const request=String(query||'').replace(/\s+/g,' ').trim().slice(0,100);
+    if(!request)return [];
+    const shop=getShop();let category=shop.searchQueries.find(c=>searchText(c.query)===searchText(request));
+    if(!category){
+        category={id:'search_'+genId(),query:request,name:request,icon:'fa-magnifying-glass',search:true,
+            hint:'PRODUCT SEARCH. User query: '+JSON.stringify(request)+'. Generate matching products only, with concrete names, descriptions and prices. Respect requested attributes, sizes, brands and budget when established. Use relevant stores in the roleplay setting; do not fill unrelated categories.'};
+        shop.searchQueries.unshift(category);
+        if(shop.searchQueries.length>20){
+            for(let i=shop.searchQueries.length-1;i>=20;i--){const old=shop.searchQueries[i];if(!shop.orders.some(o=>o.cat===old.id)){delete shop.cats[old.id];shop.searchQueries.splice(i,1);}}
+        }
+        saveMeta();
+    }
+    const stores=await generateCategory(category.id);
     return stores;
 }
 

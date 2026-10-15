@@ -4,14 +4,20 @@ import { openPhoneContactEditor } from './contact-editor.js';
 import { openGroupComposer } from './group-composer.js';
 import { decorateThreadHeader } from './thread-profile.js';
 import { applyThreadAppearance, editThreadAppearance, clearThreadAppearance } from './thread-appearance.js';
-import { closePhoneSheet } from './phone-modal.js';
+import { openPhoneSheet, closePhoneSheet } from './phone-modal.js';
 import { renderBankApp } from './bank-ui.js';
 import { renderChannelList } from './channel-list.js';
+import { renderShopHome, shopCategoryIcon } from './shop-home.js';
 import { notificationHost, showIncomingCallNotice } from './phone-notifications.js';
 import { applyAppSurface } from './app-surface.js';
 import { bankIcon } from './bank-icons.js';
+import { instagramHeader, instagramNav, instagramProfile, bindInstagramNavigation, renderInstagramInbox, renderInstagramThread, renderInstagramActivity } from './instagram-ui.js';
+import { ensureIgThread } from './instagram-state.js';
+import { sendIgDm, receiveIgStoryReactions } from './instagram.js';
+import { openPhoneSharePicker } from './share-sheet.js';
+import { shopImagePost } from './shop-image.js';
 
-import { sendMessageAsUser, Generate, generateQuietPrompt, saveSettingsDebounced, saveChatConditional } from '../../../../script.js';
+import { sendMessageAsUser, Generate, generateQuietPrompt, saveSettingsDebounced, saveChatConditional, user_avatar } from '../../../../script.js';
 import { saveBase64AsFile } from '../../../utils.js';
 import {
     getSettings, getThreadList, getThread, markRead, addManualContact, hideContact,
@@ -23,7 +29,7 @@ import { phoneMessageSources, replacePhoneMessageTag } from './message-sources.j
 import { roleplaySmsKey } from './roleplay-sms.js';
 import { updatePhoneInjection } from './prompts.js';
 import { getBank, fmtMoney, addTransaction, getBankReminders, bankBadgeCount } from './bank.js';
-import { SHOP_CATS, catById, getCategory, generateCategory, buyItem, findShopItem, getOrders, deleteOrder, getCustomCats, addCustomCat, delCustomCat, advanceOrders, orderLeft, fmtEta, findOrder, ensureCourier, orderChat, courierUnread, markCourierRead, writeToCourier, courierArrived } from './shop.js';
+import { getShop, catById, getCategory, generateCategory, buyItem, findShopItem, getOrders, deleteOrder, advanceOrders, orderLeft, fmtEta, findOrder, ensureCourier, orderChat, courierUnread, markCourierRead, writeToCourier, courierArrived } from './shop.js';
 import {
     getTweets, getIgPosts, postTweet, likeTweet, rtTweet, delTweet, addTweetReply, delTweetReply,
     postIg, likeIg, delIg, addIgComment, delIgComment,
@@ -401,7 +407,7 @@ function createPhone() {
 }
 
 // ═══ Скины и кастомный CSS ═══
-const SKINS = ['indigo', 'quiet', 'sunset', 'zephyr', 'neon', 'noir', 'fern', 'lcd', 'void', 'porcelain', 'minimal'];
+const SKINS = ['liquid', 'indigo', 'quiet', 'sunset', 'zephyr', 'neon', 'noir', 'fern', 'lcd', 'void', 'porcelain', 'minimal'];
 
 // Варианты уведомлений. Разметка у всех одна — отличается только оформление,
 // поэтому переключение не трогает ни один из ~40 вызовов toast().
@@ -417,6 +423,7 @@ const TOAST_STYLES = [
 const LEGACY_SKINS = { rose: 'sunset', emerald: 'fern', mono: 'lcd' };
 const THEME_BODY_CLASSES = [...SKINS, ...Object.values(LEGACY_SKINS)].map(sk => `gp-theme-${sk}`);
 const THEME_INFO = [
+    { id: 'liquid', name: 'Жидкое стекло', note: 'Блики, глубина и воздух', colors: ['#a8d7ff', '#b3eedc', '#e9f4ff'] },
     { id: 'indigo', name: 'Индиго', note: 'Liquid glass', colors: ['#6a8dff', '#9a6aff', '#4aaaff'] },
     { id: 'quiet', name: 'Тихий', note: 'Графит и роза', colors: ['#e79bb4', '#c9738f', '#2a2927'] },
     { id: 'sunset', name: 'Закат', note: 'Тёплое стекло', colors: ['#ff8a5f', '#ff5a8c', '#a04a45'] },
@@ -497,7 +504,7 @@ export function applySkin() {
         const alpha = c.transparency / 100;
         const light = skin === 'zephyr' || skin === 'porcelain';
         const lcd = skin === 'lcd';
-        ph.style.setProperty('--gp-home-sheet-bg', 'color-mix(in srgb, '+(c.bg || (lcd ? '#c5d19c' : light ? '#f4f1f7' : '#26232a'))+' 93%, '+accentA+' 7%)');
+        ph.style.setProperty('--gp-home-sheet-bg', skin==='liquid'&&!c.bg?'rgba(23,33,45,.76)':'color-mix(in srgb, '+(c.bg || (lcd ? '#c5d19c' : light ? '#f4f1f7' : '#26232a'))+' 93%, '+accentA+' 7%)');
         ph.style.setProperty('--gp-glass', lcd
             ? `rgba(255,255,230,${Math.min(.45, alpha + .12)})`
             : light ? `rgba(255,255,255,${Math.min(.9, alpha + .5)})` : `rgba(255,255,255,${alpha})`);
@@ -523,7 +530,7 @@ export function applySkin() {
             ph.style.color = '';
         }
         // Шрифт всего телефона
-        ph.style.fontFamily = THEME_FONTS[c.font] || '';
+        ph.style.fontFamily = THEME_FONTS[c.font] || (skin==='liquid'?'-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif':'');
         // Маркер-классы кастомизации: темы хардкодят цвета пузырей/кнопок в своих
         // классах — эти классы дают !important-оверрайды через переменные,
         // чтобы выбранный акцент/цвет текста РЕАЛЬНО перекрашивал интерфейс
@@ -668,7 +675,7 @@ function tickClock() {
 // Приложения со своим оформлением (дискорд, твич, сторис, экран блокировки)
 // рисуют фон сами и должны доходить до краёв корпуса — общие поля экрана им
 // только мешают.
-const BLEED_SCREENS = new Set(['discord', 'dchannel', 'twitch', 'stream', 'mystream', 'igstory', 'lock', 'browser', 'maps', 'phone', 'contacts', 'thread', 'bank', 'banktx', 'bankloan', 'bankmortgage', 'bankrec', 'chans']);
+const BLEED_SCREENS = new Set(['discord', 'dchannel', 'twitch', 'stream', 'mystream', 'igstory', 'ig', 'igview', 'ignew', 'ignewstory', 'igdms', 'igdm', 'igactivity', 'lock', 'browser', 'maps', 'phone', 'contacts', 'thread', 'bank', 'banktx', 'bankloan', 'bankmortgage', 'bankrec', 'chans', 'shop', 'shopcat']);
 
 export function render() {
     const screen = document.getElementById('gp-screen');
@@ -699,6 +706,9 @@ export function render() {
     else if (currentScreen === 'tw') renderTw(screen);
     else if (currentScreen === 'twthread' && currentTweetId) renderTwThread(screen);
     else if (currentScreen === 'ig') renderIg(screen);
+    else if (currentScreen === 'igdms') renderInstagramInbox(screen,instagramApi());
+    else if (currentScreen === 'igdm') renderInstagramThread(screen,currentIgDmThread,instagramApi());
+    else if (currentScreen === 'igactivity') renderInstagramActivity(screen,instagramApi());
     else if (currentScreen === 'igview' && currentPostId) renderIgView(screen);
     else if (currentScreen === 'ignew') renderIgNew(screen);
     else if (currentScreen === 'ignewstory') renderIgNewStory(screen);
@@ -1751,7 +1761,7 @@ function renderList(screen) {
 
     let rows = '';
     for (const t of list) {
-        const lastText = t.last ? (t.last.voice ? 'Голосовое сообщение' : (t.last.text || (t.last.img || t.last.photoDesc ? 'Фото' : ''))) : '';
+        const lastText = t.last ? (t.last.voice ? 'Голосовое сообщение' : (t.last.text || (t.last.shot ? (t.last.shot.app==='st'?'История':'Пересланная публикация') : t.last.img || t.last.photoDesc ? 'Фото' : ''))) : '';
         const senderPrefix = t.last
             ? (t.last.dir === 'out' ? '<span class="gp-prev-you">Ты:</span> '
                 : (t.isGroup && t.last.from ? `<span class="gp-prev-you">${esc(t.last.from)}:</span> ` : ''))
@@ -2824,24 +2834,35 @@ function igCard(p, { clickable = true } = {}) {
                 <span class="gp-ig-handle">${esc(handle)}</span>
             </span>
             <span class="gp-tw-time">· ${esc(timeAgo(p.time))}</span>
+            <button type="button" class="gp-insta-post-menu" data-ig-menu="${esc(p.id)}" aria-label="Действия с публикацией">${bankIcon('Ellipsis')}</button><span hidden>
             ${isUser
                 ? `<button class="gp-tw-del" data-del-ig="${esc(p.id)}" title="Удалить">${ic('fa-xmark')}</button>`
                 : `<button class="gp-tw-del" data-regen-ig="${esc(p.id)}" title="Перегенерировать пост">${ic('fa-rotate-right')}</button>
-                   <button class="gp-tw-del gp-ban-btn" data-ban-ig="${esc(p.id)}" title="Заблокировать аккаунт">${ic('fa-ban')}</button>`}
+                   <button class="gp-tw-del gp-ban-btn" data-ban-ig="${esc(p.id)}" title="Заблокировать аккаунт">${ic('fa-ban')}</button>`}</span>
         </div>
         <div class="${clickable ? 'gp-clickable' : ''}" data-open-ig="${esc(p.id)}">${igImageHtml(p)}</div>
         <div class="gp-ig-actions">
-            <button class="gp-tw-act${p.liked ? ' gp-tw-on' : ''}" data-like-ig="${esc(p.id)}">${ic('fa-heart')}<span>${p.likes || ''}</span></button>
-            <button class="gp-tw-act" data-open-ig2="${esc(p.id)}">${ic('fa-comment')}<span>${p.comments?.length || ''}</span></button>
-            <button class="gp-tw-act" data-share-ig="${esc(p.id)}" title="Отправить в лс">${ic('fa-share')}</button>
+            <button class="gp-tw-act${p.liked ? ' gp-tw-on' : ''}" data-like-ig="${esc(p.id)}" aria-label="Нравится">${bankIcon('Heart')}</button>
+            <button class="gp-tw-act" data-open-ig2="${esc(p.id)}" aria-label="Комментарии">${bankIcon('MessageCircle')}</button>
+            <button class="gp-tw-act" data-share-ig="${esc(p.id)}" aria-label="Поделиться публикацией">${bankIcon('Send')}</button>
+            <button class="gp-tw-act gp-insta-save${p.saved?' is-saved':''}" data-ig-save="${esc(p.id)}" aria-label="Сохранить публикацию">${bankIcon('Bookmark')}</button>
         </div>
+        <div class="gp-insta-likes">${p.likes||0} отметок «Нравится»</div>
         ${p.caption ? `<div class="gp-ig-caption"><b>${esc(p.author)}</b> ${esc(p.caption)}</div>` : ''}
-        ${performanceHtml(p)}
+        ${clickable&&p.comments?.length?`<button type="button" class="gp-insta-comments-link" data-open-ig2="${esc(p.id)}">Посмотреть комментарии (${p.comments.length})</button>`:''}
     </div>`;
 }
 
 function bindIgCardActions(root) {
     bindSocialSystemLinks(root);
+    root.querySelectorAll('[data-ig-save]').forEach(button=>button.onclick=()=>{const post=getIgPosts().find(item=>item.id===button.dataset.igSave);if(post){post.saved=!post.saved;saveMeta();render();}});
+    root.querySelectorAll('[data-ig-menu]').forEach(button=>button.onclick=()=>{
+        const post=getIgPosts().find(item=>item.id===button.dataset.igMenu);if(!post)return;
+        const own=post.ak==='user',shade=openPhoneSheet(root,'Публикация',`<div class="gp-insta-menu">${own?'':`<button type="button" data-post-dm>${bankIcon('Send')}Написать автору</button>`}<button type="button" data-post-action>${bankIcon(own?'Trash2':'RotateCw')}${own?'Удалить публикацию':'Переписать публикацию'}</button>${own?'':`<button type="button" data-post-ban>${bankIcon('Ban')}Заблокировать аккаунт</button>`}</div>`,currentScreen);shade.classList.add('gp-insta-sheet');
+        shade.querySelector('[data-post-dm]')?.addEventListener('click',()=>{const thread=ensureIgThread({name:post.author,ak:post.ak});closePhoneSheet(shade);currentIgDmThread=thread.id;goto('igdm');});
+        shade.querySelector('[data-post-action]').onclick=()=>{closePhoneSheet(shade);root.querySelector(own?'[data-del-ig="'+CSS.escape(post.id)+'"]':'[data-regen-ig="'+CSS.escape(post.id)+'"]')?.click();};
+        shade.querySelector('[data-post-ban]')?.addEventListener('click',()=>{closePhoneSheet(shade);root.querySelector('[data-ban-ig="'+CSS.escape(post.id)+'"]')?.click();});
+    });
     root.querySelectorAll('[data-share-ig]').forEach(b => b.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = b.getAttribute('data-share-ig');
@@ -2929,26 +2950,34 @@ function bindIgCardActions(root) {
     }));
 }
 
+let currentIgDmThread = '';
+let _igProfile = false;
+function instagramApi(){
+    return {render,toast,home:()=>goto('home'),feed:()=>{_igProfile=false;goto('ig');},profile:()=>{_igProfile=true;goto('ig');},inbox:()=>goto('igdms'),activity:()=>goto('igactivity'),
+        back:()=>goto(currentScreen==='igdm'?'igdms':'ig'),thread:id=>{currentIgDmThread=id;goto('igdm');},
+        post:id=>{if(!getIgPosts().some(post=>post.id===id)){toast('Публикация удалена','fa-instagram');return;}currentPostId=id;goto('igview');},
+        story:id=>openShot(JSON.stringify({app:'st',id})),openShare:shot=>openShot(JSON.stringify(shot))};
+}
+export function openInstagram(event=null){
+    openPhone();
+    if(event?.target==='dm'){currentIgDmThread=event.targetId;currentScreen='igdm';}
+    else currentScreen='igactivity';
+    render();
+}
+export function instagramEventVisible(event){return isPhoneOpen()&&((currentScreen==='igdm'&&event.target==='dm'&&currentIgDmThread===event.targetId)||currentScreen==='igactivity');}
 function renderIg(screen) {
     currentScreen = 'ig';
     const posts = getIgPosts();
     markFeedSeen('ig', posts.length);
 
     setHtmlKeepScroll(screen, '.gp-feed', `
-        <div class="gp-header gp-thread-header">
-            <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
-            <div class="gp-title gp-title-app">${brand('fa-instagram')}</div>
-            <button class="gp-iconbtn" data-open-social title="Профиль и задания">${ic('fa-chart-line')}</button>
-            <button class="gp-iconbtn" id="gp-ig-new" title="Новый пост">${ic('fa-plus')}</button>
-            <button class="gp-iconbtn" id="gp-ig-refresh" title="Пересобрать ленту заново" ${genBusy ? 'disabled' : ''}>${ic('fa-rotate')}</button>
-            <button class="gp-iconbtn" id="gp-ig-gen" title="Дописать в ленту" ${genBusy ? 'disabled' : ''}>${genBusy ? ic('fa-spinner fa-spin') : ic('fa-wand-magic-sparkles')}</button>
-        </div>
-        <div class="gp-feed" id="gp-ig-feed">
-            ${igStoriesRow()}
+        <div class="gp-instagram-shell">${instagramHeader()}
+        <div class="gp-feed gp-insta-feed" id="gp-ig-feed">
+            ${_igProfile?instagramProfile(posts):`${igStoriesRow()}
             ${posts.length === 0
-                ? `<div class="gp-empty"><div class="gp-empty-icon">${brand('fa-instagram')}</div><div class="gp-empty-title">Лента пуста</div><div class="gp-empty-text">${ic('fa-wand-magic-sparkles')} — сгенерировать ленту<br>${ic('fa-plus')} — выложить своё фото</div></div>`
-                : posts.map(p => igCard(p)).join('')}
-        </div>`);
+                ? `<div class="gp-insta-empty">${bankIcon('Camera')}<b>Первые моменты</b><p>Открой новые публикации через компас<br>или поделись своим фото через плюс.</p></div>`
+                : posts.map(p => igCard(p)).join('')}`}
+        </div>${instagramNav(_igProfile)}</div>`);
 
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('home'));
     bindSocialSystemLinks(screen);
@@ -2979,7 +3008,7 @@ function renderIg(screen) {
             if (currentScreen === 'ig') render();
         }
     });
-    screen.querySelector('#gp-ig-refresh')?.addEventListener('click', async () => {
+    const refreshInstagram = async () => {
         if (genBusy) return;
         // Свои посты остаются: пересобирается только то, что придумала модель
         if (!confirm('Пересобрать ленту заново?\n\nЧужие посты заменятся новыми, твои останутся.')) return;
@@ -2993,11 +3022,14 @@ function renderIg(screen) {
             genBusy = false;
             if (currentScreen === 'ig') render();
         }
-    });
+    };
+    bindInstagramNavigation(screen,{...instagramApi(),refresh:refreshInstagram,social:()=>goto('socialhub'),story:()=>goto('ignewstory')});
+    const generateButton=screen.querySelector('#gp-ig-gen');if(generateButton)generateButton.disabled=genBusy;
     bindIgCardActions(screen);
 }
 
 function renderIgView(screen) {
+    const owner=getMeta();
     const p = getIgPosts().find(x => x.id === currentPostId);
     if (!p) { goto('ig'); return; }
     const comments = p.comments || [];
@@ -3007,17 +3039,15 @@ function renderIgView(screen) {
     let replyTargetId = null;
 
     setHtmlKeepScroll(screen, '.gp-feed', `
-        <div class="gp-header gp-thread-header">
-            <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
-            <div class="gp-title gp-title-app">Пост</div>
-            <button class="gp-iconbtn" id="gp-ig-comments" title="Сгенерировать реакции" ${genBusy ? 'disabled' : ''}>${genBusy ? ic('fa-spinner fa-spin') : ic('fa-comments')}</button>
-        </div>
-        <div class="gp-feed">
+        <div class="gp-instagram-shell gp-insta-post-detail"><header class="gp-insta-subheader">
+            <button type="button" id="gp-back" aria-label="Назад">${bankIcon('ChevronLeft')}</button>
+            <h2>Публикация</h2>
+        </header>
+        <div class="gp-feed gp-insta-feed">
             ${igCard(p, { clickable: false })}
-            ${imgDescNoteHtml(p)}
             <div class="gp-replies">
                 ${comments.length === 0
-                    ? `<div class="gp-empty-text gp-replies-empty">Комментариев нет — нажми ${ic('fa-comments')}, пусть отреагируют</div>`
+                    ? `<div class="gp-empty-text gp-replies-empty">Пока нет комментариев</div>`
                     : comments.map(c => `
                     <div class="gp-reply">
                         ${avatarHtml(c.author, c.avatar || avatarForAuthor(c.ak), 'gp-avatar gp-avatar-xs')}
@@ -3034,14 +3064,15 @@ function renderIgView(screen) {
                     </div>`).join('')}
             </div>
         </div>
+        <div class="gp-insta-comment-footer">
+        <button type="button" id="gp-ig-comments" class="gp-insta-generate-comments" ${genBusy ? 'disabled' : ''}>${bankIcon(genBusy?'LoaderCircle':'Sparkles')}<span>${genBusy?'Генерирую комментарии…':'Сгенерировать комментарии'}</span></button>
         <div class="gp-inputbar">
             <textarea id="gp-input" rows="1" placeholder="Комментировать..."></textarea>
             <button class="gp-send" id="gp-ig-reply" ${sending ? 'disabled' : ''}>${ic('fa-paper-plane')}</button>
-        </div>`);
+        </div></div></div>`);
 
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('ig'));
     bindIgCardActions(screen);
-    bindDescEdit(screen, p);
 
     const input = screen.querySelector('#gp-input');
 
@@ -3070,8 +3101,9 @@ function renderIgView(screen) {
         try {
             const before = (p.comments || []).length;
             const n = await generateIgComments(p);
+            if(getMeta()!==owner)return;
             if (p.ak === 'user') await finalizeSocialPost('instagram', p);
-            if (!n) toast('Не получилось — попробуй ещё раз', 'fa-circle-exclamation');
+            if (!n) toast('Новые комментарии не получены — можно повторить', 'fa-circle-exclamation');
             if (p.ak === 'user') logNewReplies('фото в Instagram', p.caption || p.imgDesc, p.comments, before);
         } catch (e) {
             console.error('[GlassPhone] ig comments failed:', e);
@@ -3093,6 +3125,7 @@ function renderIgView(screen) {
 
         addIgComment(p.id, v, null, 'user', targetComment);
         input.value = '';
+        clearDraft('gp-input');
         replyTargetId = null;
         render();
 
@@ -3101,13 +3134,14 @@ function renderIgView(screen) {
         render();
         try {
             const beforeGen = (p.comments || []).length;
-            if (targetComment) {
-                await generateReplyToComment('ig', p, targetComment, v);
-            } else if (canAuthorReply) {
-                await generateAuthorReply('ig', p, v);
-            }
+            try{
+                if (targetComment) await generateReplyToComment('ig', p, targetComment, v);
+                else if (canAuthorReply) await generateAuthorReply('ig', p, v);
+            }catch(error){if(getMeta()===owner)toast('Не получен ответ автора; загружаю остальные комментарии','fa-circle-exclamation');}
+            if(getMeta()!==owner)return;
             // После ответа юзера — генерим дополнительные реакции от других
             await generateIgComments(p);
+            if(getMeta()!==owner)return;
             // Журнал: её коммент + значимые ответы
             const added = (p.comments || []).slice(beforeGen).filter(c => c.ak !== 'user');
             const cparts = added.map(c => `${c.author || 'Аккаунт'}: «${String(c.text || '').slice(0, 120)}»`);
@@ -3116,6 +3150,7 @@ function renderIgView(screen) {
             logSocialToChat(line);
         } catch (e) {
             console.error('[GlassPhone] ig author reply failed:', e);
+            if(getMeta()===owner)toast('Не удалось загрузить комментарии — нажми «Сгенерировать комментарии»','fa-circle-exclamation');
         } finally {
             sending = false;
             genBusy = false;
@@ -3168,15 +3203,12 @@ function igStoriesRow() {
     const ava = avatarHtml(getUserName(), avatarForAuthor('user'), 'gp-avatar');
     return `
         <div class="gp-igst-row">
+            <div class="gp-igst-own">
             <button class="gp-igst-bubble${mine.length ? ' gp-igst-has' : ''}" id="gp-ig-story-me">
-                <span class="gp-igst-ring">${ava}${mine.length ? '' : `<span class="gp-igst-plus">${ic('fa-plus')}</span>`}</span>
+                <span class="gp-igst-ring">${ava}</span>
                 <i>${mine.length ? 'Твоя сторис' : 'Добавить'}</i>
             </button>
-            ${mine.length ? `
-            <button class="gp-igst-bubble" id="gp-ig-story-add">
-                <span class="gp-igst-ring gp-igst-ring-add">${ic('fa-plus')}</span>
-                <i>Ещё</i>
-            </button>` : ''}
+            <button type="button" class="gp-igst-add-small" id="gp-ig-story-add" aria-label="Добавить историю">${bankIcon('Plus')}</button></div>
             ${others.map(o => `
             <button class="gp-igst-bubble gp-igst-has" data-storyauthor="${esc(o.author)}">
                 <span class="gp-igst-ring">${avatarHtml(o.author, avatarForAuthor(o.ak), 'gp-avatar')}</span>
@@ -3188,7 +3220,7 @@ function igStoriesRow() {
 function renderIgNewStory(screen) {
     currentScreen = 'ignewstory';
     screen.innerHTML = `
-        <div class="gp-header gp-thread-header">
+        <div class="gp-instagram-shell"><div class="gp-header gp-thread-header">
             <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
             <div class="gp-title gp-title-app">Новая сторис</div>
         </div>
@@ -3207,7 +3239,7 @@ function renderIgNewStory(screen) {
                 <input type="text" id="gp-st-caption" maxlength="300" placeholder="Подпись поверх фото">
             </label>
             <button class="gp-primary" id="gp-st-publish">${ic('fa-check')} Опубликовать</button>
-        </div>`;
+        </div></div>`;
     screen.querySelector('#gp-back')?.addEventListener('click', () => { _storyDraftImage = null; goto('ig'); });
     const pick = screen.querySelector('#gp-st-pick');
     const file = screen.querySelector('#gp-st-file');
@@ -3259,6 +3291,7 @@ function renderIgNewStory(screen) {
         }
         clearDraft('gp-st-desc'); clearDraft('gp-st-caption');
         const story = addStory({ image: _storyDraftImage, imgDesc: desc, caption });
+        const owner=getMeta();
         _storyDraftImage = null;
         // Журнал: в чат уходит описание, а не сам снимок. Если фото выбрано,
         // а описания нет — ждём его от vision-запроса с реакциями ниже
@@ -3272,29 +3305,27 @@ function renderIgNewStory(screen) {
         _storyAuthor = null;
         _storyIdx = 0;
         goto('igstory');
-        // Цепочка после публикации: реакции на сторис (огонёчки + директы
-        // смсками) → чужие сторис. Всё фоном, телефон не блокируется.
+        // Story reactions and Direct replies stay inside Instagram.
         if (!_othersStoriesBusy) {
             _othersStoriesBusy = true;
             (async () => {
                 try {
                     const r = await generateStoryReactions(story);
-                    if (waitDesc) { logStory(story.imgDesc || ''); applyChatHiding(); }
-                    if (r?.reactions?.length) toast(`Реакции на сторис: ${r.reactions.length}`, 'fa-fire');
-                    for (const dm of (r?.dms || [])) {
-                        deliverScamSms(dm); // тот же призрак-канал, что у любых входящих смс
+                    if(getMeta()===owner){
+                        if (waitDesc) { logStory(story.imgDesc || ''); applyChatHiding(); }
+                        receiveIgStoryReactions(story,r);
+                        if (currentScreen.startsWith('ig')) render();
                     }
-                    if (currentScreen === 'igstory' || currentScreen === 'ig') render();
                 } catch (e) {
                     console.warn('[GlassPhone] story reactions failed:', e);
-                    if (waitDesc) { logStory(''); applyChatHiding(); }
+                    if (waitDesc&&getMeta()===owner) { logStory(''); applyChatHiding(); }
                 }
                 try {
-                    const n = await generateContactStories();
+                    const n = getMeta()===owner ? await generateContactStories() : 0;
                     if (n > 0) toast('Появились сторис знакомых', 'fa-instagram');
                 } catch (e) { /* ignore */ }
                 _othersStoriesBusy = false;
-                if (currentScreen === 'ig' || currentScreen === 'igstory') render();
+                if (getMeta()===owner&&currentScreen.startsWith('ig')) render();
             })();
         } else if (waitDesc) {
             // Цепочка занята соседней сторис — описания не дождёмся, но запись нужна
@@ -3339,16 +3370,26 @@ function renderIgStory(screen) {
                 <button class="gp-iconbtn" id="gp-st-close">${ic('fa-xmark')}</button>
             </div>
             ${media}
+            <div class="gp-insta-story-footer">
             ${st.caption ? `<div class="gp-igst-caption">${esc(st.caption)}</div>` : ''}
             ${isMine
-                ? `<div class="gp-igst-bottom">${ic('fa-eye')} ${views}${(st.reacts || []).length ? `<span class="gp-igst-reacts">${st.reacts.map(r => `<span class="gp-igst-react">${ic(STORY_REACT_ICONS[r.icon] || 'fa-heart')} ${esc(r.author)}</span>`).join('')}</span>` : ''}</div>`
-                : `<div class="gp-igst-bottom gp-igst-bottom-other"><button class="gp-igst-like${st.liked ? ' gp-on' : ''}" id="gp-st-like" title="Нравится" aria-label="Нравится"><i class="${st.liked ? 'fa-solid' : 'fa-regular'} fa-heart"></i></button></div>`}
+                ? `<div class="gp-igst-bottom">${ic('fa-eye')} ${views}${(st.reacts || []).length ? `<span class="gp-igst-reacts">${st.reacts.map(r => `<span class="gp-igst-react">${ic(STORY_REACT_ICONS[r.icon] || 'fa-heart')} ${esc(r.author)}</span>`).join('')}</span>` : ''}`
+                : `<div class="gp-igst-bottom gp-igst-bottom-other"><form class="gp-insta-story-reply"><input aria-label="Ответить на историю" placeholder="Ответить…" maxlength="1000"><button type="submit" aria-label="Отправить в Direct">Отправить</button></form><button class="gp-igst-like${st.liked ? ' gp-on' : ''}" id="gp-st-like" title="Нравится" aria-label="Нравится">${bankIcon('Heart')}</button>`}
+            <button type="button" class="gp-insta-story-share" id="gp-st-share" aria-label="Поделиться историей">${bankIcon('Send')}</button></div></div>
             <div class="gp-igst-nav gp-igst-nav-left" id="gp-st-prev"></div>
             <div class="gp-igst-nav gp-igst-nav-right" id="gp-st-next"></div>
             <button class="gp-igst-arrow gp-igst-arrow-left${_storyIdx <= 0 ? ' gp-off' : ''}" id="gp-st-arrow-prev" title="Назад">${ic('fa-chevron-left')}</button>
             <button class="gp-igst-arrow gp-igst-arrow-right${_storyIdx >= stories.length - 1 ? ' gp-off' : ''}" id="gp-st-arrow-next" title="Вперёд">${ic('fa-chevron-right')}</button>
         </div>`;
     screen.querySelector('#gp-st-close')?.addEventListener('click', () => goto('ig'));
+    screen.querySelector('#gp-st-share').onclick=event=>{event.stopPropagation();openShareSheet({app:'st',id:st.id,author:st.author,text:st.caption||st.imgDesc,image:st.image});};
+    screen.querySelector('.gp-insta-story-reply')?.addEventListener('submit',async event=>{
+        event.preventDefault();event.stopPropagation();const text=event.target.querySelector('input').value.trim();if(!text)return;
+        const owner=getMeta(),thread=ensureIgThread({name:st.author,ak:st.ak});
+        const pending=sendIgDm(thread.id,text,{app:'st',id:st.id,author:st.author,text:st.caption||st.imgDesc,image:st.image,replyTo:true});
+        currentIgDmThread=thread.id;goto('igdm');
+        try{await pending;}catch(error){if(getMeta()===owner)toast(String(error.message||error),'fa-circle-exclamation');}finally{if(getMeta()===owner)render();}
+    });
     screen.querySelector('#gp-st-draw2')?.addEventListener('click', async (e) => {
         e.stopPropagation();
         if (_storyGenBusy) return;
@@ -3408,7 +3449,7 @@ function renderIgStory(screen) {
 
 function renderIgNew(screen) {
     screen.innerHTML = `
-        <div class="gp-header gp-thread-header">
+        <div class="gp-instagram-shell"><div class="gp-header gp-thread-header">
             <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
             <div class="gp-title gp-title-app">Новый пост</div>
         </div>
@@ -3427,7 +3468,7 @@ function renderIgNew(screen) {
             </label>
             <button class="gp-primary" id="gp-ig-publish">${ic('fa-check')} Опубликовать</button>
             <div class="gp-add-hint">Фото прикладывается к запросу — vision-модели смотрят на него сами. Описание нужно только для моделей без вижена (и для реакций в самой ролевой).</div>
-        </div>`;
+        </div></div>`;
 
     screen.querySelector('#gp-back')?.addEventListener('click', () => { _igDraftImage = null; goto('ig'); });
 
@@ -3735,62 +3776,31 @@ function renderOfNew(screen) {
 }
 
 let currentShopCat = null;
+let _shopFocusItem = '';
 const _shopBusy = new Set(); // категории в процессе генерации
 
 function renderShop(screen) {
     currentScreen = 'shop';
-    const b = getBank();
-    const orders = getOrders();
-    screen.innerHTML = `
-        <div class="gp-header gp-thread-header">
-            <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
-            <div class="gp-title gp-title-app gp-shop-title">${ic('fa-bag-shopping')} Магазин</div>
-            <button class="gp-iconbtn" id="gp-shop-orders" title="Мои заказы">${ic('fa-receipt')}${orders.length ? `<span class="gp-app-badge">${orders.length > 9 ? '9+' : orders.length}</span>` : ''}</button>
-        </div>
-        <div class="gp-shop-balance">Баланс: <b>${esc(fmtMoney(b.balance))}</b></div>
-        <div class="gp-shop-grid">
-            ${[...SHOP_CATS, ...getCustomCats()].map(c => `
-                <div class="gp-shop-cat" data-cat="${c.id}">
-                    <div class="gp-shop-cat-icon">${ic(c.icon)}</div>
-                    <div class="gp-shop-cat-name">${esc(c.name)}</div>
-                    ${getCategory(c.id) ? `<div class="gp-shop-cat-dot" title="Каталог загружен"></div>` : ''}
-                    ${c.custom ? `<button class="gp-shop-cat-del" data-delcat="${c.id}" title="Удалить">${ic('fa-xmark')}</button>` : ''}
-                </div>`).join('')}
-            <div class="gp-shop-cat gp-shop-cat-add" id="gp-shop-addcat">
-                <div class="gp-shop-cat-icon">${ic('fa-plus')}</div>
-                <div class="gp-shop-cat-name">Свой магазин</div>
-            </div>
-        </div>`;
-    screen.querySelector('#gp-back')?.addEventListener('click', () => goto('home'));
-    screen.querySelector('#gp-shop-orders')?.addEventListener('click', () => { notifyDeliveries(); goto('shoporders'); });
-    screen.querySelectorAll('.gp-shop-cat[data-cat]').forEach(el => el.addEventListener('click', () => {
-        currentShopCat = el.getAttribute('data-cat');
-        goto('shopcat');
-    }));
-    // Своя категория: юзер описывает, какой магазин нужен
-    screen.querySelector('#gp-shop-addcat')?.addEventListener('click', () => {
-        const name = prompt('Какой магазин нужен? (например: зоомагазин, оружейный, цветы, книжный...)');
-        if (!name || !name.trim()) return;
-        const cat = addCustomCat(name);
-        if (cat) { currentShopCat = cat.id; goto('shopcat'); }
+    renderShopHome(screen, {
+        render, toast, home: () => goto('home'),
+        orders: () => { notifyDeliveries(); goto('shoporders'); },
+        open: (catId, itemId = '') => { currentShopCat = catId; _shopFocusItem = itemId; goto('shopcat'); },
     });
-    screen.querySelectorAll('[data-delcat]').forEach(btn => btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (confirm('Удалить эту категорию?')) { delCustomCat(btn.getAttribute('data-delcat')); render(); }
-    }));
 }
 
 async function doShopGen(catId) {
     if (_shopBusy.has(catId)) return;
+    const owner = getMeta();
     _shopBusy.add(catId);
     render();
     try {
         await generateCategory(catId, (s) => {
+            if (getMeta() !== owner || currentShopCat !== catId) return;
             const el = document.querySelector('[data-shop-status]');
             if (el) el.textContent = s;
         });
     } catch (e) {
-        toast(`Не получилось: ${String(e?.message || e).slice(0, 70)}`, 'fa-circle-exclamation');
+        if (getMeta() === owner) toast(`Не получилось: ${String(e?.message || e).slice(0, 70)}`, 'fa-circle-exclamation');
     } finally {
         _shopBusy.delete(catId);
         render();
@@ -3809,13 +3819,13 @@ function renderShopCat(screen) {
     if (busy) {
         body = `<div class="gp-empty"><div class="gp-empty-icon">${ic('fa-spinner fa-spin')}</div><div class="gp-empty-title" data-shop-status>Загружаю каталог...</div><div class="gp-empty-text">Магазины и товары подбираются под твою ролевую</div></div>`;
     } else if (!data || !data.stores?.length) {
-        body = `<div class="gp-empty"><div class="gp-empty-icon">${ic(cat.icon)}</div><div class="gp-empty-title">${esc(cat.name)}</div><div class="gp-empty-text">Каталог пуст.<br>Нажми ${ic('fa-wand-magic-sparkles')} — магазины и цены сгенерируются<br>под город/страну твоей ролевой.</div><button class="gp-primary" id="gp-shop-gen" style="margin-top:12px">${ic('fa-wand-magic-sparkles')} Загрузить каталог</button></div>`;
+        body = `<div class="gp-empty"><div class="gp-empty-icon">${shopCategoryIcon(cat.id)}</div><div class="gp-empty-title">${esc(cat.name)}</div><div class="gp-empty-text">Подберём магазины и товары для твоей ролевой.</div><button class="gp-market-find" id="gp-shop-gen">${bankIcon('Sparkles')} Открыть каталог</button></div>`;
     } else {
         body = data.stores.map(st => `
             <div class="gp-shop-store">
-                <div class="gp-shop-store-name">${ic('fa-store')} ${esc(st.name)}</div>
+                <div class="gp-shop-store-name">${bankIcon('Store')} ${esc(st.name)}</div>
                 ${st.items.map(it => `
-                    <div class="gp-shop-item">
+                    <div class="gp-shop-item" data-shop-item-id="${esc(it.id)}">
                         ${shopItemImage(it, st.id)}
                         <div class="gp-shop-item-body">
                             <div class="gp-shop-item-name">${esc(it.name)}</div>
@@ -3823,22 +3833,32 @@ function renderShopCat(screen) {
                         </div>
                         <div class="gp-shop-item-buy">
                             <span class="gp-shop-item-price">${esc(fmtMoney(it.price))}</span>
-                            <button class="gp-shop-buy" data-buy="${esc(st.id)}|${esc(it.id)}">${ic('fa-cart-plus')}</button>
+                            <button class="gp-shop-buy" data-buy="${esc(st.id)}|${esc(it.id)}" aria-label="Купить ${esc(it.name)}">${bankIcon('ShoppingBag')}</button>
                         </div>
                     </div>`).join('')}
             </div>`).join('');
     }
 
     setHtmlKeepScroll(screen, '.gp-shop-scroll', `
-        <div class="gp-header gp-thread-header">
-            <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
-            <div class="gp-title gp-title-app gp-shop-title">${ic(cat.icon)} ${esc(cat.name)}</div>
-            ${data && data.stores?.length ? `<button class="gp-iconbtn" id="gp-shop-refresh" title="Обновить каталог" ${busy ? 'disabled' : ''}>${busy ? ic('fa-spinner fa-spin') : ic('fa-rotate')}</button>` : '<span style="width:32px"></span>'}
+        <div class="gp-shop-catalog"><header class="gp-market-header">
+            <button type="button" id="gp-back" aria-label="Назад">${bankIcon('ChevronLeft')}</button>
+            <h2>${esc(cat.name)}</h2>
+            ${data && data.stores?.length ? `<button type="button" id="gp-shop-refresh" aria-label="Обновить каталог" ${busy ? 'disabled' : ''}>${bankIcon(busy ? 'LoaderCircle' : 'RotateCw')}</button>` : '<span></span>'}
+        </header>
+        <div class="gp-market-balance"><span>На счёте</span><b>${esc(fmtMoney(b.balance))}</b></div>
+        ${cat.id==='clothes'?`<label class="gp-shop-tryon"><span><b>Референс персоны</b><small>Примерять одежду на себя · для новых картинок</small></span><input type="checkbox" id="gp-shop-tryon" ${getShop().tryOnPersona?'checked':''}></label>`:''}
+        <div class="gp-shop-scroll">${body}</div>
         </div>
-        <div class="gp-shop-balance">Баланс: <b>${esc(fmtMoney(b.balance))}</b></div>
-        <div class="gp-shop-scroll">${body}</div>`);
+        `);
+
+    if (_shopFocusItem) {
+        const target = [...screen.querySelectorAll('[data-shop-item-id]')].find(el => el.dataset.shopItemId === _shopFocusItem);
+        if (target) { target.classList.add('gp-shop-focused'); target.scrollIntoView({ block: 'center' }); }
+        _shopFocusItem = '';
+    }
 
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('shop'));
+    screen.querySelector('#gp-shop-tryon')?.addEventListener('change',event=>{getShop().tryOnPersona=event.target.checked;saveMeta();render();});
     // Картинка товара: витрина оживает, но рисуем только по просьбе —
     // каталог на десятки позиций разорил бы на генерациях
     screen.querySelectorAll('[data-shopimg]').forEach(b => b.addEventListener('click', async (e) => {
@@ -3846,24 +3866,27 @@ function renderShopCat(screen) {
         const [storeId, itemId] = b.getAttribute('data-shopimg').split('|');
         const item = findShopItem(cat.id, storeId, itemId);
         if (!item || _imgGenBusy.has(itemId)) return;
+        const owner = getMeta();
+        const tryOn=cat.id==='clothes'&&getShop().tryOnPersona===true,personaKey=String(user_avatar||getUserName());
         if (!(await isImageGenAvailable())) {
             toast('Картинко-расширение не установлено — генерация недоступна', 'fa-circle-exclamation');
             return;
         }
+        if(getMeta()!==owner)return;
         _imgGenBusy.add(itemId);
         render();
         try {
-            const src = await generatePostImage({
-                kind: 'shop', author: '', ak: 'random', aspect: '1:1',
-                imgDesc: `${item.name}. ${item.desc || ''}`.trim(),
-                framing: 'product photo for an online store listing, clean background, no text, no watermark',
-            }, null, itemId);
-            item.image = src;
+            const src = await generatePostImage(shopImagePost(item,{tryOn,personaName:getUserName(),personaAvatarId:String(user_avatar||'')}), null, itemId);
+            if (getMeta() !== owner) return;
+            if(tryOn){if(!item.tryOnImages||typeof item.tryOnImages!=='object')item.tryOnImages={};Object.defineProperty(item.tryOnImages,personaKey,{value:src,writable:true,configurable:true,enumerable:true});}
+            else item.image = src;
             saveMeta();
-            toast('Фото товара готово', 'fa-image');
+            toast(tryOn?'Примерка готова':'Фото товара готово', 'fa-image');
         } catch (err) {
-            if (err?.name === 'ImageGenCancelled' || err?.name === 'AbortError') toast('Генерация остановлена', 'fa-circle-stop');
-            else toast(`Не получилось: ${String(err?.message || err).slice(0, 60)}`, 'fa-circle-exclamation');
+            if (getMeta() === owner) {
+                if (err?.name === 'ImageGenCancelled' || err?.name === 'AbortError') toast('Генерация остановлена', 'fa-circle-stop');
+                else toast(`Не получилось: ${String(err?.message || err).slice(0, 60)}`, 'fa-circle-exclamation');
+            }
         } finally {
             _imgGenBusy.delete(itemId);
             render();
@@ -4052,14 +4075,16 @@ export function notifyDeliveries() {
 // Превью товара: фото, если нарисовано, иначе кнопка генерации
 function shopItemImage(it, storeId) {
     const busy = _imgGenBusy.has(it.id);
-    if (it.image) {
-        return `<div class="gp-shop-item-img"><img src="${esc(it.image)}" alt="" data-zoom>
+    const tryOn=currentShopCat==='clothes'&&getShop().tryOnPersona===true;
+    const preview=tryOn?it.tryOnImages?.[String(user_avatar||getUserName())]:it.image;
+    if (preview) {
+        return `<div class="gp-shop-item-img"><img src="${esc(preview)}" alt="" data-zoom>
             <button class="gp-img-regen gp-img-regen-sm" data-shopimg="${esc(storeId)}|${esc(it.id)}" title="Перерисовать товар" ${busy ? 'disabled' : ''}>${ic(busy ? 'fa-spinner fa-spin' : 'fa-rotate-right')}</button>
             ${busy ? `<div class="gp-shop-item-imgbusy">${ic('fa-spinner fa-spin')}${stopGenBtn(it.id)}</div>` : ''}</div>`;
     }
-    return `<button class="gp-shop-item-img gp-shop-item-img-empty" data-shopimg="${esc(storeId)}|${esc(it.id)}" title="Нарисовать товар">
-        ${busy ? `${ic('fa-spinner fa-spin')}${stopGenBtn(it.id)}` : ic('fa-image')}
-    </button>`;
+    return `<div class="gp-shop-item-img gp-shop-item-img-empty"><button type="button" class="gp-market-image-button" data-shopimg="${esc(storeId)}|${esc(it.id)}" title="Нарисовать товар" ${busy ? 'disabled' : ''}>
+        ${bankIcon(busy ? 'LoaderCircle' : 'Image')}
+    </button>${busy ? stopGenBtn(it.id) : ''}</div>`;
 }
 
 function renderShopOrders(screen) {
@@ -6439,7 +6464,7 @@ function shotHtml(m) {
     const found = resolveShot(shot);
     const author = shot.author || found?.author || '';
     const text = String(found?.text || found?.caption || shot.text || found?.imgDesc || '').slice(0, 220);
-    const img = found?.image || null;
+    const img = found?.image || shot.image || null;
     // Карточка живёт внутри пузыря с white-space: pre-wrap — собираем её одной
     // строкой, иначе отступы разметки станут пустыми строками в сообщении
     const head = `<div class="gp-shot-head">${ic(meta.icon)} ${esc(meta.label)}${author ? ` · ${esc(author)}` : ''}</div>`;
@@ -6457,7 +6482,11 @@ function openShot(raw) {
     if (app === 'tw') { currentTweetId = j.id; goto('twthread'); }
     else if (app === 'ig') { currentPostId = j.id; goto('igview'); }
     else if (app === 'of') { currentPostId = j.id; goto('ofview'); }
-    else if (app === 'st') { goto('igstory'); }
+    else if (app === 'st') {
+        const stories=allStoriesOrdered(),index=stories.findIndex(story=>story.id===j.id);
+        if(index<0){toast('История уже истекла. Её содержимое осталось в пересылке.','fa-instagram');return;}
+        _storyAuthor=null;_storyIdx=index;goto('igstory');
+    }
     else if (app === 'ch') {
         _chanId = j.chan || _chanId;
         _chanPostId = j.id;
@@ -6466,61 +6495,21 @@ function openShot(raw) {
     }
 }
 
-// Выбор адресата: один контакт или групповой чат + подпись
-let _shareShot = null;
-let _shareTo = null;
-
+// Share the same post/story card through phone messages or Instagram Direct.
 function openShareSheet(shot) {
     if (!shot) return;
-    _shareShot = shot;
-    _shareTo = null;
-    renderShareSheet();
-}
-
-function renderShareSheet() {
-    const screen = document.getElementById('gp-screen');
-    if (!screen || !_shareShot) return;
-    screen.querySelector('.gp-share-overlay')?.remove();
-    const threads = getThreadList();
-    const overlay = document.createElement('div');
-    overlay.className = 'gp-member-overlay gp-share-overlay';
-    overlay.innerHTML = `
-        <div class="gp-member-overlay-panel">
-            <div class="gp-member-overlay-header">
-                <span>Отправить в лс</span>
-                <button class="gp-iconbtn" id="gp-share-close">${ic('fa-xmark')}</button>
-            </div>
-            <div class="gp-member-overlay-list">
-                ${threads.length ? threads.map(t => `
-                    <button class="gp-share-row${_shareTo === t.key ? ' gp-selected' : ''}" data-shareto="${esc(t.key)}">
-                        ${t.isGroup ? `<div class="gp-avatar gp-avatar-xs gp-avatar-group">${ic('fa-users')}</div>` : avatarHtml(t.name, getContactAvatar(t.key), 'gp-avatar gp-avatar-xs')}
-                        <span>${esc(t.name)}</span>
-                        ${ic(_shareTo === t.key ? 'fa-circle-check' : 'fa-circle')}
-                    </button>`).join('') : '<div class="gp-empty-text">Сначала заведи контакты</div>'}
-            </div>
-            <textarea id="gp-share-note" rows="1" placeholder="Подписать…"></textarea>
-            <button class="gp-primary" id="gp-share-send" ${_shareTo ? '' : 'disabled'}>${ic('fa-paper-plane')} Отправить</button>
-        </div>`;
-    screen.appendChild(overlay);
-    const close = () => { _shareShot = null; _shareTo = null; overlay.remove(); };
-    overlay.querySelector('#gp-share-close')?.addEventListener('click', close);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-    overlay.querySelectorAll('[data-shareto]').forEach(b => b.addEventListener('click', () => {
-        const note = overlay.querySelector('#gp-share-note')?.value || '';
-        _shareTo = b.getAttribute('data-shareto');
-        renderShareSheet();
-        const box = document.getElementById('gp-share-note');
-        if (box) box.value = note;
-    }));
-    overlay.querySelector('#gp-share-send')?.addEventListener('click', async () => {
-        const note = (overlay.querySelector('#gp-share-note')?.value || '').trim();
-        const to = _shareTo;
-        const shot = _shareShot;
-        close();
-        if (!to || !shot) return;
-        currentThreadKey = to;
-        goto('thread');
-        await doSend(to, { text: note, shot });
+    const screen=document.getElementById('gp-screen');if(!screen)return;
+    const found=resolveShot(shot);
+    const snapshot={...shot,text:String(found?.caption||found?.text||shot.text||found?.imgDesc||'').slice(0,600)};
+    const image=found?.image||shot.image;if(typeof image==='string'&&image.length<2048)snapshot.image=image;
+    openPhoneSharePicker(screen,snapshot,{
+        view:currentScreen==='thread'?'thread:'+currentThreadKey:currentScreen,toast,
+        sms:async(key,text,card)=>{currentThreadKey=key;goto('thread');await doSend(key,{text,shot:card});},
+        dm:async(party,text,card)=>{
+            const owner=getMeta(),thread=ensureIgThread(party);currentIgDmThread=thread.id;
+            const pending=sendIgDm(thread.id,text,card);goto('igdm');
+            try{await pending;}finally{if(getMeta()===owner)render();}
+        },
     });
 }
 
@@ -6836,7 +6825,7 @@ function toastStyleId() {
     return TOAST_STYLES.some(t => t.id === id) ? id : 'aurora';
 }
 
-export function toast(text, icon = 'fa-comment-dots', threadKey = null) {
+export function toast(text, icon = 'fa-comment-dots', threadKey = null, onOpen = null) {
     text = tr(text); // перевод тостов (точный словарь + regex-правила)
     const style = toastStyleId();
     const el = document.createElement('div');
@@ -6865,10 +6854,10 @@ export function toast(text, icon = 'fa-comment-dots', threadKey = null) {
     const older=[...host.querySelectorAll('.gp-toast')];while(older.length>=3)older.shift().remove();
     host.appendChild(el);
     requestAnimationFrame(() => el.classList.add('gp-toast-show'));
-    if (threadKey) {
+    if (threadKey || onOpen) {
         el.style.cursor = 'pointer';
         el.addEventListener('click', () => {
-            openPhone(threadKey);
+            if(onOpen)onOpen();else openPhone(threadKey);
             el.remove();
         });
     }
@@ -6905,7 +6894,8 @@ export function checkNewIncoming({ silent = false } = {}) {
                 // прилетал тост о том, что она давно прочитала. Сверяемся с
                 // курсором прочтения, а не только с прошлым замером.
                 if (!isViewing && lastIn && t.unread > 0) {
-                    toast(`${t.name}: ${lastIn.text.slice(0, 70)}`, 'fa-comment-dots', key);
+                    const preview=lastIn.text||(lastIn.shot?(lastIn.shot.app==='st'?'Присылает историю':'Присылает публикацию'):lastIn.photoDesc?'Фото':'Новое сообщение');
+                    toast(`${t.name}: ${preview.slice(0, 70)}`, 'fa-comment-dots', key);
                 }
             }
         }

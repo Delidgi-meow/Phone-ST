@@ -5225,6 +5225,7 @@ img[data-zoom] { cursor: zoom-in; }
 /* Native checkbox semantics, a themed circular marker. */
 #gp-phone input[type=checkbox],#gp-settings-drawer input[type=checkbox]{appearance:none!important;-webkit-appearance:none!important;width:18px!important;height:18px!important;min-width:18px;flex-shrink:0;padding:0!important;margin:0;border:1.7px solid var(--gp-text-dim)!important;border-radius:50%!important;background:transparent!important;box-shadow:none!important;vertical-align:middle;cursor:pointer}
 #gp-phone input[type=checkbox]:checked,#gp-settings-drawer input[type=checkbox]:checked{border-color:var(--gp-accent-a)!important;background:radial-gradient(circle,var(--gp-accent-a) 0 3.5px,transparent 4px)!important}
+#gp-phone input[type=checkbox]::before,#gp-phone input[type=checkbox]::after,#gp-settings-drawer input[type=checkbox]::before,#gp-settings-drawer input[type=checkbox]::after{content:none!important;display:none!important}
 #gp-phone input[type=checkbox]:focus-visible,#gp-settings-drawer input[type=checkbox]:focus-visible{outline:2px solid var(--gp-accent-a);outline-offset:3px}
 #gp-phone input[type=checkbox]:disabled,#gp-settings-drawer input[type=checkbox]:disabled{opacity:.4;cursor:default}
 @media(forced-colors:active){#gp-phone input[type=checkbox],#gp-settings-drawer input[type=checkbox]{appearance:auto!important;-webkit-appearance:auto!important;background:none!important}}
@@ -5265,6 +5266,302 @@ img[data-zoom] { cursor: zoom-in; }
 #gp-phone.gp-app-surface-active>.gp-statusbar .gp-rpdate{color:inherit;opacity:.65}
 #gp-phone.gp-app-surface-active>.gp-statusbar .gp-close{color:inherit;background:rgba(127,127,127,.15)}
 #gp-phone.gp-app-surface-active>.gp-homebar{z-index:6}
+#gp-phone.gp-app-surface-active:not(:has(>#gp-screen.gp-screen-bleed))>.gp-homebar{position:relative}
+
+/* Storefront and product search, using the phone's current theme. */
+#gp-phone .gp-market-home,#gp-phone .gp-shop-catalog{display:flex;flex:1;flex-direction:column;min-height:0;overflow:hidden;background:var(--gp-home-sheet-bg,#202024);color:var(--gp-text);font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+#gp-phone .gp-market-home *,#gp-phone .gp-shop-catalog *,#gp-phone .gp-market-sheet *{box-sizing:border-box}
+#gp-phone .gp-market-home button,#gp-phone .gp-shop-catalog button,#gp-phone .gp-market-sheet button{font:inherit;color:inherit;box-shadow:none;text-shadow:none;margin:0;cursor:pointer}
+#gp-phone .gp-market-home .gp-wallet-icon,#gp-phone .gp-shop-catalog .gp-wallet-icon{width:21px;height:21px;flex-shrink:0}
+#gp-phone .gp-market-header{display:grid;grid-template-columns:44px minmax(0,1fr) 44px;align-items:center;gap:8px;padding:5px 10px;min-height:56px;flex-shrink:0}
+#gp-phone .gp-market-header h2{font:600 21px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:-.5px;margin:0;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--gp-text)}
+#gp-phone .gp-market-header button{display:grid;place-items:center;position:relative;width:44px;height:44px;padding:9px;border:0;background:transparent;border-radius:50%}
+#gp-phone .gp-market-header button>span{position:absolute;right:1px;top:2px;background:var(--gp-accent-a);color:var(--gp-accent-ink,#161616);border-radius:12px;font-size:9px;min-width:16px;padding:1px 4px;text-align:center}
+#gp-phone .gp-market-header button:disabled{opacity:.4}
+#gp-phone .gp-market-search{display:flex;gap:9px;align-items:center;margin:1px 17px 0;padding:0 8px 0 12px;border:1px solid var(--gp-border-soft);border-radius:15px;background:var(--gp-glass);min-height:46px;color:var(--gp-text-dim);flex-shrink:0}
+#gp-phone .gp-market-search>svg{width:18px;height:18px}
+#gp-phone .gp-market-search input{flex:1;min-width:0;width:100%;font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important;color:var(--gp-text)!important;border:0!important;border-radius:0!important;background:transparent!important;margin:0!important;padding:11px 0!important;box-shadow:none!important;height:44px}
+#gp-phone .gp-market-search button{display:grid;place-items:center;width:34px;height:34px;border:0;border-radius:11px;background:var(--gp-accent-a);color:var(--gp-accent-ink,#171317);padding:7px}
+#gp-phone .gp-market-search button:disabled{opacity:.5}
+#gp-phone .gp-market-balance{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0;padding:13px 19px;font-size:11px;color:var(--gp-text-dim);flex-shrink:0}
+#gp-phone .gp-market-balance b{font-size:12px;font-weight:500;color:var(--gp-text)}
+#gp-phone .gp-market-scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;padding:2px 17px 28px}
+#gp-phone .gp-market-scroll::-webkit-scrollbar{display:none}
+#gp-phone .gp-market-section{display:flex;align-items:center;justify-content:space-between;gap:9px;min-height:38px;margin:0 0 9px}
+#gp-phone .gp-market-section h3{font:600 16px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;color:var(--gp-text);letter-spacing:-.2px}
+#gp-phone .gp-market-section>button{width:34px;height:34px;display:grid;place-items:center;background:var(--gp-glass);border:0;border-radius:50%;color:var(--gp-accent-a);padding:8px}
+#gp-phone .gp-market-section>span{font-size:11px;color:var(--gp-text-dim)}
+#gp-phone .gp-market-categories{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-bottom:21px}
+#gp-phone .gp-market-category{position:relative;min-width:0}
+#gp-phone .gp-market-category>button:first-child{width:100%;min-height:68px;display:flex;align-items:center;gap:9px;border:1px solid var(--gp-border-soft);border-radius:16px;background:var(--gp-glass);padding:12px 9px;text-align:left}
+#gp-phone .gp-market-category>button:first-child>span{width:32px;height:36px;display:grid;place-items:center;color:var(--gp-accent-a);flex-shrink:0}
+#gp-phone .gp-market-category b{font-size:11px;line-height:1.4;font-weight:500;overflow-wrap:anywhere}
+#gp-phone .gp-market-category i{position:absolute;right:8px;bottom:8px;width:4px;height:4px;border-radius:50%;background:var(--gp-accent-a)}
+#gp-phone .gp-market-delete{position:absolute;right:2px;top:2px;width:22px;height:22px;padding:4px;background:transparent;border:0;color:var(--gp-text-dim);border-radius:50%}
+#gp-phone .gp-market-delete svg{width:13px;height:13px}
+#gp-phone .gp-market-products{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:19px 12px;margin:0 0 20px}
+#gp-phone .gp-market-product{display:flex;flex-direction:column;align-items:flex-start;min-width:0;gap:6px;text-align:left;padding:0;background:transparent;border:0;border-radius:0}
+#gp-phone .gp-market-product-image{display:grid;place-items:center;overflow:hidden;width:100%;aspect-ratio:1;border-radius:17px;background:var(--gp-glass);border:1px solid var(--gp-border-soft);margin-bottom:2px;color:var(--gp-accent-a)}
+#gp-phone .gp-market-product-image img{width:100%;height:100%;object-fit:cover}
+#gp-phone .gp-market-product-image svg{width:38px!important;height:38px!important;opacity:.7;stroke-width:1.1}
+#gp-phone .gp-market-product strong{font-size:16px;font-weight:600;letter-spacing:-.3px;overflow-wrap:anywhere;max-width:100%}
+#gp-phone .gp-market-product b{font-size:12px;line-height:1.4;font-weight:400;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#gp-phone .gp-market-product small{font-size:10px;line-height:1.4;color:var(--gp-text-dim);display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
+#gp-phone .gp-market-find{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;min-height:44px;border:0;border-radius:14px;background:var(--gp-accent-a);color:var(--gp-accent-ink,#171317)!important;padding:12px;font-size:13px!important;font-weight:500!important}
+#gp-phone .gp-market-find:disabled{opacity:.45;cursor:default}
+#gp-phone .gp-market-hint{font-size:11px;line-height:1.6;color:var(--gp-text-dim);margin:16px 2px 0}
+#gp-phone .gp-market-status{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--gp-text-dim);padding:15px 0;margin:0;overflow-wrap:anywhere}
+#gp-phone .gp-market-empty{padding:42px 10px 30px;text-align:center}
+#gp-phone .gp-market-empty b{font-size:16px;font-weight:500}
+#gp-phone .gp-market-empty p{font-size:12px;color:var(--gp-text-dim);line-height:1.5;margin:10px 0 0}
+#gp-phone .gp-market-sheet>.gp-web-sheet{background:var(--gp-home-sheet-bg,#202024);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+#gp-phone .gp-market-form{display:flex;flex-direction:column;gap:19px;padding-top:15px}
+#gp-phone .gp-market-form label{display:flex;flex-direction:column;gap:9px;font-size:12px;color:var(--gp-text-dim)}
+#gp-phone .gp-market-form input{font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important;width:100%;min-width:0;background:var(--gp-glass)!important;border:1px solid var(--gp-border-soft)!important;border-radius:13px!important;padding:12px!important;color:var(--gp-text)!important;margin:0!important}
+#gp-phone .gp-market-form button{min-height:44px;border:0;border-radius:14px;background:var(--gp-accent-a);color:var(--gp-accent-ink,#171317);padding:12px}
+#gp-phone .gp-shop-catalog .gp-shop-scroll{padding:0 17px 28px;gap:20px;overscroll-behavior:contain;scrollbar-width:none}
+#gp-phone .gp-shop-catalog .gp-shop-store{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px 12px}
+#gp-phone .gp-shop-catalog .gp-shop-store-name{grid-column:1/-1;display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;opacity:1;padding:10px 0 2px}
+#gp-phone .gp-shop-catalog .gp-shop-store-name svg{width:18px;height:18px;color:var(--gp-accent-a)}
+#gp-phone .gp-shop-catalog .gp-shop-item{display:flex;flex-direction:column;align-items:stretch;gap:9px;padding:0;border:0;border-radius:0;background:transparent;margin:0;min-width:0}
+#gp-phone .gp-shop-catalog .gp-shop-item-img{width:100%;height:auto;aspect-ratio:1;flex:0 0 auto;border-radius:17px;cursor:default}
+#gp-phone .gp-market-image-button{display:grid;place-items:center;position:absolute;inset:0;width:100%;height:100%;border:0;border-radius:inherit;background:transparent;color:var(--gp-accent-a);padding:0}
+#gp-phone .gp-market-image-button svg{width:33px!important;height:33px!important;stroke-width:1.2;opacity:.7}
+#gp-phone .gp-shop-catalog .gp-shop-item-body{flex:1;min-width:0}
+#gp-phone .gp-shop-catalog .gp-shop-item-name{font-size:12px;font-weight:500;line-height:1.4;overflow-wrap:anywhere}
+#gp-phone .gp-shop-catalog .gp-shop-item-desc{font-size:10px;line-height:1.45;color:var(--gp-text-dim);opacity:1;margin-top:5px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+#gp-phone .gp-shop-catalog .gp-shop-item-buy{display:flex;justify-content:space-between;gap:5px;margin-top:auto}
+#gp-phone .gp-shop-catalog .gp-shop-item-price{font-size:14px;font-weight:600;letter-spacing:-.2px;white-space:normal;overflow-wrap:anywhere}
+#gp-phone .gp-shop-catalog .gp-shop-buy{display:grid;place-items:center;flex-shrink:0;width:35px;height:35px;border:0;border-radius:12px;background:var(--gp-accent-a);color:var(--gp-accent-ink,#171317);padding:8px}
+#gp-phone .gp-shop-catalog .gp-shop-buy svg{width:18px;height:18px}
+#gp-phone .gp-shop-catalog .gp-shop-focused .gp-shop-item-img{outline:2px solid var(--gp-accent-a);outline-offset:2px}
+#gp-phone .gp-shop-catalog .gp-empty-icon>svg{width:33px;height:33px}
+#gp-phone .gp-shop-catalog .gp-empty .gp-market-find{margin-top:20px;width:auto;min-width:170px}
+#gp-phone .gp-shop-tryon{display:flex;align-items:center;justify-content:space-between;gap:13px;margin:0 17px 14px;padding:12px 13px;background:var(--gp-glass);border:1px solid var(--gp-border-soft);border-radius:13px;cursor:pointer}
+#gp-phone .gp-shop-tryon>span{display:flex;flex-direction:column;gap:4px;min-width:0}
+#gp-phone .gp-shop-tryon b{font-size:12px;font-weight:500}
+#gp-phone .gp-shop-tryon small{font-size:10px;line-height:1.4;color:var(--gp-text-dim)}
+#gp-phone :is(.gp-market-home,.gp-shop-catalog) button:focus-visible{outline:2px solid var(--gp-accent-a);outline-offset:3px}
+#gp-phone :is(.gp-market-home,.gp-shop-catalog) button:disabled .gp-wallet-icon{animation:gp-market-spin 1s linear infinite}
+#gp-phone .gp-market-status .gp-wallet-icon{animation:gp-market-spin 1s linear infinite}
+@keyframes gp-market-spin{to{transform:rotate(360deg)}}
+/* Instagram feed, activity and a separate Direct inbox. */
+#gp-phone .gp-instagram-shell{--ig-bg:#080808;--ig-panel:#242426;--ig-line:#242426;--ig-text:#f5f5f5;--ig-muted:#99999f;display:flex;flex:1;min-height:0;flex-direction:column;overflow:hidden;background:var(--ig-bg);color:var(--ig-text);font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+#gp-phone .gp-instagram-shell *,#gp-phone .gp-insta-sheet *,#gp-phone .gp-share-sheet *{box-sizing:border-box}
+#gp-phone .gp-instagram-shell button{font:inherit;color:inherit;box-shadow:none;text-shadow:none;margin:0;cursor:pointer}
+#gp-phone .gp-instagram-shell [hidden]{display:none!important}
+#gp-phone .gp-instagram-shell .gp-wallet-icon{width:23px;height:23px;flex-shrink:0;stroke-width:1.7}
+#gp-phone .gp-insta-header{display:grid;grid-template-columns:80px minmax(0,1fr) 80px;align-items:center;gap:0;min-height:57px;padding:5px 10px;flex-shrink:0}
+#gp-phone .gp-insta-header h1{grid-column:2;grid-row:1;font:italic 600 27px/1.15 Georgia,"Times New Roman",serif;letter-spacing:-1.1px;margin:0;text-align:center;color:var(--ig-text)}
+#gp-phone .gp-insta-header button,#gp-phone .gp-insta-subheader>button{position:relative;display:grid;place-items:center;width:40px;height:42px;border:0;background:transparent;border-radius:50%;padding:8px;flex-shrink:0}
+#gp-phone .gp-insta-header button:first-child{grid-column:1;grid-row:1;width:30px;padding-inline:2px}
+#gp-phone .gp-insta-header [data-insta-activity]{grid-column:3;grid-row:1;justify-self:start}
+#gp-phone .gp-insta-header [data-insta-inbox]{grid-column:3;grid-row:1;justify-self:end}
+#gp-phone .gp-insta-badge{position:absolute;top:0;right:0;min-width:15px;border-radius:10px;background:#ff385d;color:#fff;padding:1px 4px;font:500 9px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center;font-style:normal}
+#gp-phone .gp-insta-nav{flex-shrink:0;display:flex;justify-content:space-around;align-items:center;padding:7px 10px 23px;min-height:66px;border-top:1px solid var(--ig-line);background:var(--ig-bg)}
+#gp-phone .gp-insta-nav button{display:grid;place-items:center;position:relative;width:44px;height:37px;padding:6px;border:0;border-radius:0;background:transparent}
+#gp-phone .gp-insta-nav [aria-current=page]>svg{stroke-width:2.4}
+#gp-phone .gp-insta-nav .gp-insta-avatar{width:25px;height:25px;flex-basis:25px;font-size:12px}
+#gp-phone .gp-insta-nav [aria-current=page]>.gp-insta-avatar{outline:1px solid #fff;outline-offset:3px}
+#gp-phone .gp-insta-avatar{display:grid;place-items:center;overflow:hidden;flex:0 0 51px;width:51px;height:51px;border-radius:50%;background:linear-gradient(135deg,#ba737f,#6c6084);color:#fff;font-size:21px;font-weight:500}
+#gp-phone .gp-insta-avatar img{width:100%;height:100%;object-fit:cover}
+#gp-phone .gp-insta-avatar.is-small{width:34px;height:34px;flex-basis:34px;font-size:16px}
+#gp-phone .gp-insta-feed{padding:0;gap:0;margin:0;overflow-x:hidden;scrollbar-width:none}
+#gp-phone .gp-insta-feed .gp-ig-card{background:transparent;border:0;border-radius:0;box-shadow:none;margin:0 0 17px;overflow:visible;flex-shrink:0}
+#gp-phone .gp-insta-feed .gp-ig-head{padding:12px;gap:9px;min-height:59px}
+#gp-phone .gp-insta-feed .gp-ig-head .gp-avatar{width:32px;height:32px;flex-basis:32px;border:0;font-size:14px}
+#gp-phone .gp-insta-feed .gp-ig-name{font-size:12px;line-height:1.4;color:var(--ig-text);font-weight:600}
+#gp-phone .gp-insta-feed .gp-ig-handle{font-size:9px;line-height:1.4;color:var(--ig-muted);opacity:1}
+#gp-phone .gp-insta-feed .gp-tw-time{font-size:10px;color:var(--ig-muted)}
+#gp-phone .gp-insta-post-menu{margin-left:auto!important;display:grid;place-items:center;border:0;background:transparent;padding:7px;width:33px;height:33px;border-radius:50%}
+#gp-phone .gp-insta-post-menu svg{width:21px;height:21px}
+#gp-phone .gp-insta-feed .gp-ig-img{border:0;border-radius:0;background:#19191c;margin:0;aspect-ratio:1}
+#gp-phone .gp-insta-feed .gp-ig-img img{width:100%;height:100%;object-fit:cover}
+#gp-phone .gp-insta-feed .gp-ig-img-gen{background:#19191c!important}
+#gp-phone .gp-insta-feed .gp-ig-img-gen:before{display:none}
+#gp-phone .gp-insta-feed .gp-ig-img-desc{font-size:12px;max-width:270px;color:#c1c1c6}
+#gp-phone .gp-insta-feed .gp-ig-img-inner{padding:24px;gap:13px}
+#gp-phone .gp-insta-feed .gp-ig-genbtn{border:1px solid #ffffff28;border-radius:9px;background:#ffffff0c;color:#ddd;font-size:11px;padding:9px 13px}
+#gp-phone .gp-insta-feed .gp-ig-actions{gap:14px;padding:10px 12px 4px;min-height:42px}
+#gp-phone .gp-insta-feed .gp-ig-actions .gp-tw-act{padding:0;min-width:26px;height:30px;display:grid;place-items:center;background:transparent;border:0;border-radius:0;color:var(--ig-text)}
+#gp-phone .gp-insta-feed .gp-ig-actions .gp-tw-on{color:#ff3b63}
+#gp-phone .gp-insta-feed .gp-tw-on svg{fill:currentColor}
+#gp-phone .gp-insta-feed .gp-insta-save{margin-left:auto!important}
+#gp-phone .gp-insta-feed .gp-insta-save.is-saved svg{fill:currentColor}
+#gp-phone .gp-insta-likes{font-size:11px;font-weight:600;padding:2px 12px 5px}
+#gp-phone .gp-insta-feed .gp-ig-caption{font-size:12px;line-height:1.5;padding:0 12px;color:var(--ig-text)}
+#gp-phone .gp-insta-comments-link{display:block;border:0;background:transparent;border-radius:0;padding:6px 12px;color:var(--ig-muted)!important;font-size:11px!important;text-align:left}
+#gp-phone .gp-instagram-shell .gp-igst-row{margin:0;padding:8px 12px 15px;gap:14px;border-bottom:1px solid var(--ig-line);overflow-x:auto;scrollbar-width:none;flex-shrink:0}
+#gp-phone .gp-instagram-shell .gp-igst-ring{width:62px;height:62px;background:#242426}
+#gp-phone .gp-instagram-shell .gp-igst-has .gp-igst-ring{background:linear-gradient(35deg,#ffb849,#f94172,#bb40be);border:0;padding:3px}
+#gp-phone .gp-instagram-shell .gp-igst-ring .gp-avatar{border:2px solid var(--ig-bg)}
+#gp-phone .gp-instagram-shell .gp-igst-bubble i{color:var(--ig-text);font-size:10px;font-weight:400}
+#gp-phone .gp-instagram-shell .gp-igst-plus{background:#3797ef;border:2px solid var(--ig-bg);color:#fff}
+#gp-phone .gp-igst-own{position:relative;flex:0 0 64px;width:64px}
+#gp-phone .gp-instagram-shell .gp-igst-add-small{position:absolute;right:-1px;top:44px;z-index:2;display:grid;place-items:center;width:22px;height:22px;min-height:0;padding:3px;border:2px solid var(--ig-bg);border-radius:50%;background:#3797ef;color:#fff}
+#gp-phone .gp-instagram-shell .gp-igst-add-small svg{width:12px;height:12px;stroke-width:2.2}
+#gp-phone .gp-insta-subheader{display:flex;align-items:center;gap:8px;padding:6px 9px;min-height:58px;flex-shrink:0;border-bottom:1px solid var(--ig-line)}
+#gp-phone .gp-insta-subheader h2{font:600 16px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;color:var(--ig-text);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+#gp-phone .gp-insta-subheader>h2{flex:1}
+#gp-phone .gp-insta-subheader>div{min-width:0;flex:1}
+#gp-phone .gp-insta-subheader small{font-size:10px;color:var(--ig-muted)}
+#gp-phone .gp-insta-scroll{overflow-y:auto;min-height:0;flex:1;overscroll-behavior:contain;scrollbar-width:none;padding-bottom:24px}
+#gp-phone .gp-insta-section{font:600 14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ig-text);margin:18px 15px 8px}
+#gp-phone .gp-insta-dm-row{display:flex;align-items:center;gap:12px;width:100%;min-height:83px;padding:12px 15px;border:0;border-radius:0;background:transparent;text-align:left}
+#gp-phone .gp-insta-dm-row>span+span{display:flex;flex-direction:column;gap:5px;min-width:0;flex:1}
+#gp-phone .gp-insta-dm-row b{font-size:12px;font-weight:400;line-height:1.4}
+#gp-phone .gp-insta-dm-row small{font-size:11px;color:var(--ig-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#gp-phone .gp-insta-dm-row.is-unread b,#gp-phone .gp-insta-dm-row.is-unread small{font-weight:600;color:var(--ig-text)}
+#gp-phone .gp-insta-dm-row time{font-size:9px;color:var(--ig-muted);flex-shrink:0}
+#gp-phone .gp-insta-dot{width:7px;height:7px;border-radius:50%;background:#3897f0;flex-shrink:0}
+#gp-phone .gp-insta-empty{display:flex;flex-direction:column;align-items:center;gap:12px;padding:57px 25px;text-align:center;color:var(--ig-text)}
+#gp-phone .gp-insta-empty>svg{width:44px!important;height:44px!important;margin-bottom:7px;stroke-width:1}
+#gp-phone .gp-insta-empty b{font-size:20px;letter-spacing:-.4px;font-weight:500}
+#gp-phone .gp-insta-empty p{font-size:12px;line-height:1.6;color:var(--ig-muted);margin:0}
+#gp-phone .gp-insta-empty>button{min-height:42px;padding:10px 16px;border:0;border-radius:10px;background:#3797ef;color:#fff;font-size:12px}
+#gp-phone .gp-insta-conversation{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:none;display:flex;flex-direction:column;gap:9px;padding:21px 13px 15px}
+#gp-phone .gp-insta-dm-message{align-self:flex-start;display:flex;flex-direction:column;gap:5px;max-width:84%;padding:11px 13px;border-radius:18px;background:var(--ig-panel);font-size:13px;line-height:1.5;overflow-wrap:anywhere;flex-shrink:0}
+#gp-phone .gp-insta-dm-message.is-out{align-self:flex-end;background:linear-gradient(120deg,#7446df,#a431bc);color:#fff}
+#gp-phone .gp-insta-dm-message>span{white-space:pre-wrap}
+#gp-phone .gp-insta-dm-message time{font-size:9px;opacity:.55;align-self:flex-end}
+#gp-phone .gp-insta-shared{display:flex;flex-direction:column;gap:10px;padding:0 0 9px;background:transparent!important;border:0;border-bottom:1px solid #ffffff24;border-radius:0;text-align:left;width:100%;min-width:0}
+#gp-phone .gp-insta-shared img{width:100%;max-height:220px;object-fit:cover;border-radius:11px}
+#gp-phone .gp-insta-shared>svg{width:31px!important;height:31px!important;opacity:.7}
+#gp-phone .gp-insta-shared span{display:flex;flex-direction:column;gap:6px}
+#gp-phone .gp-insta-shared small{font-size:10px;opacity:.65}
+#gp-phone .gp-insta-shared b{font-size:12px;font-weight:500;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
+#gp-phone .gp-insta-typing{font-size:11px;color:var(--ig-muted);padding:7px 5px}
+#gp-phone .gp-insta-compose{display:flex;align-items:center;gap:8px;flex-shrink:0;padding:8px 12px 23px;background:var(--ig-bg)}
+#gp-phone .gp-insta-compose textarea{flex:1;width:100%;min-width:0;border:1px solid #343438!important;border-radius:24px!important;background:transparent!important;color:var(--ig-text)!important;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important;padding:12px 16px!important;height:45px;max-height:100px;margin:0!important;box-shadow:none!important;resize:none}
+#gp-phone .gp-insta-compose button{display:grid;place-items:center;background:transparent;border:0;padding:10px;color:#a373f4;min-height:44px}
+#gp-phone .gp-insta-compose button:disabled{opacity:.35}
+#gp-phone .gp-instagram-shell>.gp-header{background:var(--ig-bg);border:0;color:var(--ig-text);padding:12px}
+#gp-phone .gp-instagram-shell>.gp-header .gp-title{font:600 17px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ig-text)}
+#gp-phone .gp-instagram-shell>.gp-add-form{padding:15px 17px 30px;overflow-y:auto;min-height:0;flex:1}
+#gp-phone .gp-instagram-shell .gp-field{font-size:12px;color:var(--ig-muted)}
+#gp-phone .gp-instagram-shell .gp-field input{background:#1b1b1e!important;border:1px solid #333338!important;border-radius:10px!important;padding:12px!important;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important;color:var(--ig-text)!important}
+#gp-phone .gp-instagram-shell .gp-primary{background:#3797ef;color:#fff;border:0;border-radius:11px;min-height:44px}
+#gp-phone .gp-instagram-shell .gp-add-hint{font-size:10px;color:var(--ig-muted)}
+#gp-phone .gp-insta-activity-row{display:flex;align-items:center;gap:11px;width:100%;padding:14px 15px;text-align:left;min-height:85px;background:transparent;border:0;border-radius:0}
+#gp-phone .gp-insta-activity-row>span+span{flex:1;min-width:0;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+#gp-phone .gp-insta-activity-row b{font-weight:600}
+#gp-phone .gp-insta-activity-row time{display:block;font-size:10px;color:var(--ig-muted);margin-top:5px}
+#gp-phone .gp-insta-activity-row>svg{width:19px!important;height:19px!important;opacity:.6}
+#gp-phone .gp-insta-profile{padding-top:20px}
+#gp-phone .gp-insta-profile-top{display:flex;align-items:center;justify-content:space-around;gap:16px;padding:0 20px 19px}
+#gp-phone .gp-insta-profile-top>.gp-insta-avatar{width:76px;height:76px;flex-basis:76px;font-size:28px}
+#gp-phone .gp-insta-profile-top>div{display:flex;flex-direction:column;align-items:center;gap:4px}
+#gp-phone .gp-insta-profile-top b{font-size:19px;font-weight:600}
+#gp-phone .gp-insta-profile-top span{font-size:11px}
+#gp-phone .gp-insta-profile>b,#gp-phone .gp-insta-profile>small{display:block;padding:0 19px;font-size:12px}
+#gp-phone .gp-insta-profile>small{color:var(--ig-muted);font-size:10px;margin-top:5px}
+#gp-phone .gp-insta-profile-grid{margin-top:24px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px}
+#gp-phone .gp-insta-profile-grid button{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;aspect-ratio:1;min-width:0;overflow:hidden;background:#1b1b1e;border:0;border-radius:0;padding:0}
+#gp-phone .gp-insta-profile-grid img{width:100%;height:100%;object-fit:cover}
+#gp-phone .gp-insta-profile-grid span{font-size:9px;padding:0 8px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#gp-phone .gp-insta-profile-grid svg{opacity:.4}
+#gp-phone .gp-insta-sheet>.gp-web-sheet{background:#242426;color:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+#gp-phone .gp-insta-menu{display:flex;flex-direction:column;padding-top:12px}
+#gp-phone .gp-insta-menu button{display:flex;align-items:center;gap:12px;min-height:54px;padding:12px 0;background:transparent;border:0;border-bottom:1px solid #ffffff13;border-radius:0;color:#eee;font-size:13px;box-shadow:none}
+#gp-phone .gp-insta-menu svg{width:20px;height:20px}
+#gp-phone .gp-insta-people{display:flex;flex-direction:column;padding-top:12px}
+#gp-phone .gp-insta-people button{display:flex;align-items:center;gap:12px;padding:12px 0;border:0;background:transparent;color:#eee;font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:left}
+#gp-phone .gp-insta-story-footer{position:absolute;left:16px;right:16px;bottom:22px;z-index:6;display:flex;flex-direction:column;gap:17px;max-height:48%;color:#fff}
+#gp-phone .gp-insta-story-footer .gp-igst-caption{position:static;padding:8px 11px;background:rgba(25,22,28,.14);backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);border:1px solid rgba(255,255,255,.06);border-radius:12px;flex-shrink:1;min-height:0;overflow-y:auto;scrollbar-width:none;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-shadow:0 1px 4px #0007}
+#gp-phone .gp-insta-story-footer .gp-igst-bottom{position:static;gap:10px;padding:0;flex-shrink:0;background:transparent;flex-wrap:nowrap;min-height:44px}
+#gp-phone .gp-igst-bottom-other{justify-content:stretch}
+#gp-phone .gp-insta-story-reply{display:flex;align-items:center;gap:4px;flex:1;min-width:0;border:1px solid #ffffffa0;border-radius:24px;background:transparent;padding:2px 6px}
+#gp-phone .gp-insta-story-reply input{flex:1;min-width:0;width:100%;height:40px;font:12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important;background:transparent!important;border:0!important;border-radius:0!important;color:#fff!important;padding:9px!important;margin:0!important}
+#gp-phone .gp-insta-story-reply button{display:grid;place-items:center;background:transparent;border:0;color:#fff;min-width:35px;height:35px;padding:7px;font:500 11px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+#gp-phone .gp-insta-story-reply:has(input:placeholder-shown) button{display:none}
+#gp-phone .gp-igst-like>svg{width:24px;height:24px}
+#gp-phone .gp-insta-story-share{position:static;display:grid;place-items:center;width:36px;height:44px;flex:0 0 36px;margin-left:auto;padding:7px;border:0;border-radius:0;background:transparent;color:#fff}
+#gp-phone .gp-insta-story-share svg{width:21px;height:21px}
+#gp-phone .gp-share-sheet>.gp-web-sheet{background:var(--gp-home-sheet-bg,#242426);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+#gp-phone .gp-share-picker{display:flex;flex-direction:column;gap:13px;padding-top:9px}
+#gp-phone .gp-share-preview{display:flex;align-items:center;gap:10px;padding:8px 0 14px;border:0;border-radius:0;background:transparent;overflow:hidden}
+#gp-phone .gp-share-preview>img{width:46px;height:55px;object-fit:cover;border-radius:7px}
+#gp-phone .gp-share-preview>svg{width:25px;height:25px;flex-shrink:0;color:var(--gp-accent-a)}
+#gp-phone .gp-share-preview>span{min-width:0;display:flex;flex-direction:column;gap:5px}
+#gp-phone .gp-share-preview b{font-size:12px;font-weight:500}
+#gp-phone .gp-share-preview small{font-size:11px;color:var(--gp-text-dim);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+#gp-phone .gp-share-tabs{display:flex;background:transparent;border:0;border-radius:0;padding:0;gap:12px}
+#gp-phone .gp-share-tabs button{position:relative;flex:1;min-height:40px;padding:8px 0 12px;border:0;border-radius:0;background:transparent!important;color:var(--gp-text-dim);font-size:12px;box-shadow:none!important}
+#gp-phone .gp-share-tabs [aria-pressed=true]{color:var(--gp-text);font-weight:600}
+#gp-phone .gp-share-tabs [aria-pressed=true]::after{content:"";position:absolute;bottom:0;left:32%;right:32%;height:2px;border-radius:2px;background:var(--gp-accent-a)}
+#gp-phone .gp-share-picker>input,#gp-phone .gp-share-picker>textarea{background:transparent!important;border:0!important;border-radius:0!important;padding:11px 0!important;margin:0!important;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important;color:var(--gp-text)!important;width:100%;min-width:0;box-shadow:none!important;resize:none;outline:none}
+#gp-phone .gp-share-picker>input{border-bottom:1px solid var(--gp-border-soft)!important}
+#gp-phone .gp-share-picker>input:focus{border-bottom-color:var(--gp-accent-a)!important}
+#gp-phone .gp-share-picker>textarea:focus-visible{outline:1px solid var(--gp-border-soft);outline-offset:3px;border-radius:8px!important}
+#gp-phone .gp-share-people{display:flex;flex-direction:column;max-height:230px;overflow-y:auto;min-height:70px;scrollbar-width:none}
+#gp-phone .gp-share-people button{display:flex;align-items:center;gap:12px;width:100%;padding:10px 0;border:0;border-radius:0;background:transparent;color:var(--gp-text);text-align:left;font-size:13px}
+#gp-phone .gp-share-avatar{width:37px;height:37px;flex:0 0 37px;display:grid;place-items:center;overflow:hidden;border-radius:50%;background:var(--gp-glass-strong)}
+#gp-phone .gp-share-avatar img{width:100%;height:100%;object-fit:cover}
+#gp-phone .gp-share-people button>i{width:17px;height:17px;border:1px solid var(--gp-text-dim);border-radius:50%;margin-left:auto}
+#gp-phone .gp-share-people button[aria-pressed=true]>i{border-color:var(--gp-accent-a);background:radial-gradient(circle,var(--gp-accent-a) 0 3px,transparent 3.5px)}
+#gp-phone .gp-share-submit{display:flex;align-items:center;justify-content:center;gap:8px;min-height:45px;padding:10px;border:0;border-radius:13px;background:var(--gp-accent-a);color:var(--gp-accent-ink,#171317);font-size:13px}
+#gp-phone .gp-share-submit svg{width:19px;height:19px}
+#gp-phone .gp-share-submit:disabled{opacity:.4}
+
+/* Failed Direct replies are retried against the original outgoing message. */
+#gp-phone .gp-insta-retry{align-self:flex-end;display:flex;flex-direction:column;align-items:flex-end;gap:7px;padding:0 3px 8px;color:var(--ig-muted);font:11px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:90%;flex-shrink:0}
+#gp-phone .gp-insta-retry button{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:6px 0;border:0;border-radius:0;background:transparent;color:#b9a2f3;font:600 12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-shadow:none}
+#gp-phone .gp-insta-retry svg{width:15px;height:15px}
+
+/* Post comments have a permanent generation action above the composer. */
+#gp-phone .gp-insta-post-detail .gp-replies{border:0;margin:0;padding:5px 15px 20px;gap:18px}
+#gp-phone .gp-insta-post-detail .gp-reply{flex:0 0 auto;padding:0;gap:11px;min-height:0}
+#gp-phone .gp-insta-post-detail .gp-reply .gp-avatar{width:30px;height:30px;flex:0 0 30px}
+#gp-phone .gp-insta-post-detail .gp-reply .gp-tw-meta{flex-wrap:wrap;gap:5px}
+#gp-phone .gp-insta-post-detail .gp-reply .gp-tw-name{font-size:12px;color:var(--ig-text)}
+#gp-phone .gp-insta-post-detail .gp-reply .gp-tw-text{display:block;max-height:none;height:auto;overflow:visible;-webkit-line-clamp:unset;white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ig-text)}
+#gp-phone .gp-insta-post-detail .gp-reply-del{opacity:.45}
+#gp-phone .gp-insta-comment-footer{flex:0 0 auto;min-height:0;padding:0 12px 23px;background:var(--ig-bg)}
+#gp-phone .gp-insta-generate-comments{display:flex;align-items:center;justify-content:center;gap:7px;min-height:37px;width:100%;padding:7px 0;border:0;background:transparent;color:var(--gp-accent-a);font:500 11px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+#gp-phone .gp-insta-generate-comments .gp-wallet-icon{width:15px;height:15px}
+#gp-phone .gp-insta-generate-comments:disabled{opacity:.5;cursor:default}
+#gp-phone .gp-insta-comment-footer .gp-inputbar{padding:4px 0 0;align-items:center}
+#gp-phone .gp-insta-comment-footer #gp-input{background:#ffffff0a;border:0;box-shadow:none;color:var(--ig-text);font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:42px;max-height:105px;margin:0}
+#gp-phone .gp-insta-comment-footer .gp-send{width:39px;height:39px;flex:0 0 39px;border:0;background:transparent;box-shadow:none;color:var(--gp-accent-a)}
+#gp-phone .gp-insta-post-detail .gp-feed{padding-bottom:20px}
+
+/* Liquid Glass: translucent controls above content, neutral light and soft depth. */
+#gp-phone.gp-skin-liquid{
+    --gp-text:#f3f8fc;--gp-text-dim:#b3c0cd;--gp-border:rgba(228,244,255,.15);--gp-border-soft:rgba(228,244,255,.08);
+    --gp-liquid-fill:linear-gradient(135deg,rgba(255,255,255,.17),rgba(218,241,255,.045) 47%,rgba(255,255,255,.08));
+    --gp-liquid-shadow:inset 0 1px 0 rgba(255,255,255,.28),inset 0 -1px 0 rgba(255,255,255,.04),0 8px 25px rgba(3,10,19,.16);
+    background:radial-gradient(ellipse at 0% 5%,#668d9b80,transparent 50%),radial-gradient(ellipse at 100% 80%,#324e9160,transparent 55%),linear-gradient(160deg,#152d3d,#14202e 48%,#1b283e);
+    border-color:#e6f6ff24;box-shadow:0 32px 85px #0007,inset 0 1px 0 #ffffff26;
+}
+#gp-phone.gp-skin-liquid :is(.gp-app-icon,.gp-home-dock,.gp-home-widget,.gp-folder-panel,.gp-thread-name-pill,.gp-iconbtn,.gp-theme-section,.gp-theme-card,.gp-home-edit-toolbar){
+    background:var(--gp-liquid-fill);border:0;box-shadow:var(--gp-liquid-shadow);backdrop-filter:blur(22px) saturate(155%);-webkit-backdrop-filter:blur(22px) saturate(155%);
+}
+#gp-phone.gp-skin-liquid .gp-app-icon{color:#f3f9ff;border-radius:24%;text-shadow:0 1px 5px #0002}
+#gp-phone.gp-skin-liquid .gp-app-name{color:#e4eef8;font-weight:500;text-shadow:0 1px 5px #07152390}
+#gp-phone.gp-skin-liquid .gp-app-icon:active,#gp-phone.gp-skin-liquid .gp-iconbtn:active{transform:scale(.95)}
+#gp-phone.gp-skin-liquid .gp-title{background:none;color:var(--gp-text);-webkit-text-fill-color:currentColor;font-weight:600;letter-spacing:-.4px}
+#gp-phone.gp-skin-liquid .gp-header{border:0}
+#gp-phone.gp-skin-liquid .gp-home-dock{border-radius:30px}
+#gp-phone.gp-skin-liquid .gp-bubble{border:0;box-shadow:inset 0 1px #ffffff17,0 3px 14px #07101812;backdrop-filter:blur(15px);-webkit-backdrop-filter:blur(15px)}
+#gp-phone.gp-skin-liquid .gp-in .gp-bubble{background:rgba(233,244,255,.1)}
+#gp-phone.gp-skin-liquid .gp-out .gp-bubble{background:linear-gradient(130deg,#9ed6ff35,#b3eedc25);color:var(--gp-text)}
+#gp-phone.gp-skin-liquid :is(.gp-compose,#gp-input){border:0;box-shadow:var(--gp-liquid-shadow);background:var(--gp-liquid-fill);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px)}
+#gp-phone.gp-skin-liquid .gp-phone-sheet-shade{background:rgba(2,9,18,.2);backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}
+#gp-phone.gp-skin-liquid .gp-phone-sheet-shade>.gp-web-sheet{border:0;border-radius:28px 28px 0 0;background:var(--gp-home-sheet-bg);box-shadow:inset 0 1px #f1faff50,0 -12px 55px #03091430;backdrop-filter:blur(34px) saturate(150%);-webkit-backdrop-filter:blur(34px) saturate(150%)}
+#gp-phone.gp-skin-liquid .gp-share-submit{border-radius:24px;background:var(--gp-liquid-fill);box-shadow:var(--gp-liquid-shadow);color:var(--gp-text);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+#gp-phone.gp-skin-liquid .gp-instagram-shell{--ig-panel:#e6f4ff14}
+#gp-phone.gp-skin-liquid .gp-insta-dm-message.is-out{background:linear-gradient(135deg,#aed7ff25,#b1e9dd1c);box-shadow:inset 0 1px #ffffff20;color:#f6faff}
+#gp-phone.gp-skin-liquid .gp-insta-subheader{border:0}
+#gp-phone.gp-skin-liquid .gp-insta-compose{background:transparent}
+#gp-phone.gp-skin-liquid .gp-insta-compose textarea{border:0!important;background:var(--gp-liquid-fill)!important;box-shadow:var(--gp-liquid-shadow)!important;backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px)}
+#gp-phone.gp-skin-liquid .gp-insta-retry button{color:var(--gp-accent-a)}
+#gp-phone .gp-preview-liquid{background:radial-gradient(circle at 10% 10%,#a7cdd08c,transparent 60%),radial-gradient(circle at 90% 80%,#5e8cba94,transparent 60%),#172d40}
+#gp-phone .gp-preview-liquid .gp-preview-dock{background:#eef8ff1c;border:0;box-shadow:inset 0 1px #ffffff60,0 6px 15px #0002;backdrop-filter:blur(5px)}
+#gp-phone .gp-preview-liquid .gp-preview-dock i{background:#ffffff1f!important;box-shadow:inset 0 1px #ffffff70}
+@supports not (backdrop-filter:blur(1px)){#gp-phone.gp-skin-liquid .gp-phone-sheet-shade>.gp-web-sheet{background:#202f41}}
+@media(prefers-reduced-transparency:reduce){#gp-phone.gp-skin-liquid{--gp-liquid-fill:linear-gradient(135deg,#34485a,#263b4e)}#gp-phone.gp-skin-liquid .gp-phone-sheet-shade>.gp-web-sheet{background:#202f41}}
+@media(prefers-reduced-motion:reduce){#gp-phone.gp-skin-liquid *{transition:none!important;animation:none!important}}
+@media(prefers-reduced-motion:reduce){#gp-phone :is(.gp-market-home,.gp-shop-catalog) .gp-wallet-icon{animation:none!important}}
 @keyframes gp-call-notice-pulse{50%{box-shadow:0 0 0 8px #74c59e08}}
 @media(prefers-reduced-motion:reduce){#gp-notifications .gp-call-notice-pulse{animation:none}#gp-notifications .gp-toast{transition:opacity .15s;transform:none}}
 @media(max-width:400px){#gp-phone .gp-wallet-scroll{padding-inline:15px}#gp-phone .gp-wallet-balance-card{padding:17px}#gp-phone .gp-wallet-operation>strong{font-size:11px}#gp-phone .gp-wallet-products{gap:8px}#gp-phone .gp-wallet-products button{padding:13px 11px}#gp-phone .gp-wallet-header h2{font-size:20px}}

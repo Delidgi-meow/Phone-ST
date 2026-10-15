@@ -9,7 +9,7 @@ import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.47.0';
+export const GP_VERSION = '2.48.0';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -1211,7 +1211,7 @@ function scanChatUncached() {
             if (!j) continue;
             if (kind === 'contact' && j.name) {
                 addContact(j.name, j.number || '', 'tag');
-            } else if (kind === 'sms' && j.from && (j.text || j.photo)) {
+            } else if (kind === 'sms' && j.from && (j.text || j.photo || j.shot)) {
                 // Явные теги = наш протокол, модель ставит их осознанно — доверяем.
                 // Исключение первое: тег явно адресован боту (j.to = имя бота).
                 if (j.to && !msg.is_user && keyOf(j.to) === keyOf(msg.name)) {

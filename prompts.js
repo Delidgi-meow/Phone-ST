@@ -11,6 +11,7 @@ import { callsInjectLine, callsInjectRule } from './calls.js';
 import { twitchInjectLine } from './twitch.js';
 import { tinderInjectLine, inAppMatchNames } from './tinder.js';
 import { pendingConsequences } from './social-events.js';
+import { instagramInjectLine } from './instagram.js';
 
 const CHAT_KEY = EXT_NAME;
 const SYS_KEY = EXT_NAME + '_sys';
@@ -115,6 +116,7 @@ function buildPrompt() {
         return channels ? 'CHANNELS: ' + channels + '\nWhen a channel has a relevant new post: <!--tel:chan:{"channel":"exact name","text":"post","photo":"optional visual description"}-->. Listed or new channels may publish; at most 1–2, never into {{user}}’s own channel.' : '';
     });
     add(plansInjectRule);
+    add(instagramInjectLine);
     add(plansInjectLine);
     add(notesInjectBlock);
     add(twitchInjectLine);
