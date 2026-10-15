@@ -12,23 +12,25 @@ import { notificationHost, showIncomingCallNotice } from './phone-notifications.
 import { applyAppSurface } from './app-surface.js';
 import { bankIcon } from './bank-icons.js';
 import { instagramHeader, instagramNav, instagramProfile, bindInstagramNavigation, renderInstagramInbox, renderInstagramThread, renderInstagramActivity } from './instagram-ui.js';
-import { ensureIgThread } from './instagram-state.js';
+import { ensureIgThread, canonicalIgThreadId } from './instagram-state.js';
 import { sendIgDm, receiveIgStoryReactions } from './instagram.js';
 import { openPhoneSharePicker } from './share-sheet.js';
 import { shopImagePost } from './shop-image.js';
+import { shopPayerButton, openShopPayerPicker } from './shop-payer.js';
+import { bankEvent } from './bank-protocol.js';
 
 import { sendMessageAsUser, Generate, generateQuietPrompt, saveSettingsDebounced, saveChatConditional, user_avatar } from '../../../../script.js';
 import { saveBase64AsFile } from '../../../utils.js';
 import {
     getSettings, getThreadList, getThread, markRead, addManualContact, hideContact,
-    randomNumber, getTotalUnread, fmtTime, getRpDateTime, keyOf, getHiddenMessageIndexes,
+    randomNumber, getTotalUnread, fmtTime, getRpDateTime, keyOf, getHiddenMessageIndexes, resolveContactKey, contactOriginalName,
     addGroup, delGroup, updateGroupMembers, renameContact, banAccount,
     isSmsBlocked, blockSmsContact, unblockSmsContact, saveMeta, invalidateChatCache, getMeta, getPhoneMessageText,
 } from './state.js';
 import { phoneMessageSources, replacePhoneMessageTag } from './message-sources.js';
 import { roleplaySmsKey } from './roleplay-sms.js';
 import { updatePhoneInjection } from './prompts.js';
-import { getBank, fmtMoney, addTransaction, getBankReminders, bankBadgeCount } from './bank.js';
+import { getBank, fmtMoney, addTransaction, getBankReminders, bankBadgeCount, harvestBankTags } from './bank.js';
 import { getShop, catById, getCategory, generateCategory, buyItem, findShopItem, getOrders, deleteOrder, advanceOrders, orderLeft, fmtEta, findOrder, ensureCourier, orderChat, courierUnread, markCourierRead, writeToCourier, courierArrived } from './shop.js';
 import {
     getTweets, getIgPosts, postTweet, likeTweet, rtTweet, delTweet, addTweetReply, delTweetReply,
@@ -707,7 +709,7 @@ export function render() {
     else if (currentScreen === 'twthread' && currentTweetId) renderTwThread(screen);
     else if (currentScreen === 'ig') renderIg(screen);
     else if (currentScreen === 'igdms') renderInstagramInbox(screen,instagramApi());
-    else if (currentScreen === 'igdm') renderInstagramThread(screen,currentIgDmThread,instagramApi());
+    else if (currentScreen === 'igdm') {currentIgDmThread=canonicalIgThreadId(currentIgDmThread);renderInstagramThread(screen,currentIgDmThread,instagramApi());}
     else if (currentScreen === 'igactivity') renderInstagramActivity(screen,instagramApi());
     else if (currentScreen === 'igview' && currentPostId) renderIgView(screen);
     else if (currentScreen === 'ignew') renderIgNew(screen);
@@ -2859,7 +2861,7 @@ function bindIgCardActions(root) {
     root.querySelectorAll('[data-ig-menu]').forEach(button=>button.onclick=()=>{
         const post=getIgPosts().find(item=>item.id===button.dataset.igMenu);if(!post)return;
         const own=post.ak==='user',shade=openPhoneSheet(root,'Публикация',`<div class="gp-insta-menu">${own?'':`<button type="button" data-post-dm>${bankIcon('Send')}Написать автору</button>`}<button type="button" data-post-action>${bankIcon(own?'Trash2':'RotateCw')}${own?'Удалить публикацию':'Переписать публикацию'}</button>${own?'':`<button type="button" data-post-ban>${bankIcon('Ban')}Заблокировать аккаунт</button>`}</div>`,currentScreen);shade.classList.add('gp-insta-sheet');
-        shade.querySelector('[data-post-dm]')?.addEventListener('click',()=>{const thread=ensureIgThread({name:post.author,ak:post.ak});closePhoneSheet(shade);currentIgDmThread=thread.id;goto('igdm');});
+        shade.querySelector('[data-post-dm]')?.addEventListener('click',()=>{const thread=ensureIgThread({name:post.author,ak:post.ak,handle:post.handle});closePhoneSheet(shade);currentIgDmThread=thread.id;goto('igdm');});
         shade.querySelector('[data-post-action]').onclick=()=>{closePhoneSheet(shade);root.querySelector(own?'[data-del-ig="'+CSS.escape(post.id)+'"]':'[data-regen-ig="'+CSS.escape(post.id)+'"]')?.click();};
         shade.querySelector('[data-post-ban]')?.addEventListener('click',()=>{closePhoneSheet(shade);root.querySelector('[data-ban-ig="'+CSS.escape(post.id)+'"]')?.click();});
     });
@@ -2954,17 +2956,17 @@ let currentIgDmThread = '';
 let _igProfile = false;
 function instagramApi(){
     return {render,toast,home:()=>goto('home'),feed:()=>{_igProfile=false;goto('ig');},profile:()=>{_igProfile=true;goto('ig');},inbox:()=>goto('igdms'),activity:()=>goto('igactivity'),
-        back:()=>goto(currentScreen==='igdm'?'igdms':'ig'),thread:id=>{currentIgDmThread=id;goto('igdm');},
+        back:()=>goto(currentScreen==='igdm'?'igdms':'ig'),thread:id=>{currentIgDmThread=canonicalIgThreadId(id);goto('igdm');},
         post:id=>{if(!getIgPosts().some(post=>post.id===id)){toast('Публикация удалена','fa-instagram');return;}currentPostId=id;goto('igview');},
         story:id=>openShot(JSON.stringify({app:'st',id})),openShare:shot=>openShot(JSON.stringify(shot))};
 }
 export function openInstagram(event=null){
     openPhone();
-    if(event?.target==='dm'){currentIgDmThread=event.targetId;currentScreen='igdm';}
+    if(event?.target==='dm'){currentIgDmThread=canonicalIgThreadId(event.targetId);currentScreen='igdm';}
     else currentScreen='igactivity';
     render();
 }
-export function instagramEventVisible(event){return isPhoneOpen()&&((currentScreen==='igdm'&&event.target==='dm'&&currentIgDmThread===event.targetId)||currentScreen==='igactivity');}
+export function instagramEventVisible(event){return isPhoneOpen()&&((currentScreen==='igdm'&&event.target==='dm'&&canonicalIgThreadId(currentIgDmThread)===canonicalIgThreadId(event.targetId))||currentScreen==='igactivity');}
 function renderIg(screen) {
     currentScreen = 'ig';
     const posts = getIgPosts();
@@ -3393,7 +3395,7 @@ function renderIgStory(screen) {
     screen.querySelector('#gp-st-share').onclick=event=>{event.stopPropagation();openShareSheet({app:'st',id:st.id,author:st.author,text:st.caption||st.imgDesc,image:st.image});};
     screen.querySelector('.gp-insta-story-reply')?.addEventListener('submit',async event=>{
         event.preventDefault();event.stopPropagation();const text=event.target.querySelector('input').value.trim();if(!text)return;
-        const owner=getMeta(),thread=ensureIgThread({name:st.author,ak:st.ak});
+        const owner=getMeta(),thread=ensureIgThread({name:st.author,ak:st.ak,handle:st.handle});
         const pending=sendIgDm(thread.id,text,{app:'st',id:st.id,author:st.author,text:st.caption||st.imgDesc,image:st.image,replyTo:true});
         currentIgDmThread=thread.id;goto('igdm');
         try{await pending;}catch(error){if(getMeta()===owner)toast(String(error.message||error),'fa-circle-exclamation');}finally{if(getMeta()===owner)render();}
@@ -3854,6 +3856,7 @@ function renderShopCat(screen) {
             ${data && data.stores?.length ? `<button type="button" id="gp-shop-refresh" aria-label="Обновить каталог" ${busy ? 'disabled' : ''}>${bankIcon(busy ? 'LoaderCircle' : 'RotateCw')}</button>` : '<span></span>'}
         </header>
         <div class="gp-market-balance"><span>На счёте</span><b>${esc(fmtMoney(b.balance))}</b></div>
+        ${shopPayerButton()}
         ${cat.id==='clothes'?`<label class="gp-shop-tryon"><span><b>Референс персоны</b><small>Примерять одежду на себя · для новых картинок</small></span><input type="checkbox" id="gp-shop-tryon" ${getShop().tryOnPersona?'checked':''}></label>`:''}
         <div class="gp-shop-scroll">${body}</div>
         </div>
@@ -3866,6 +3869,7 @@ function renderShopCat(screen) {
     }
 
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('shop'));
+    screen.querySelector('[data-shop-payer]')?.addEventListener('click', () => openShopPayerPicker(screen, render));
     screen.querySelector('#gp-shop-tryon')?.addEventListener('change',event=>{getShop().tryOnPersona=event.target.checked;saveMeta();render();});
     // Картинка товара: витрина оживает, но рисуем только по просьбе —
     // каталог на десятки позиций разорил бы на генерациях
@@ -4115,9 +4119,10 @@ function renderShopOrders(screen) {
                             ${orderItems(o).length > 1
                                 ? `<span class="gp-bank-tx-cat">${esc(orderItems(o).slice(1).map(x => x.name).join(', '))}</span>` : ''}
                             <span class="gp-bank-tx-cat">${esc(o.store)} · ${esc(timeAgo(o.time))}</span>
+                            ${o.payer && o.payer !== 'user' ? `<span class="gp-bank-tx-cat">${esc(lang() === 'en' ? 'Paid by: ' : 'Плательщик: ')}${esc(o.payer)}</span>` : ''}
                             ${orderStatusHtml(o)}
                         </span>
-                        <span class="gp-bank-tx-amt gp-neg">${esc(fmtMoney(o.price))}</span>
+                        <span class="gp-bank-tx-amt ${!o.payer || o.payer === 'user' ? 'gp-neg' : ''}">${esc(fmtMoney(o.price))}</span>
                         ${(o.eta && o.stage !== 'done') || o.courier ? `<button class="gp-iconbtn gp-order-chat" data-ordchat="${esc(o.id)}" title="Чат с курьером">${ic('fa-comment-dots')}${courierUnread(o) ? `<span class="gp-app-badge">${courierUnread(o)}</span>` : ''}</button>` : ''}
                         <button class="gp-bank-tx-del" data-del-order="${esc(o.id)}" title="Убрать из истории">${ic('fa-xmark')}</button>
                     </div>`).join('')}
@@ -6647,6 +6652,8 @@ async function insertGhostReply(name, mesText) {
         extra: { isSmsSilent: true },
     };
     chat.push(replyMsg);
+    try { if (harvestBankTags()) updatePhoneInjection(); }
+    catch (error) { console.warn('[GlassPhone] SMS payment sync:', error); }
     if (typeof ctx.saveChat === 'function') await ctx.saveChat();
     if (typeof ctx.printMessages === 'function') ctx.printMessages();
     setTimeout(async () => {
@@ -6664,6 +6671,7 @@ async function insertGhostReply(name, mesText) {
 // выбирают в шторке, поле ввода треда при этом не участвует)
 async function doSend(key, opts = {}) {
     if (sending) return;
+    const owner = getMeta();
     const input = document.getElementById('gp-input');
     const fromInput = opts.text === undefined;
     const text = (fromInput ? (input?.value || '') : opts.text).trim();
@@ -6734,6 +6742,7 @@ async function doSend(key, opts = {}) {
                         contactName: name, isGroup, members: t?.members || [],
                         userText: text, image: draftImg,
                     });
+                    if (getMeta() !== owner) return;
                     if (combo) {
                         if (combo.desc) {
                             lastMsg.mes = lastMsg.mes.replace(photoTok, `${photoTok.slice(0, -1)}: ${combo.desc}*`);
@@ -6741,9 +6750,14 @@ async function doSend(key, opts = {}) {
                             await saveChatConditional();
                         }
                         const botMes = combo.replies.length
-                            ? combo.replies.map(r => `<!--tel:sms:${JSON.stringify(isGroup
-                                ? { from: r.from, chat: name, text: r.text }
-                                : { from: name, text: r.text })}-->`).join('\n')
+                            ? combo.replies.map(r => {
+                                const sender = isGroup ? r.from : name;
+                                const sms = `<!--tel:sms:${JSON.stringify(isGroup ? {from:sender, chat:name, text:r.text} : {from:sender, text:r.text})}-->`;
+                                const member = !isGroup || (t.members || []).some(value => resolveContactKey(value) === resolveContactKey(sender));
+                                const payer = contactOriginalName(resolveContactKey(sender), sender);
+                                const payments = member ? (r.bank || []).map(value => bankEvent({...value, payer}, getUserName())).filter(event => event && event.payer !== 'user') : [];
+                                return [sms, ...payments.map(event => `<!--tel:bank:${JSON.stringify(event)}-->`)].join('\n');
+                            }).join('\n')
                             : '<!--tel:silent-->';
                         await insertGhostReply(name, botMes);
                         photoHandled = true;
@@ -6769,6 +6783,7 @@ async function doSend(key, opts = {}) {
         const msgKind = asVoice ? 'VOICE message (they hear their voice; this is the transcript)' : 'message';
         const quietPrompt = `The latest user entry is an app ${msgKind} addressed to ${isGroup ? 'group «' + name + '», members: ' + (t.members || []).join(', ') : name}. Use that entry’s message and attachments; do not repeat or rewrite the user’s words. Reply in the recipient’s voice with 1–5 hidden comments only: <!--tel:sms:{"from":"canonical sender","to":"{{user}}","text":"reply"${isGroup ? ',"chat":' + JSON.stringify(name) : ''}}-->. If unavailable/unwilling, use <!--tel:silent-->. Include newly applicable calendar/bank/clock tags. No visible narration, user actions or unrelated senders.`;
         const rawReply = await generateQuietPrompt(quietPrompt, false, false);
+        if (getMeta() !== owner) return;
         if (rawReply && rawReply.trim()) {
             await insertGhostReply(name, rawReply.trim());
         }

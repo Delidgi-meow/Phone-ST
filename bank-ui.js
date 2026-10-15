@@ -9,7 +9,7 @@ import { currencyInfo, currencyStep } from './currencies.js';
 import { openCurrencyPicker } from './currency-picker.js';
 import { openPhoneSheet, closePhoneSheet } from './phone-modal.js';
 import { bankIcon as icon } from './bank-icons.js';
-import { trDom } from './i18n.js';
+import { trDom, lang } from './i18n.js';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const CATS = ['еда','транспорт','жильё','подписка','одежда','развлечения','красота','здоровье','подарок','зарплата','перевод','другое'];
@@ -28,8 +28,9 @@ function header(title, back = 'home', action = '') {
     return `<header class="gp-wallet-header"><button type="button" class="gp-wallet-icon-button" data-wallet="${back}" aria-label="Назад">${icon('ChevronLeft')}</button><h2>${title}</h2>${action || '<span></span>'}</header>`;
 }
 const empty = text => `<div class="gp-wallet-empty">${text}</div>`;
+const payerLabel = payer => (lang() === 'en' ? 'Paid by: ' : 'Плательщик: ') + payer;
 function amountRow(tx) {
-    return `<button type="button" class="gp-wallet-operation" data-wallet-tx="${esc(tx.id)}"><span class="gp-wallet-operation-icon ${tx.amount > 0 ? 'is-income' : ''}">${icon(catIcons[tx.category] || (tx.amount > 0 ? 'ArrowDownLeft' : 'ReceiptText'))}</span><span class="gp-wallet-operation-copy"><b>${esc(tx.label)}</b><small>${esc(tx.category)}</small></span><strong class="${tx.amount > 0 ? 'is-income' : ''}">${tx.amount > 0 ? '+' : ''}${esc(fmtMoney(tx.amount))}</strong></button>`;
+    return `<button type="button" class="gp-wallet-operation ${tx.external ? 'is-external' : ''}" data-wallet-tx="${esc(tx.id)}"><span class="gp-wallet-operation-icon ${tx.amount > 0 ? 'is-income' : ''}">${icon(tx.external ? 'Gift' : catIcons[tx.category] || (tx.amount > 0 ? 'ArrowDownLeft' : 'ReceiptText'))}</span><span class="gp-wallet-operation-copy"><b>${esc(tx.label)}</b><small>${esc(tx.external ? payerLabel(tx.payer) : tx.category)}</small></span><strong class="${tx.amount > 0 ? 'is-income' : ''}">${tx.amount > 0 ? '+' : ''}${esc(fmtMoney(tx.external ? Math.abs(tx.amount) : tx.amount))}</strong></button>`;
 }
 function mainHtml() {
     const b = getBank(), s = state(), totals = incomeExpenseTotals(), due = getBankReminders();
@@ -79,6 +80,7 @@ function loanCard(loan) {
     return `<article class="gp-wallet-loan ${closed ? 'is-closed' : ''}"><div class="gp-wallet-loan-head"><span class="gp-wallet-operation-icon">${icon(loan.kind === 'mortgage' ? 'House' : 'CreditCard')}</span><span><b>${esc(loan.name)}</b><small>${closed ? 'Погашен' : loan.interestModel === 'annuity' ? 'Основной долг' : 'Осталось выплатить'}</small></span><button type="button" class="gp-wallet-icon-button" data-wallet-loan-menu="${esc(loan.id)}" aria-label="Действия с кредитом">${icon('Ellipsis')}</button></div>
         <strong class="gp-wallet-loan-amount">${esc(fmtMoney(loan.remaining))}</strong><div class="gp-wallet-progress"><i style="width:${progress}%"></i></div>
         <div class="gp-wallet-loan-meta"><span>${Math.round((loan.rate||0)*10000)/100}% годовых</span><span>${closed ? 'Закрыт' : `${schedule.length || '—'} мес. осталось`}</span></div>
+        ${loan.lastPayment?.payer && loan.lastPayment.payer !== 'user' ? `<p class="gp-wallet-payment-payer">${esc(payerLabel(loan.lastPayment.payer))}</p>` : ''}
         ${closed ? '' : `<div class="gp-wallet-loan-next"><span>${paid ? 'В этом месяце оплачено' : `Платёж · ${loan.day || 1}-го числа`}</span><b>${esc(fmtMoney(loanPaymentAmount(loan)))}</b></div><div class="gp-wallet-loan-actions"><button type="button" data-wallet-pay-loan="${esc(loan.id)}" ${paid ? 'disabled' : ''}>${paid ? icon('Check')+' Оплачено' : 'Внести платёж'}</button><button type="button" data-wallet-early-loan="${esc(loan.id)}">Досрочно</button></div>`}
     </article>`;
 }
@@ -220,7 +222,7 @@ export function renderBankApp(host, api) {
         const template = event.target.closest('[data-wallet-template]');
         if (template) openBillForm(host,api,template.dataset.walletTemplate,template.dataset.walletTemplateName);
         const tx = event.target.closest('[data-wallet-tx]');
-        if (tx) { const item=b.transactions.find(t=>t.id===tx.dataset.walletTx);if(item)confirmSheet(host,api,'Удалить операцию?',`${item.label} · ${fmtMoney(item.amount)}. Баланс будет пересчитан, если операция меняла его.`,()=>{deleteTransaction(item.id);api.updateInjection();api.render();}); }
+        if (tx) { const item=b.transactions.find(t=>t.id===tx.dataset.walletTx);if(item)confirmSheet(host,api,'Удалить операцию?',`${item.label} · ${fmtMoney(item.external ? Math.abs(item.amount) : item.amount)}. ${item.external ? payerLabel(item.payer) + '. ' : ''}Баланс будет пересчитан, если операция меняла его.${item.loanPayment ? ' Погашенная часть долга восстановится.' : ''}`,()=>{deleteTransaction(item.id);api.updateInjection();api.render();}); }
         const menu = event.target.closest('[data-wallet-loan-menu]');
         if (menu) { const loan=b.loans.find(l=>l.id===menu.dataset.walletLoanMenu);if(loan)openLoanMenu(host,api,loan); }
         const early = event.target.closest('[data-wallet-early-loan]');

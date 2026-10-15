@@ -1,6 +1,7 @@
 
 import { getMeta, saveMeta, getRpDateTime, stripThink, getPhoneMessageText } from './state.js';
 import { normalizeCurrency, currencyInfo, roundCurrency, formatCurrency, currencyStep } from './currencies.js';
+import { bankEvent, paymentPayer, smsPaymentPayer } from './bank-protocol.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -73,13 +74,18 @@ export function convertCurrency(newSymRaw, { factor = null } = {}) {
     prepare(b, 'balance');
     if (Number.isFinite(b.openingBalance)) prepare(b, 'openingBalance');
     if (Number.isFinite(b.lastRpBalance)) prepare(b, 'lastRpBalance');
-    for (const t of b.transactions) prepare(t, 'amount');
+    function preparePayment(payment) {
+        if (!payment) return;
+        if (Number.isFinite(payment.principal)) prepare(payment, 'principal');
+    }
+    for (const t of b.transactions) { prepare(t, 'amount'); preparePayment(t.loanPayment); }
     for (const l of b.loans) for (const key of ['principal', 'remaining', 'monthly', 'propertyPrice', 'downPayment']) {
         if (Number.isFinite(l[key])) prepare(l, key);
     }
+    for (const loan of b.loans) if (Number.isFinite(loan.lastPayment?.amount)) prepare(loan.lastPayment, 'amount');
     for (const r of b.recurring) prepare(r, 'amount');
     for (const r of b.syncQueue) prepare(r, 'amount');
-    for (const r of b.txKeys) prepare(r, 'amount');
+    for (const r of b.txKeys) { prepare(r, 'amount'); preparePayment(r.loanPayment); }
     const shop = getMeta().shop;
     if (shop) {
         for (const cat of Object.values(shop.cats || {})) {
@@ -104,21 +110,24 @@ export function fmtMoney(n) {
 // historyOnly — записать операцию, НЕ трогая баланс. Нужно, когда сумму уже
 // учёл инфоблок ролевой: иначе одна покупка списывалась дважды — сначала
 // дельтой инфоблока, потом ещё раз транзакцией из тега.
-export function addTransaction({ amount, label, category = 'другое', silent = false, historyOnly = false }) {
+export function addTransaction({ amount, label, category = 'другое', silent = false, historyOnly = false, payer = 'user', loanId = '', appPurchase = false }) {
     const b = getBank();
     const amt = roundMoney(amount);
-    if (!amt) return null;
+    if (!Number.isFinite(amt) || !amt) return null;
+    const external = amt < 0 && payer !== 'user';
     const tx = {
         id: genId(), amount: amt,
         label: String(label || '').slice(0, 60) || (amt > 0 ? 'Поступление' : 'Списание'),
         category: String(category || 'другое').slice(0, 24), time: Date.now(),
     };
+    if (external) { tx.external = true; tx.payer = String(payer).slice(0, 80); }
+    if (loanId) tx.loanId = loanId;
     if (historyOnly) tx.synced = true;   // при удалении баланс не откатываем
     b.transactions.unshift(tx);
     if (!historyOnly) {
-        b.balance = roundMoney(b.balance + amt);
+        if (!external) b.balance = roundMoney(b.balance + amt);
         // Ждём, что ролевая повторит эту же операцию своими средствами
-        b.syncQueue.push({ amount: amt, at: chatLen() });
+        b.syncQueue.push({ amount: amt, at: chatLen(), txId:tx.id, ...(external ? {external:true, payer:tx.payer, label:tx.label, reconcilePurchase:appPurchase} : {}), ...(loanId ? {loanId} : {}) });
         if (b.syncQueue.length > 20) b.syncQueue = b.syncQueue.slice(-20);
     }
     if (b.transactions.length > 200) b.transactions = b.transactions.slice(0, 200);
@@ -130,8 +139,9 @@ export function deleteTransaction(id) {
     const b = getBank();
     const tx = b.transactions.find(t => t.id === id);
     if (!tx) return;
-    if (!tx.synced) b.balance = roundMoney(b.balance - tx.amount); // откат баланса (кроме записей из инфоблока)
+    undoBankTransaction(b, tx);
     b.transactions = b.transactions.filter(t => t.id !== id);
+    b.txKeys = b.txKeys.filter(record => record.txId !== id);
     saveMeta();
 }
 
@@ -198,20 +208,65 @@ export function loanSchedule(loan) {
 }
 
 export function payLoanInstallment(id, customAmount = null) {
-    const b = getBank();
-    const loan = b.loans.find(l => l.id === id);
-    if (!loan || loan.paidOff) return;
-    const early = customAmount !== null;
-    if (!early && loan.lastPaidMonth === currentYearMonth()) return false;
-    const pay = early ? Math.min(loan.remaining, roundMoney(customAmount)) : loanPaymentAmount(loan);
-    if (pay <= 0) return;
-    const interest = !early && loan.interestModel === 'annuity' ? roundMoney(loan.remaining * loan.rate / 12) : 0;
-    addTransaction({ amount:-pay, label:`${early ? 'Досрочное погашение' : 'Платёж'} · ${loan.name}`, category:loan.kind === 'mortgage' ? 'ипотека' : 'кредит', silent:true });
-    loan.remaining = roundMoney(loan.remaining - Math.max(0, pay - interest));
-    if (!early) { loan.lastPaidMonth = currentYearMonth(); loan.paymentsMade = (loan.paymentsMade || 0) + 1; }
-    if (loan.remaining <= 0) { loan.remaining = 0; loan.paidOff = true; }
+    const tx = recordLoanPayment({ loanId:id, mode:customAmount === null ? 'installment' : 'early', amount:Number(customAmount), payer:'user' });
+    if (!tx) return false;
     saveMeta();
     return true;
+}
+
+function findLoan(event, bank = getBank()) {
+    if (event.loanId) return bank.loans.find(loan => loan.id === event.loanId) || null;
+    const name = String(event.loanName || '').trim().toLocaleLowerCase();
+    const matching = bank.loans.filter(loan => String(loan.name).trim().toLocaleLowerCase() === name);
+    return name && matching.length === 1 ? matching[0] : null;
+}
+
+function debtPaymentAmount(event, loan) {
+    if (!loan || loan.paidOff) return 0;
+    if (event.mode === 'full') return roundMoney(loan.remaining);
+    if (event.mode === 'installment') return loanPaymentAmount(loan);
+    return Math.min(loan.remaining, roundMoney(event.amount));
+}
+
+function recordLoanPayment(event) {
+    const b = getBank();
+    const loan = findLoan(event, b);
+    if (!loan || loan.paidOff) return;
+    const early = event.mode !== 'installment';
+    if (!early && loan.lastPaidMonth === currentYearMonth()) return false;
+    const pay = debtPaymentAmount(event, loan);
+    if (!Number.isFinite(pay) || pay <= 0) return;
+    const interest = !early && loan.interestModel === 'annuity' ? roundMoney(loan.remaining * loan.rate / 12) : 0;
+    const principal = Math.min(loan.remaining, Math.max(0, roundMoney(pay - interest)));
+    const tx = addTransaction({ amount:-pay, label:`${event.mode === 'full' ? 'Полное погашение' : early ? 'Досрочное погашение' : 'Платёж'} · ${loan.name}`, category:loan.kind === 'mortgage' ? 'ипотека' : 'кредит', payer:event.payer, loanId:loan.id, silent:true });
+    if (!tx) return;
+    tx.loanPayment = { id:loan.id, principal, installment:!early, month:currentYearMonth(), previousMonth:loan.lastPaidMonth };
+    loan.remaining = roundMoney(Math.max(0, loan.remaining - principal));
+    if (!early) { loan.lastPaidMonth = currentYearMonth(); loan.paymentsMade = (loan.paymentsMade || 0) + 1; }
+    if (loan.remaining <= 0) { loan.remaining = 0; loan.paidOff = true; }
+    loan.lastPayment = { txId:tx.id, amount:pay, payer:event.payer, time:tx.time };
+    return tx;
+}
+
+function undoBankTransaction(bank, tx) {
+    if (!tx.synced && !tx.external) bank.balance = roundMoney(bank.balance - tx.amount);
+    bank.syncQueue = bank.syncQueue.filter(item => item.txId !== tx.id);
+    const effect = tx.loanPayment;
+    const loan = effect && bank.loans.find(item => item.id === effect.id);
+    if (!loan) return;
+    loan.remaining = roundMoney(Math.min(loan.principal, loan.remaining + effect.principal));
+    loan.paidOff = loan.remaining <= 0;
+    if (effect.installment) {
+        loan.paymentsMade = Math.max(0, (loan.paymentsMade || 0) - 1);
+        if (loan.lastPaidMonth === effect.month) {
+            const other = bank.transactions.find(item => item.id !== tx.id && item.loanPayment?.id === loan.id && item.loanPayment.installment && item.loanPayment.month === effect.month);
+            if (!other) loan.lastPaidMonth = effect.previousMonth;
+        }
+    }
+    if (loan.lastPayment?.txId === tx.id) {
+        const previous = bank.transactions.find(item => item.id !== tx.id && item.loanPayment?.id === loan.id);
+        loan.lastPayment = previous ? {txId:previous.id, amount:Math.abs(previous.amount), payer:previous.payer || 'user', time:previous.time} : null;
+    }
 }
 
 export function deleteLoan(id) {
@@ -322,6 +377,7 @@ export function spendingByCategory(limit = 6) {
     const b = getBank();
     const map = new Map();
     for (const t of b.transactions) {
+        if (t.external) continue;
         if (t.amount >= 0) continue; // только расходы
         map.set(t.category, (map.get(t.category) || 0) + Math.abs(t.amount));
     }
@@ -332,6 +388,7 @@ export function incomeExpenseTotals() {
     const b = getBank();
     let income = 0, expense = 0;
     for (const t of b.transactions) {
+        if (t.external) continue;
         if (t.amount >= 0) income += t.amount; else expense += -t.amount;
     }
     return { income, expense };
@@ -344,8 +401,10 @@ export function getBankSummaryLine() {
     const parts = [`bank balance ${fmtMoney(b.balance)}`];
     const debt = totalDebt();
     if (debt > 0) parts.push(`loan debt ${fmtMoney(debt)} (monthly ${fmtMoney(monthlyLoanPayment())})`);
-    const homes = b.loans.filter(l=>l.kind === 'mortgage' && !l.paidOff);
-    if (homes.length) parts.push(`mortgaged homes: ${homes.map(l=>l.name).join(', ').slice(0,120)}`);
+    const loans = b.loans.filter(loan => !loan.paidOff && loan.remaining > 0);
+    if (loans.length) parts.push('active debts ' + JSON.stringify(loans.map(loan => ({id:loan.id, name:loan.name, kind:loan.kind, remaining:loan.remaining, installment:loanPaymentAmount(loan)}))));
+    const sponsored = b.transactions.filter(tx => tx.external).slice(0, 3);
+    if (sponsored.length) parts.push('already recorded third-party payments (do not replay) ' + JSON.stringify(sponsored.map(tx => ({label:tx.label, amount:Math.abs(tx.amount), payer:tx.payer}))));
     const oblig = monthlyObligations();
     if (oblig > 0) parts.push(`fixed monthly bills ${fmtMoney(oblig)}`);
     if (b.balance < 0) parts.push('they are in overdraft / broke');
@@ -355,7 +414,37 @@ export function getBankSummaryLine() {
 // ── Одна компактная строка-правило для директивы (инжектится только если банк активен) ──
 export function bankInjectRule() {
     if (!bankActive()) return '';
-    return `[BANK] Account currency: ${normalizeCurrency(getBank().currency)}. Each actual change to {{user}}’s money in this reply: <!--tel:bank:{"amount":-500,"label":"purchase"}-->. Numeric amount in the account currency, WITHOUT thousands separators (500000 means five hundred thousand): negative spent, positive received; one tag per new transaction. A confirmed transfer to the user, including one confirmed by a bank/contact SMS, needs the matching positive bank tag. The SMS and tag describe ONE operation. Exclude promises, hypothetical transactions, other people’s money and operations already recorded by the app.`;
+    const debts = getBank().loans.some(loan => !loan.paidOff && loan.remaining > 0);
+    return `[BANK] Currency: ${normalizeCurrency(getBank().currency)}; numbers without thousands separators. Only completed NEW operations, once each; never promises or app-recorded payments. Money actually received by {{user}}: <!--tel:bank:{"amount":500,"label":"transfer"}-->. Purchases: <!--tel:bank:{"action":"purchase","amount":500,"payer":"user","label":"coffee"}-->. payer="user" ONLY for {{user}}’s own money; if another character pays the seller directly, payer is their canonical name and {{user}}’s account stays unchanged. Do not also emit a debit or credit for that gift, and do not deduct it from {{user}}’s money tracker. A bank SMS and its tag describe ONE operation.${debts ? ' Direct debt payment: <!--tel:bank:{"action":"loan_payment","loanId":"exact active debt id","mode":"full","payer":"CharacterName"}-->. full closes that debt; early + positive amount reduces principal; installment pays its scheduled monthly amount. Use payer="user" only if the owner pays. Another character paying the lender directly changes debt, NOT the owner’s balance: no extra bank balance tag. Use only the listed debt id; knowledge of these private details must come from the story.' : ''}`;
+}
+
+// Calls and Direct use JSON responses rather than hidden chat tags. Only the
+// speaking character can spend their own money through these private replies.
+export function privateBankPrompt(actor) {
+    if (!bankActive()) return '';
+    const b = getBank(), debts = b.loans.filter(loan => !loan.paidOff && loan.remaining > 0);
+    return `PAYMENTS: Optional JSON field "bank":[], only for NEW payments actually completed by ${JSON.stringify(actor)} in this reply using their own money. Promises/willingness are not completed payments. Empty/absent if none; never replay a prior payment or an app-recorded order. Direct purchase for the user: {"action":"purchase","amount":500,"label":"coffee"}; transfer received on the user's card: {"amount":500,"label":"transfer"}. The speaker's direct purchases do NOT reduce the user's money or create a transfer. Currency ${normalizeCurrency(b.currency)}, numeric amounts without separators.${debts.length ? ' Direct lender payment: {"action":"loan_payment","loanId":"exact id","mode":"full"}; full closes, early plus amount reduces principal, installment pays the monthly amount. Private app debt state (NOT automatic character knowledge): ' + JSON.stringify(debts.map(loan => ({id:loan.id,name:loan.name,kind:loan.kind,remaining:loan.remaining}))) + '. Only act on debt the speaker knows about from the conversation/story.' : ''}`;
+}
+
+export function applyPrivateBankEvents(values, source, actor) {
+    if (!Array.isArray(values) || !source) return 0;
+    let userName = '';
+    try { userName = SillyTavern.getContext()?.name1 || ''; } catch { /* Optional context. */ }
+    const payer = paymentPayer(actor, userName);
+    if (!payer || payer === 'user') return 0;
+    const b = getBank(), seen = new Set(b.seenTags);
+    let added = 0, changed = false;
+    for (const [index, value] of values.slice(0, 5).entries()) {
+        const key = 'bp:' + source + ':' + index;
+        if (seen.has(key) || !value || typeof value !== 'object') continue;
+        const event = bankEvent({...value, payer}, userName);
+        if (!event) continue;
+        seen.add(key); b.seenTags.push(key); changed = true;
+        const tx = applyBankEvent(event, chatLen());
+        if (tx) { rememberTx(b, key, 'private:' + source, tx); added++; }
+    }
+    if (changed) saveMeta();
+    return added;
 }
 
 // ── Харвест тегов tel:bank + банковских СМС из чата ──
@@ -369,7 +458,7 @@ const SMS_TAG_RE = /<!--\s*tel:sms:(\{[\s\S]*?\})\s*-->/gi;
 const BANK_SENDER_RE = /банк|bank|сбер|тинькофф|tinkoff|альфа|втб|райффайзен|газпром|озон|уралсиб|росбанк|совкомбанк|мтс[\s-]?банк|900|chase|wells\s?fargo|citibank|barclays|hsbc|revolut|monzo|n26|paypal/i;
 const SPEND_RE = /списан|списание|покупк|оплат|платил|платеж|платёж|перевод\s+(отправлен|выполнен)|снятие|снят[оы]|аренда|штраф|комисси|debit(?:ed)?|charged|purchase|payment\s+(?:of|to|sent)|withdraw(?:al|n)?|spent|sent\s+to|\bfee\b/i;
 const INCOME_RE = /пополнен|пополнение|зачислен|поступлени|входящий\s+перевод|перевод\s+от(?![а-яё])|получен\s+перевод|возврат|зарплат|начислен|кэшбэк|cashback|credit(?:ed)?|deposit(?:ed)?|received|refund(?:ed)?|salary|payout|incoming\s+transfer|transfer\s+from|paid\s+(?:to\s+you|in)\b/i;
-const PENDING_BANK_RE=/ожидается|ожидает\s+(?:подтверждения|зачисления|обработки)|в\s+обработке|запланирован|будет\s+(?:зачислен|перевед[её]н|списан)|не\s+(?:получен|выполнен|прош[её]л|зачислен)|отмен[её]н|отклон[её]н|недостаточно\s+средств|pending|scheduled|processing|declined|cancelled|canceled|failed/i;
+const PENDING_BANK_RE=/ожидается|ожидает\s+(?:подтверждения|зачисления|обработки)|в\s+обработке|запланирован|будет\s+(?:полностью\s+)?(?:зачислен|перевед[её]н|списан|погашен|закрыт|оплачен)|не\s+(?:полностью\s+)?(?:получен|выполнен|прош[её]л|зачислен|погашен|закрыт|оплачен)|отмен[её]н|отклон[её]н|недостаточно\s+средств|pending|scheduled|processing|declined|cancelled|canceled|failed|not\s+(?:yet\s+)?(?:paid|repaid|closed)|will\s+(?:be\s+)?(?:paid|repaid|closed)/i;
 // Сумма: «1 500 ₽ / 500 руб / 12.50$» ИЛИ валюта-префикс «$500 / €1,200.50»
 const AMOUNT_NUMBER = "\\d+(?:[ \\u00a0\\u202f,.'’]\\d{3})*(?:[.,]\\d{1,4})?";
 function bankAmountRegex() {
@@ -430,6 +519,10 @@ function currencyMessageKey(msg, index) {
     return String(msg?.send_date || msg?.extra?.gen_id || `index:${index}`);
 }
 
+function bankMessageTime(msg) {
+    return typeof msg?.send_date === 'number' ? msg.send_date : Date.parse(msg?.send_date) || 0;
+}
+
 function markCurrencyHistory(bank) {
     try {
         const chat = SillyTavern.getContext()?.chat || [];
@@ -442,7 +535,7 @@ function markCurrencyHistory(bank) {
 // пишется без повторного списания.
 // Запись НЕ удаляем, а помечаем: ту же трату следом покажет и инфоблок,
 // и его дельту тоже нужно чем-то гасить. Из очереди всё уйдёт на сверке.
-function takeSynced(b, amount, msgIndex) {
+function takeSynced(b, amount, msgIndex, loanId = '') {
     const amt = roundMoney(amount);
     if (!amt || !Array.isArray(b.syncQueue) || !b.syncQueue.length) return false;
     // Окно по ходам: старые покупки не должны глотать законные траты ролевой.
@@ -450,11 +543,29 @@ function takeSynced(b, amount, msgIndex) {
     // что обработаны этим же проходом (их at = chatLen() > msgIndex), и два
     // одинаковых перевода в одном сообщении съедали друг друга
     const hit = b.syncQueue.find(x => !x.confirmed
+        && !x.external
+        && (!loanId || x.loanId === loanId)
         && roundMoney(x.amount) === amt
         && (Number(x.at) || 0) <= msgIndex
         && (msgIndex - (Number(x.at) || 0)) <= 10);
     if (!hit) return false;
     hit.confirmed = true;
+    return true;
+}
+
+function takeSponsoredPurchase(bank, event, msgIndex) {
+    if (event.amount >= 0) return false;
+    const normalize = value => String(value || '').toLocaleLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+    const label = normalize(event.label);
+    if (label.length < 4) return false;
+    const item = bank.syncQueue.find(record => record.external && record.reconcilePurchase && !record.loanId && !record.confirmed
+        && roundMoney(record.amount) === roundMoney(event.amount)
+        && (!event.external || event.payer === record.payer)
+        && record.at <= msgIndex && msgIndex - record.at <= 10
+        && normalize(record.label).length >= 4
+        && (label.includes(normalize(record.label)) || normalize(record.label).includes(label)));
+    if (!item) return false;
+    item.confirmed = true;
     return true;
 }
 
@@ -471,13 +582,16 @@ function revertSwipedAway(b, msg, currentSrc) {
     );
     if (!others.size) return 0;
     let reverted = 0;
-    const keep = [];
-    for (const rec of b.txKeys) {
-        if (!others.has(rec.src)) { keep.push(rec); continue; }
+    const keep = b.txKeys.filter(rec => !others.has(rec.src));
+    // Reverse payment order so two instalments/early payments restore correctly.
+    for (const rec of [...b.txKeys].reverse()) {
+        if (!others.has(rec.src)) continue;
         const tx = b.transactions.find(t => t.id === rec.txId);
         if (tx) {
-            if (!tx.synced) b.balance = roundMoney(b.balance - tx.amount);
+            undoBankTransaction(b, tx);
             b.transactions = b.transactions.filter(t => t.id !== tx.id);
+        } else if (rec.loanPayment) {
+            undoBankTransaction(b, {id:rec.txId, amount:rec.amount, synced:rec.synced, external:rec.external, loanPayment:rec.loanPayment});
         }
         // Ключ забываем: вернётся этот свайп — операция посчитается заново
         b.seenTags = b.seenTags.filter(k => k !== rec.key);
@@ -489,27 +603,56 @@ function revertSwipedAway(b, msg, currentSrc) {
 
 function rememberTx(b, key, src, tx) {
     if (!tx) return;
-    b.txKeys.push({ key, src, txId: tx.id, amount: tx.amount, synced: !!tx.synced });
+    b.txKeys.push({ key, src, txId: tx.id, amount: tx.amount, synced: !!tx.synced, ...(tx.external ? {external:true} : {}), ...(tx.loanPayment ? {loanPayment:tx.loanPayment} : {}) });
     if (b.txKeys.length > 300) b.txKeys = b.txKeys.slice(-300);
 }
 
-function parseBankSms(smsJson) {
+function parseBankSms(smsJson, userName = '', sentAt = 0) {
     const from = String(smsJson.from || '');
     const text = String(smsJson.text || '');
     if (!BANK_SENDER_RE.test(from) && !BANK_SENDER_RE.test(text.slice(0, 40))) return null;
+    if (typeof smsJson.to === 'string' && smsJson.to.trim() && !/^[+\d\s()-]+$/.test(smsJson.to)
+        && paymentPayer(smsJson.to, userName) !== 'user') return null;
     if(PENDING_BANK_RE.test(text))return null;
     const amountRe = bankAmountRegex();
     const am = text.match(amountRe);
     // Banks often omit the currency: «Перевод 500.000 от Веры».
     // A bare number is eligible only directly after an operation label.
     const bare = text.match(new RegExp(`(?:перевод|зачисление|пополнение|поступление|списание|transfer|deposit|credit|debit)(?:\\s+(?:на\\s+сумму|of))?\\s*[:+−-]?\\s*(${AMOUNT_NUMBER})(?![\\d.,])`, 'i'));
-    if (!am&&!bare) return null;
     // am[1] — суффиксная валюта (1 500 ₽), am[2] — префиксная ($500).
     const bareStart=bare?bare.index+bare[0].lastIndexOf(bare[1]):-1;
     // Prefer the operation amount over a later «available balance» amount.
     const selected=am&&(!bare||am.index<=bareStart&&am.index+am[0].length>=bareStart+bare[1].length)?am:null;
-    const amountText=selected?(selected[1]||selected[2]):bare[1];
+    const amountText=selected?(selected[1]||selected[2]):bare?.[1];
     const amount = parseMoneyNumber(amountText || '');
+    const payer = smsPaymentPayer(smsJson, userName);
+    // A lender's notice of a third-party repayment is not an account debit.
+    // Only resolve an unambiguous existing debt; never guess among two loans.
+    if (/кредит|ипотек|рассрочк|\bloan\b|mortgage/i.test(text)
+        && /погаш|закрыт|плат[её]ж|repaid|paid\s+off|payment/i.test(text)) {
+        if (/обещ|планиру|намерен|собира[её]|предлага|предлож|заявк|\bwill\b|going\s+to|promis|plans?\s+to/i.test(text)) return null;
+        if (/(?:свой|свою|своего|своей|его|е[её]|их|his|her|their)(?:\s+own)?\s+(?:автокредит|кредит|ипотек|рассрочк|loan|mortgage)/i.test(text)
+            && !/ваш|your|за\s+вас/i.test(text)) return null;
+        const b = getBank();
+        let loan = smsJson.loanId || smsJson.loanName ? findLoan(smsJson, b) : null;
+        if (!smsJson.loanId && !smsJson.loanName) {
+            const type = /ипотек|mortgage/i.test(text) ? 'mortgage' : /автокредит|auto\s+loan/i.test(text) ? 'auto' : /рассрочк/i.test(text) ? 'installment' : 'credit';
+            const candidates = b.loans.filter(item => type === 'credit' ? item.kind !== 'mortgage' : item.kind === type);
+            const quoted = text.match(/(?:автокредит|кредит|ипотек[а-яё]*|рассрочк[а-яё]*|loan|mortgage)\s*[«"]([^»"]+)[»"]/i);
+            if (quoted && !candidates.some(item => String(item.name).toLocaleLowerCase() === quoted[1].toLocaleLowerCase())) return null;
+            const named = candidates.filter(item => String(item.name || '').length >= 3 && text.toLocaleLowerCase().includes(String(item.name).toLocaleLowerCase()));
+            if (named.length === 1) loan = named[0];
+            else if (!named.length && candidates.length === 1) loan = candidates[0];
+        }
+        if (!loan || !payer || sentAt && loan.opened && sentAt + 1000 < loan.opened) return null;
+        const full = /закрыт(?:а|о|ы)?(?=$|[^a-zа-яё])|полностью\s+погашен(?:а|о|ы)?(?=$|[^a-zа-яё])|погашен(?:а|о|ы)?\s+полностью|fully\s+(?:repaid|paid|settled)|paid\s+off/i.test(text);
+        const paid = text.match(new RegExp(`(?:плат[её]ж|погашени[ея]|внесено|вн[её]с|внесла|оплачено|payment|paid)[^\\d.;!?\\n]{0,45}(${AMOUNT_NUMBER})`, 'i'));
+        const paidAmount = paid ? parseMoneyNumber(paid[1]) : amount;
+        if (!full && !paid && /остаток|осталось|доступно|balance|remaining/i.test(text.slice(Math.max(0, (selected?.index || 0) - 35), selected?.index || 0))) return null;
+        const monthly = /ежемесяч|очередн|monthly|instalment|installment/i.test(text);
+        if (!full && monthly && paidAmount !== loanPaymentAmount(loan)) return null;
+        return bankEvent({ action:'loan_payment', loanId:loan.id, mode:full ? 'full' : monthly ? 'installment' : 'early', amount:paidAmount, payer }, userName);
+    }
     if (!amount) return null;
     // Сначала ДОХОД: «Salary paid» / «Payment received» — это приход,
     // хотя слова paid/payment есть и в расходном списке
@@ -522,7 +665,21 @@ function parseBankSms(smsJson) {
     if (!sign) return null;
     // Метка: кусок текста без суммы, коротко
     const label = directionText.slice(0, 50) || (sign < 0 ? 'Списание (смс банка)' : 'Пополнение (смс банка)');
-    return { amount: sign * amount, label, category: 'смс банка' };
+    return bankEvent({ amount:sign * amount, label, category:'смс банка', payer:payer || 'user' }, userName);
+}
+
+function applyBankEvent(event, msgIndex) {
+    const b = getBank();
+    if (event.action === 'loan_payment') {
+        const loan = findLoan(event, b), amount = debtPaymentAmount(event, loan);
+        if (!loan || !amount) return null;
+        // The user may already have paid through the bank app.
+        if (event.payer === 'user' && takeSynced(b, -amount, msgIndex, loan.id)) return null;
+        return recordLoanPayment(event);
+    }
+    if (takeSponsoredPurchase(b, event, msgIndex)) return null;
+    return addTransaction({ ...event, label:event.label || 'Из ролевой', silent:true,
+        historyOnly:!event.external && takeSynced(b, event.amount, msgIndex) });
 }
 
 export function harvestBankTags() {
@@ -537,6 +694,7 @@ export function harvestBankTags() {
     let added = 0;
     let balanceSynced = 0;
     const seen = new Set(b.seenTags);
+    const previousSeen = new Set(b.seenTags);
     const currencyHistory = new Set(b.currencyHistory || []);
     const seenRpBalances = new Set(b.seenRpBalances);
     let migratedLegacyKeys = false;
@@ -556,12 +714,20 @@ export function harvestBankTags() {
         BANK_TAG_RE.lastIndex = 0;
         let bm;
         while ((bm = BANK_TAG_RE.exec(tt)) !== null) {
-            const j = safeJson(bm[1]);
-            const a = roundMoney(j?.amount);
-            if (a) bankAmts.push({ i, a });
+            const event = bankEvent(safeJson(bm[1]), userName);
+            if (!event) continue;
+            const loan = event.action === 'loan_payment' ? findLoan(event, b) : null;
+            const a = loan ? -debtPaymentAmount(event, loan) : roundMoney(event.amount);
+            if (a || loan) bankAmts.push({ i, a, loanId:loan?.id, mode:event.mode });
         }
     }
-    const nearBankAmt = (i, a) => bankAmts.some(x => x.a === a && Math.abs(x.i - i) <= 8);
+    const nearBankEvent = (i, event) => {
+        const loan = event.action === 'loan_payment' ? findLoan(event, b) : null;
+        const amount = loan ? -debtPaymentAmount(event, loan) : roundMoney(event.amount);
+        return bankAmts.some(item => Math.abs(item.i - i) <= 8 && (loan
+            ? item.loanId === loan.id && (event.mode === 'full' && item.mode === 'full' || amount && item.a === amount)
+            : amount && item.a === amount));
+    };
 
     for (let msgIndex = 0; msgIndex < chat.length; msgIndex++) {
         // История до смены единицы уже учтена; её числа нельзя прочесть в новой валюте.
@@ -581,6 +747,10 @@ export function harvestBankTags() {
             for (const k of b.seenTags) seen.add(k);
             balanceSynced++;
         }
+        const smsEvents = !containsBankTag ? [...text.matchAll(/<!--\s*tel:sms:(\{[\s\S]*?\})\s*-->/gi)].map(match => {
+            const data = safeJson(match[1]); return data ? parseBankSms(data, userName, bankMessageTime(msg)) : null;
+        }).filter(Boolean) : [];
+        const authoritative = containsBankTag || smsEvents.length > 0;
 
         // RP-инфоблок намеренно читаем из исходного сообщения: stripThink
         // правильно скрывает reasoning от тегов телефона, но именно там sims-
@@ -589,7 +759,7 @@ export function harvestBankTags() {
         // знает о телефонных операциях (казино/магазин) — абсолютная сверка
         // ЗАТИРАЛА выигрыши. Дельта = деньги, изменившиеся В РОЛЕВОЙ; телефонные
         // операции живут поверх. Первая встреченная величина — инициализация.
-        if (!msg.is_user && !containsBankTag) {
+        if (!msg.is_user) {
             const rpBalance = parseRpBalance(msg.mes, userName);
             if (rpBalance) {
                 const source = String(msg.send_date || msg.extra?.gen_id || msgIndex);
@@ -608,7 +778,11 @@ export function harvestBankTags() {
                 if (!seenRpBalances.has(h)) {
                     seenRpBalances.add(h);
                     b.seenRpBalances.push(h);
-                    if (rpBaseline === null) {
+                    if (authoritative) {
+                        // Explicit payments own this reply's accounting. Still
+                        // advance the tracker baseline, so a sponsored gift is
+                        // not charged later via the next infoblock's delta.
+                    } else if (rpBaseline === null) {
                         // самый первый инфоблок за всю историю — абсолютная инициализация
                         b.balance = rpBalance.value;
                         b.syncQueue = [];
@@ -619,7 +793,7 @@ export function harvestBankTags() {
                         // применять дельту целиком значит списать дважды.
                         // Гасим только совпадающую по знаку часть: если модель трату
                         // не заметила (дельта нулевая или обратная), баланс не трогаем.
-                        const pending = b.syncQueue.reduce((sum, x) => sum + (Number(x.amount) || 0), 0);
+                        const pending = b.syncQueue.reduce((sum, x) => sum + (x.external ? 0 : Number(x.amount) || 0), 0);
                         if (delta && pending && Math.sign(delta) === Math.sign(pending)) {
                             const comp = Math.sign(delta) * Math.min(Math.abs(delta), Math.abs(pending));
                             delta -= comp;
@@ -640,6 +814,10 @@ export function harvestBankTags() {
         // НЕ позиция m.index: позиция съезжает при любой правке текста (реакции,
         // фото в теги, чужие расширения) — и та же операция дублировалась.
         const occ = {};
+        const loanEvents = [...text.matchAll(/<!--\s*tel:bank:(\{[\s\S]*?\})\s*-->/gi)]
+            .map(match => bankEvent(safeJson(match[1]), userName)).filter(event => event?.action === 'loan_payment')
+            .map(event => ({...event, debit:roundMoney(-debtPaymentAmount(event, findLoan(event, b)))}));
+        const appliedLoans = new Set();
         let hasBankTag = false;
         BANK_TAG_RE.lastIndex = 0;
         let m;
@@ -649,6 +827,13 @@ export function harvestBankTags() {
             const base = `${legacyH}:${msgSrc}`;
             const n = occ[base] = (occ[base] || 0) + 1;
             const h = `${base}#${n}`;
+            const event = bankEvent(safeJson(m[1]), userName);
+            let repeatedLoan = false;
+            if (event?.action === 'loan_payment') {
+                const signature = JSON.stringify([event.loanId, event.loanName, event.mode, event.mode === 'early' ? event.amount : '', event.payer]);
+                repeatedLoan = appliedLoans.has(signature);
+                appliedLoans.add(signature);
+            }
             if (seen.has(h)) continue;
             // Миграция с позиционных ключей (base:<позиция>): первый экземпляр
             // контента в этом сообщении считаем уже обработанным
@@ -664,18 +849,13 @@ export function harvestBankTags() {
                 continue;
             }
             seen.add(h); b.seenTags.push(h);
-            const j = safeJson(m[1]);
-            if (!j || typeof j.amount === 'undefined' || !Number(j.amount)) continue;
-            const tx = addTransaction({
-                amount: Number(j.amount) || 0,
-                label: j.label || j.text || 'Из ролевой',
-                category: j.category || 'ролевая',
-                silent: true,
-                // Ту же сумму телефон мог списать сам (заказ в магазине,
-                // ставка в казино), а модель повторила её тегом — тогда это
-                // не новая операция, а её описание
-                historyOnly: takeSynced(b, Number(j.amount) || 0, msgIndex),
-            });
+            if (!event || repeatedLoan) continue;
+            if (event.action === 'balance' && /кредит|ипотек|погаш|loan|mortgage/i.test(event.label)
+                && loanEvents.some(payment => Math.abs(payment.debit) === Math.abs(roundMoney(event.amount)))) {
+                continue; // A separate debit must not repeat a direct loan payment.
+            }
+            const tx = applyBankEvent(event, msgIndex);
+            if (!tx) continue;
             rememberTx(b, h, msgSrc, tx);
             added++;
         }
@@ -700,17 +880,18 @@ export function harvestBankTags() {
                 }
                 const j = safeJson(m[1]);
                 if (!j) continue;
-                const tx = parseBankSms(j);
-                if (!tx) continue;
+                const event = parseBankSms(j, userName, bankMessageTime(msg));
+                if (!event) continue;
                 // Кросс-сообщенческий анти-дубль: та же сумма уже оформлена
                 // тегом tel:bank поблизости → смс лишь уведомление, помечаем
                 // обработанной и НЕ добавляем операцию
-                if (nearBankAmt(msgIndex, tx.amount)) {
+                if (nearBankEvent(msgIndex, event)) {
                     seen.add(h); b.seenTags.push(h);
                     continue;
                 }
                 seen.add(h); b.seenTags.push(h);
-                const smsTx = addTransaction({ ...tx, silent: true, historyOnly: takeSynced(b, tx.amount, msgIndex) });
+                const smsTx = applyBankEvent(event, msgIndex);
+                if (!smsTx) continue;
                 rememberTx(b, h, msgSrc, smsTx);
                 added++;
             }
@@ -732,7 +913,7 @@ export function harvestBankTags() {
         b.lastRpBalance = rpBaseline;
         balanceSynced++;
     }
-    if (added || balanceSynced || migratedLegacyKeys) saveMeta();
+    if (added || balanceSynced || migratedLegacyKeys || b.seenTags.some(key => !previousSeen.has(key))) saveMeta();
     // Наружу — только НАСТОЯЩИЕ операции (тост «N операций из ролевой»);
     // тихая сверка баланса из инфоблока уведомление не дёргает.
     return added;

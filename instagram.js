@@ -1,24 +1,31 @@
 import { getMeta, saveMeta, getPhoneMessageText, stripThink, isUserName, isBanned } from './state.js';
 import { generateInstagramDmReply, logSocialToChat, getUserName, getStories, addIgComment, resolveAuthorKey } from './social.js';
 import { getInstagram, addIgDm, addIgActivity, igParty, igThread, igPerson, igEventText } from './instagram-state.js';
+import { applyPrivateBankEvents } from './bank.js';
 
-const busy=new WeakSet();
-export const igDmBusy=thread=>!!thread&&busy.has(thread);
+const busy=new WeakMap();
+const pendingFor=owner=>{if(!busy.has(owner))busy.set(owner,new Set());return busy.get(owner);};
+export const igDmBusy=thread=>!!thread&&(igThread(thread.id)||thread).messages.some(message=>busy.get(getMeta())?.has(message.id));
 export function igDmRetryMessage(thread){
     const last=thread?.messages?.at(-1);
     return last?.dir==='out'&&last.replyState!=='complete'&&!igDmBusy(thread)?last:null;
 }
 async function requestIgReply(owner,thread,sent){
-    busy.add(thread);sent.message.replyState='pending';saveMeta();
+    const pending=pendingFor(owner),pendingId=sent.message.id;pending.add(pendingId);sent.message.replyState='pending';saveMeta();
     try{
         const reply=await generateInstagramDmReply(thread);
         if(getMeta()!==owner)return sent;
-        if(reply?.text)addIgDm(thread,{dir:'in',text:reply.text,source:'reply:'+sent.message.id});
+        thread=igThread(thread.id)||thread;
+        sent.thread=thread;sent.message=thread.messages.find(message=>message.id===sent.message.id)||sent.message;
+        if(reply?.text){
+            addIgDm(thread,{dir:'in',text:reply.text,source:'reply:'+sent.message.id});
+            applyPrivateBankEvents(reply.bank,'igdm:'+sent.message.id,thread.author);
+        }
         sent.message.replyState='complete';saveMeta();return sent;
     }catch(error){
         if(getMeta()===owner){sent.message.replyState='failed';saveMeta();}
         throw error;
-    }finally{busy.delete(thread);}
+    }finally{pending.delete(pendingId);}
 }
 export async function retryIgDm(id,messageId){
     const owner=getMeta(),thread=igThread(id),message=igDmRetryMessage(thread);
@@ -26,7 +33,7 @@ export async function retryIgDm(id,messageId){
     return requestIgReply(owner,thread,{thread,message});
 }
 export async function sendIgDm(id,text='',share=null){
-    const owner=getMeta(),thread=igThread(id);if(!thread||busy.has(thread))return null;
+    const owner=getMeta(),thread=igThread(id);if(!thread||igDmBusy(thread))return null;
     const sent=addIgDm(thread,{dir:'out',text,share});if(!sent)return null;
     const label=igPerson(thread).name;
     logSocialToChat(getUserName()+' пишет '+thread.author+' (в контактах «'+label+'») в Instagram Direct: '+(text||'пересылает публикацию')+(share?' [переслано: '+share.author+' — '+share.text+']':''),{priv:true,marker:'igdm:'+sent.message.id});
@@ -66,7 +73,7 @@ export function harvestInstagramTags(){
                 const share=incomingShare(event.shot);
                 if((typeof event.text!=='string'||!event.text.trim())&&!share)continue;
                 const story=event.storyId?getStories().find(item=>item.id===event.storyId&&item.ak==='user'):null;
-                if(addIgDm(event.from,{text:event.text||'',source:key,share:share||(story?{app:'st',id:story.id,author:story.author,text:story.caption||story.imgDesc,image:story.image,replyTo:true}:null)}))added++;
+                if(addIgDm({name:event.from,handle:event.handle||''},{text:event.text||'',source:key,share:share||(story?{app:'st',id:story.id,author:story.author,text:story.caption||story.imgDesc,image:story.image,replyTo:true}:null)}))added++;
             }else{
                 const kind=event.kind;if(!['like','comment','follow','story_like'].includes(kind))continue;
                 const target=kind==='story_like'?'story':kind==='follow'?'profile':'post';
@@ -90,10 +97,10 @@ export function harvestInstagramTags(){
     if(data.seenTags.length>600)data.seenTags=data.seenTags.slice(-600);if(changed)saveMeta();return added;
 }
 export function instagramInjectLine(){
-    const root=getMeta(),social=root.social;
+    const root=getMeta(),data=getInstagram(),social=root.social;
     if(!social?.igPosts?.length&&!social?.stories?.length&&!social?.instagram?.threads?.length)return '';
     const posts=social.igPosts||[],own=posts.filter(item=>item.ak==='user').slice(0,3),others=posts.filter(item=>item.ak!=='user').slice(0,2);
     const ids=[...[...own,...others].map(item=>'ig '+item.id+' by '+item.author+': '+String(item.caption||item.imgDesc||'photo').slice(0,85)),...(social.stories||[]).filter(item=>Date.now()-item.time<86400000).slice(0,4).map(item=>'st '+item.id+' by '+item.author+': '+String(item.caption||item.imgDesc||'photo').slice(0,85))];
-    const recent=(social.instagram?.threads||[]).filter(thread=>thread.messages?.length).sort((a,b)=>b.messages.at(-1).at-a.messages.at(-1).at).slice(0,3).map(thread=>thread.author+' (saved as '+igPerson(thread).name+'): '+thread.messages.slice(-2).map(message=>(message.dir==='out'?'user':'contact')+': '+message.text.slice(0,180)).join(' | '));
+    const recent=data.threads.filter(thread=>thread.messages?.length).sort((a,b)=>b.messages.at(-1).at-a.messages.at(-1).at).slice(0,3).map(thread=>thread.author+' (saved as '+igPerson(thread).name+'): '+thread.messages.slice(-2).map(message=>(message.dir==='out'?'user':'contact')+': '+message.text.slice(0,180)).join(' | '));
     return 'INSTAGRAM: story replies and Direct messages belong here, not SMS unless a separate phone text is sent. Incoming DM: <!--tel:igdm:{"from":"canonical name","text":"message"}-->, optional "storyId" for a reply to a listed story. Characters may SEND existing Instagram posts and stories (including the user’s) to the user with an in-character comment: put "shot":{"app":"ig|st","id":"listed ID","author":"post author","text":"post/story content"} in tel:igdm or tel:sms, choosing the actual delivery app. This creates a forwarded card, not a new post. Do not only narrate the share or copy it as plain text. For an established notification: <!--tel:ignotify:{"from":"canonical name","kind":"like|comment|follow|story_like","postId":"listed ID","text":"optional comment"}-->; story reactions use "storyId". Notify only on the user’s content. Do not repeat events, invent user actions, or expose private DMs to outsiders. AVAILABLE POSTS/STORIES:\n'+ids.join('\n')+(recent.length?'\nPRIVATE DIRECT — only participants know:\n'+recent.join('\n'):'');
 }

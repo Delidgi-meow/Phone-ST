@@ -1,8 +1,9 @@
 
-import { getMeta, saveMeta, getRpDateTime, rpTimeTagged } from './state.js';
+import { getMeta, saveMeta, getRpDateTime, rpTimeTagged, resolveContactKey, contactOriginalName, displayName } from './state.js';
 import { generateShopContent, logSocialToChat, getUserName, generateCourier, generateCourierReply } from './social.js';
 import { addTransaction, getBank, fmtMoney, roundMoney } from './bank.js';
 import { lang } from './i18n.js';
+import { paymentPayer } from './bank-protocol.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -59,6 +60,22 @@ export function getShop() {
 
 export function getCategory(catId) {
     return getShop().cats[catId] || null;
+}
+
+export function getShopPayer() {
+    const selected = getShop().paymentPayer;
+    if (!selected || selected === 'user') return {payer:'user', label:lang() === 'en' ? 'My account' : 'Мой счёт', key:''};
+    const key = selected.key ? resolveContactKey(selected.key) : '';
+    const name = key ? contactOriginalName(key, selected.name) : String(selected.name || '');
+    const payer = paymentPayer(name, getUserName());
+    return {payer, key, label:payer === 'user' ? (lang() === 'en' ? 'My account' : 'Мой счёт') : key ? displayName(key, name) : name};
+}
+
+export function setShopPayer(selected) {
+    const key = selected?.key ? resolveContactKey(selected.key) : '';
+    const name = key ? contactOriginalName(key, selected?.name) : String(selected?.name || '').trim().slice(0, 80);
+    getShop().paymentPayer = !name || paymentPayer(name, getUserName()) === 'user' ? 'user' : {key, name};
+    saveMeta();
 }
 
 // Категория «активна» (что-то сгенерировано/куплено) — на будущее/бейджи
@@ -135,7 +152,8 @@ export async function searchShopProducts(query){
     return stores;
 }
 
-// Купить товар: списываем с банка, пишем заказ, событие в чат (ролевая узнаёт)
+// The chosen payer is recorded before the order: sponsored purchases never
+// create a temporary debit/refund on the owner's account.
 export function buyItem(catId, storeId, itemId) {
     const s = getShop();
     const cat = s.cats[catId];
@@ -145,12 +163,14 @@ export function buyItem(catId, storeId, itemId) {
     const item = store.items.find(x => x.id === itemId);
     if (!item) return null;
 
-    addTransaction({ amount: -item.price, label: item.name, category: 'покупки' });
+    const payment = getShopPayer();
+    addTransaction({ amount: -item.price, label: item.name, category: 'покупки', payer:payment.payer, appPurchase:true });
 
     // Корзина: пока курьер не выехал, добор из того же магазина идёт в тот же
     // заказ. Иначе два круассана из одной «Азбуки» ехали бы по отдельности,
     // каждый со своим сроком.
     const open = s.orders.find(o => o.stage === 'placed' && o.cat === catId && o.store === store.name
+        && (o.payer || 'user') === payment.payer
         && (o.placedTurn === chatLen() || Date.now() - (o.time || 0) < 15 * 60 * 1000));
     if (open) {
         if (!Array.isArray(open.items)) open.items = [{ name: open.item, price: open.price }];
@@ -158,12 +178,12 @@ export function buyItem(catId, storeId, itemId) {
         open.price += item.price;
         saveMeta();
         try {
-            logSocialToChat(`${getUserName()} добавляет «${item.name}» (${store.name}) к заказу за ${fmtMoney(item.price)}`);
+            logSocialToChat(`${getUserName()} добавляет «${item.name}» (${store.name}) к заказу за ${fmtMoney(item.price)}.${payment.payer === 'user' ? ' Оплачено со счёта владельца телефона; уже учтено банком.' : ` Напрямую магазину платит ${payment.payer} своими деньгами; счёт ${getUserName()} не меняется. Оплата уже учтена.`}`);
         } catch (e) { /* ignore */ }
         return { ...open, merged: true };
     }
 
-    const order = { id: genId(), item: item.name, price: item.price, store: store.name, cat: catId, time: Date.now(), items: [{ name: item.name, price: item.price }] };
+    const order = { id: genId(), item: item.name, price: item.price, store: store.name, cat: catId, time: Date.now(), payer:payment.payer, payerKey:payment.key, items: [{ name: item.name, price: item.price }] };
     if (BOOKING_CATS.has(catId)) {
         order.stage = 'booked';
     } else {
@@ -180,7 +200,7 @@ export function buyItem(catId, storeId, itemId) {
     // Событие для ролевой (скрытая строка в чат, уважает настройку журнала)
     try {
         const verb = catId === 'hotels' ? 'бронирует' : (catId === 'travel' ? 'оформляет тур' : 'заказывает');
-        logSocialToChat(`${getUserName()} ${verb} «${item.name}» (${store.name}) за ${fmtMoney(item.price)}`);
+        logSocialToChat(`${getUserName()} ${verb} «${item.name}» (${store.name}) за ${fmtMoney(item.price)}.${payment.payer === 'user' ? ' Оплачено со счёта владельца телефона; уже учтено банком.' : ` Напрямую продавцу платит ${payment.payer} своими деньгами; счёт ${getUserName()} не меняется. Оплата уже учтена.`}`);
     } catch (e) { /* ignore */ }
     return order;
 }

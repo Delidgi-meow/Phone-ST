@@ -9,7 +9,7 @@ import { personaImageTags, isolateShopImageSettings, shopProductTags, shopBooruP
 import { contactImageSubjects, contactImageSettings, contactReferenceHints, contactReferenceMatches } from './contact-images.js';
 import { generatePhoneBlockPrompt } from './external-image-blocks.js';
 import { lang } from './i18n.js';
-import { getBank, addTransaction } from './bank.js';
+import { getBank, addTransaction, privateBankPrompt } from './bank.js';
 import { logReq, logOk, logFail } from './debug-log.js';
 import { addIgActivity } from './instagram-state.js';
 
@@ -1379,20 +1379,25 @@ async function _describePostImageInner(post) {
 // перехватывал задачу. Возвращает {desc, replies:[{from,text}]} или null.
 export async function generateSmsPhotoReply({ contactName, isGroup = false, members = [], userText = '', image }) {
     if (!image) return null;
+    const owner = getMeta();
     const target = isGroup
         ? `the group chat «${contactName}» (members: ${members.join(', ') || '?'})`
         : contactName;
-    const prompt = `${await taskHeader(`reply to an SMS that ${getUserName()} just sent from ${getUserName()}'s phone, and describe the attached photo.`)}
+    const header = await taskHeader(`reply to an SMS that ${getUserName()} just sent from ${getUserName()}'s phone, and describe the attached photo.`);
+    if (getMeta() !== owner) return null;
+    const prompt = `${header}
 ${getUserName()} texted ${target}: "${userText || '(only the photo, no text)'}"
 Their PHOTO is ATTACHED to this request — LOOK at it and react to what you actually see.
 
 Output STRICT JSON object ONLY — no markdown, no backticks, no <think>, no HTML comments:
-{"photo_description":"visible subjects and details, one concise paragraph: who/what is in the frame, pose, facial expression, clothes, setting, lighting, mood, small details","replies":[{"from":"SenderName","text":"reply text"}]}
+{"photo_description":"visible subjects and details, one concise paragraph: who/what is in the frame, pose, facial expression, clothes, setting, lighting, mood, small details","replies":[{"from":"SenderName","text":"reply text","bank":[]}]}
+${privateBankPrompt(isGroup ? 'the named sender of each reply (an established group member)' : contactName)} Put any payment array in that sender's reply object, not at the root.
 Reply rules: 1-5 short messages in the character's own texting voice, in-character reaction to the photo and their text, ${isGroup ? 'Several members may reply in a row — "from" = member name.' : `Every reply has "from":"${contactName}".`} If the character realistically would NOT reply right now, use an empty "replies" array.
 ${uiLangLine()}`;
 
     try {
         const raw = await socialGen(prompt, { maxTokens: 1500, image, prefill: '{"photo_description":"' });
+        if (getMeta() !== owner) return null;
         const obj = parseJsonObject(raw);
         if (!obj) return null;
         const desc = String(obj.photo_description || '').trim().replace(/\s*\n+\s*/g, ' ').slice(0, 3000);
@@ -1400,6 +1405,7 @@ ${uiLangLine()}`;
             ? obj.replies.filter(r => r && r.text).map(r => ({
                 from: String(r.from || contactName),
                 text: String(r.text).slice(0, 500),
+                bank: Array.isArray(r.bank) ? r.bank.slice(0, 5) : [],
             })).slice(0, 5)
             : [];
         return { desc, replies };
@@ -3550,15 +3556,18 @@ Return ONE JSON object: {"city":"city / district","pages":[{"title":"title","url
 export async function generateInstagramDmReply(thread) {
     const owner=getMeta(),original=thread.author;
     const turns=(thread.messages||[]).slice(-16).map(message=>({speaker:message.dir==='out'?getUserName():original,text:String(message.text||'').slice(0,1600),...(message.share?{shared:{app:message.share.app,author:message.share.author,text:message.share.text}}:{})}));
-    const prompt=`${await taskHeader('write one private Instagram Direct reply as '+JSON.stringify(original)+'.',{contactNames:[original]})}
+    const header = await taskHeader('write one private Instagram Direct reply as '+JSON.stringify(original)+'.',{contactNames:[original]});
+    if (getMeta() !== owner) throw new Error('Чат изменился');
+    const prompt=`${header}
 RECIPIENT: ${JSON.stringify(original)}. Saved by the user as ${JSON.stringify(displayName(thread.contactKey||'',original))}; this is the same person. The main character card describes only that character; for an NPC use their own established lore and personality.
 DIRECT HISTORY (chronological, private to these participants): ${JSON.stringify(turns)}
+${privateBankPrompt(original)}
 Reply naturally to the latest user message/shared post or story. Refer to what is actually shared, keep your character's voice and relationship, do not invent the user's reply or actions. This is Instagram, not SMS or a phone call. No narration, HTML, phone tags or invented attachments. If a reply is implausible now, return an empty text. ${uiLangLine()}
-Return JSON only: {"text":"one concise message, at most 800 characters"}.`;
-    const result=parseJsonObject(await socialGen(prompt,{maxTokens:650,prefill:'{"text":"'}));
+Return JSON only: {"text":"one concise message, at most 800 characters","bank":[]}.`;
+    const result=parseJsonObject(await socialGen(prompt,{maxTokens:1000,prefill:'{"text":"'}));
     if(getMeta()!==owner)throw new Error('Чат изменился');
     if(!result||typeof result.text!=='string')throw new Error('Не удалось прочитать ответ Direct');
-    return {text:result.text.trim().slice(0,1000)};
+    return {text:result.text.trim().slice(0,1000), bank:Array.isArray(result.bank) ? result.bank.slice(0,5) : []};
 }
 
 export async function generatePhoneCallReply(contact, transcript = [], utterance = '') {
@@ -3576,10 +3585,11 @@ export async function generatePhoneCallReply(contact, transcript = [], utterance
         'INCOMING CALL REASON: '+JSON.stringify(contact.reason||'')+'\n'+
         'CALL SO FAR: '+JSON.stringify(turns)+'\n'+
         'USER CURRENT SPOKEN WORDS: '+JSON.stringify(String(utterance).slice(0,1500))+'\n'+
-        'Return one JSON object: {"answered":true,"text":"spoken words","reason":""}. If unanswered, use answered:false, text:"", reason:"brief explanation". No narration, tags or commentary.';
-    const reply=parseJsonObject(await socialGen(prompt,{maxTokens:700}));
+        privateBankPrompt(original)+'\n'+
+        'Return one JSON object: {"answered":true,"text":"spoken words","reason":"","bank":[]}. If unanswered, use answered:false, text:"", reason:"brief explanation", bank:[]. No narration, tags or commentary.';
+    const reply=parseJsonObject(await socialGen(prompt,{maxTokens:1000}));
     if(!reply||typeof reply.answered!=='boolean')throw new Error('Не удалось получить ответ на звонок. Попробуй ещё раз.');
-    return {answered:reply.answered,text:String(reply.text||'').trim().slice(0,1800),reason:String(reply.reason||'').trim().slice(0,250)};
+    return {answered:reply.answered,text:String(reply.text||'').trim().slice(0,1800),reason:String(reply.reason||'').trim().slice(0,250),bank:Array.isArray(reply.bank) ? reply.bank.slice(0,5) : []};
 }
 
 export async function generatePhoneQuiz(topic){

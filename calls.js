@@ -1,8 +1,9 @@
 import { openPhoneContactEditor } from './contact-editor.js';
 import { getMeta, saveMeta, getThreadList, getRpDateTime, getPhoneMessageText, isSmsBlocked, isUserName } from './state.js';
 import { generatePhoneCallReply, logSocialToChat, getUserName, getContactAvatar } from './social.js';
-import { addManualContact, renameContact, keyOf, resolveContactKey } from './state.js';
+import { addManualContact, renameContact, keyOf, resolveContactKey, contactOriginalName } from './state.js';
 import { lang } from './i18n.js';
+import { applyPrivateBankEvents } from './bank.js';
 
 const busy=new WeakSet();
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -42,7 +43,7 @@ async function connect(call,forceIncoming=false){
         const reply=await generatePhoneCallReply({key:call.key,name:call.name,originalName:call.originalName,number:call.number,direction:call.direction,connected:forceIncoming,reason:call.reason||''},[], '');
         if(getMeta()!==root||call.status!=='connecting')return;
         if(!reply.answered){call.status='unanswered';call.reason=reply.reason||L('Не отвечает','No answer');call.ended=Date.now();journal(call);}
-        else{call.status='active';call.started=Date.now();if(reply.text)call.transcript.push({role:'contact',text:reply.text,at:Date.now()});}
+        else{call.status='active';call.started=Date.now();if(reply.text){call.transcript.push({role:'contact',text:reply.text,at:Date.now()});applyPrivateBankEvents(reply.bank,call.id+':connect',contactOriginalName(call.key,call.originalName||call.name));}}
         saveMeta();
     }catch(e){if(getMeta()===root&&call.status==='connecting'){call.status='failed';call.reason=String(e?.message||e).slice(0,240);call.ended=Date.now();saveMeta();}}
     finally{busy.delete(call);}
@@ -61,7 +62,7 @@ export async function speakOnPhone(id,text){
     try{
         const reply=await generatePhoneCallReply({key:call.key,name:call.name,originalName:call.originalName,number:call.number,direction:call.direction,reason:call.reason||'',connected:true},call.transcript,text);
         if(getMeta()!==root||call.status!=='active')return;
-        if(reply.text)call.transcript.push({role:'contact',text:reply.text,at:Date.now()});
+        if(reply.text){call.transcript.push({role:'contact',text:reply.text,at:Date.now()});applyPrivateBankEvents(reply.bank,call.id+':turn:'+call.transcript.length,contactOriginalName(call.key,call.originalName||call.name));}
         saveMeta();
     }catch(e){if(getMeta()===root&&call.status==='active'){call.error=String(e?.message||e).slice(0,200);saveMeta();}}
     finally{busy.delete(call);}

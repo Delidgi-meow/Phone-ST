@@ -16,6 +16,7 @@ export const MONTHS_I18N = {
 
 // ── Точный словарь (ключ = русская строка после trim) ──
 const DICT = {
+    'Полное погашение':'Full repayment',
     'Отменено':'Cancelled','Выполнено':'Completed','Календарь обновлён':'Calendar updated',
     'Личный счёт':'Personal account','Доступно':'Available','Пополнить':'Add money','Перевести':'Transfer',
     'Планы и возможности':'Plans and possibilities','На то, что важно':'For what matters','Ключи от своего':'A place of your own',

@@ -1,5 +1,5 @@
 import { getMeta, getThreadList } from './state.js';
-import { getInstagram, igThreads, igThread, igParty, igPerson, igUnread, igUnreadTotal, markIgRead, igActivityUnread, markIgActivityRead, ensureIgThread, igEventText } from './instagram-state.js';
+import { getInstagram, igThreads, igThread, igParty, igPerson, igUnread, igUnreadTotal, markIgRead, igActivityUnread, markIgActivityRead, ensureIgThread, igEventText, canonicalIgThreadId } from './instagram-state.js';
 import { sendIgDm, igDmBusy, igDmRetryMessage, retryIgDm } from './instagram.js';
 import { getUserName, avatarForAuthor, handleFor, timeAgo } from './social.js';
 import { bankIcon as icon } from './bank-icons.js';
@@ -41,6 +41,11 @@ const drafts=new WeakMap();
 function draftMap(){const owner=getMeta();if(!drafts.has(owner))drafts.set(owner,new Map());return drafts.get(owner);}
 export function renderInstagramThread(host,id,api){
     const thread=igThread(id);if(!thread){api.back();return;}const owner=getMeta(),person=igPerson(thread),map=draftMap(),busy=igDmBusy(thread),old=host.querySelector('[data-insta-draft]'),focused=old===document.activeElement,caret=old?.selectionStart;
+    id=thread.id;
+    for(const [previous,text]of [...map])if(previous!==id&&canonicalIgThreadId(previous)===id){
+        if(text&&map.get(id)!==text)map.set(id,[map.get(id),text].filter(Boolean).join('\n'));
+        map.delete(previous);
+    }
     markIgRead(id);
     host.innerHTML=`<div class="gp-instagram-shell"><header class="gp-insta-subheader"><button type="button" data-insta-back aria-label="${L('Назад','Back')}">${icon('ChevronLeft')}</button>${ava(person.name,avatarForAuthor(thread.ak),'is-small')}<div><h2>${esc(person.name)}</h2><small>${esc(thread.handle||handleFor(thread.ak,thread.author))}</small></div></header><div class="gp-insta-conversation">${thread.messages.map(message=>`<div class="gp-insta-dm-message ${message.dir==='out'?'is-out':'is-in'}">${message.share?`<button type="button" class="gp-insta-shared" data-insta-shared="${esc(message.id)}">${message.share.image?`<img src="${esc(message.share.image)}" alt="">`:icon(message.share.app==='st'?'CircleUserRound':'Image')}<span><small>${message.share.app==='st'?L('История','Story'):L('Публикация','Post')} · ${esc(message.share.author)}</small><b>${esc(message.share.text||L('Фото','Photo'))}</b></span></button>`:''}${message.text?`<span>${esc(message.text)}</span>`:''}<time>${esc(new Date(message.at).toLocaleTimeString(lang()==='en'?'en-GB':'ru-RU',{hour:'2-digit',minute:'2-digit'}))}</time></div>`).join('')}${busy?`<div class="gp-insta-typing" role="status">${esc(person.name)} ${L('печатает…','is typing…')}</div>`:''}</div><form class="gp-insta-compose"><textarea data-insta-draft rows="1" placeholder="${L('Сообщение…','Message…')}" maxlength="2000">${esc(map.get(id)||'')}</textarea><button type="submit" aria-label="${L('Отправить','Send')}" ${busy?'disabled':''}>${icon('Send')}</button></form></div>`;
     const input=host.querySelector('[data-insta-draft]');input.oninput=()=>map.set(id,input.value);

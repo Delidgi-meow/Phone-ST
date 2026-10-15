@@ -1,6 +1,6 @@
 import { getMeta, getThreadList } from './state.js';
 import { getContactAvatar, avatarForAuthor } from './social.js';
-import { igThreads, igPerson, igParty } from './instagram-state.js';
+import { igThreads, igPerson, igParty, canonicalIgThreadId } from './instagram-state.js';
 import { openPhoneSheet, closePhoneSheet } from './phone-modal.js';
 import { bankIcon as icon } from './bank-icons.js';
 import { lang } from './i18n.js';
@@ -22,7 +22,7 @@ export function openPhoneSharePicker(host,shot,api){
     shade.querySelectorAll('[data-share-mode]').forEach(button=>button.onclick=()=>{mode=button.dataset.shareMode;selected=null;shade.querySelector('.gp-share-submit').disabled=true;list();});
     shade.querySelector('[data-share-search]').oninput=list;
     shade.querySelector('.gp-share-submit').onclick=async()=>{
-        if(!selected||getMeta()!==owner)return;const person=people().find(item=>(mode==='sms'?item.key:item.id)===selected);if(!person)return;
+        if(!selected||getMeta()!==owner)return;const person=people().find(item=>mode==='sms'?item.key===selected:canonicalIgThreadId(item.id)===canonicalIgThreadId(selected));if(!person)return;
         const note=shade.querySelector('[data-share-caption]').value.trim(),destination=mode;closePhoneSheet(shade);
         try{if(destination==='sms')await api.sms(person.key,note,shot);else await api.dm(person,note,shot);}catch(error){if(getMeta()===owner)api.toast(String(error.message||error),'fa-circle-exclamation');}
     };
