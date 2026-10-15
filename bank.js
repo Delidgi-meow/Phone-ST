@@ -355,7 +355,7 @@ export function getBankSummaryLine() {
 // ── Одна компактная строка-правило для директивы (инжектится только если банк активен) ──
 export function bankInjectRule() {
     if (!bankActive()) return '';
-    return `[BANK] Account currency: ${normalizeCurrency(getBank().currency)}. Each actual change to {{user}}’s money in this reply: <!--tel:bank:{"amount":-500,"label":"purchase"}-->. Numeric amount in the account currency: negative spent, positive received; one tag per new transaction. A bank notification SMS about a real debit/credit needs the matching bank tag too. Exclude hypothetical transactions, other people’s money and operations already recorded by the app.`;
+    return `[BANK] Account currency: ${normalizeCurrency(getBank().currency)}. Each actual change to {{user}}’s money in this reply: <!--tel:bank:{"amount":-500,"label":"purchase"}-->. Numeric amount in the account currency, WITHOUT thousands separators (500000 means five hundred thousand): negative spent, positive received; one tag per new transaction. A confirmed transfer to the user, including one confirmed by a bank/contact SMS, needs the matching positive bank tag. The SMS and tag describe ONE operation. Exclude promises, hypothetical transactions, other people’s money and operations already recorded by the app.`;
 }
 
 // ── Харвест тегов tel:bank + банковских СМС из чата ──
@@ -368,7 +368,8 @@ const SMS_TAG_RE = /<!--\s*tel:sms:(\{[\s\S]*?\})\s*-->/gi;
 // ДВУЯЗЫЧНЫЕ (RU/EN): банковские смс в английских ролевых тоже двигают баланс
 const BANK_SENDER_RE = /банк|bank|сбер|тинькофф|tinkoff|альфа|втб|райффайзен|газпром|озон|уралсиб|росбанк|совкомбанк|мтс[\s-]?банк|900|chase|wells\s?fargo|citibank|barclays|hsbc|revolut|monzo|n26|paypal/i;
 const SPEND_RE = /списан|списание|покупк|оплат|платил|платеж|платёж|перевод\s+(отправлен|выполнен)|снятие|снят[оы]|аренда|штраф|комисси|debit(?:ed)?|charged|purchase|payment\s+(?:of|to|sent)|withdraw(?:al|n)?|spent|sent\s+to|\bfee\b/i;
-const INCOME_RE = /пополнен|пополнение|зачислен|поступлени|перевод\s+от(?![а-яё])|получен\s+перевод|возврат|зарплат|начислен|кэшбэк|cashback|credit(?:ed)?|deposit(?:ed)?|received|refund(?:ed)?|salary|payout|incoming\s+transfer|transfer\s+from|paid\s+(?:to\s+you|in)\b/i;
+const INCOME_RE = /пополнен|пополнение|зачислен|поступлени|входящий\s+перевод|перевод\s+от(?![а-яё])|получен\s+перевод|возврат|зарплат|начислен|кэшбэк|cashback|credit(?:ed)?|deposit(?:ed)?|received|refund(?:ed)?|salary|payout|incoming\s+transfer|transfer\s+from|paid\s+(?:to\s+you|in)\b/i;
+const PENDING_BANK_RE=/ожидается|ожидает\s+(?:подтверждения|зачисления|обработки)|в\s+обработке|запланирован|будет\s+(?:зачислен|перевед[её]н|списан)|не\s+(?:получен|выполнен|прош[её]л|зачислен)|отмен[её]н|отклон[её]н|недостаточно\s+средств|pending|scheduled|processing|declined|cancelled|canceled|failed/i;
 // Сумма: «1 500 ₽ / 500 руб / 12.50$» ИЛИ валюта-префикс «$500 / €1,200.50»
 const AMOUNT_NUMBER = "\\d+(?:[ \\u00a0\\u202f,.'’]\\d{3})*(?:[.,]\\d{1,4})?";
 function bankAmountRegex() {
@@ -496,20 +497,31 @@ function parseBankSms(smsJson) {
     const from = String(smsJson.from || '');
     const text = String(smsJson.text || '');
     if (!BANK_SENDER_RE.test(from) && !BANK_SENDER_RE.test(text.slice(0, 40))) return null;
+    if(PENDING_BANK_RE.test(text))return null;
     const amountRe = bankAmountRegex();
     const am = text.match(amountRe);
-    if (!am) return null;
+    // Banks often omit the currency: «Перевод 500.000 от Веры».
+    // A bare number is eligible only directly after an operation label.
+    const bare = text.match(new RegExp(`(?:перевод|зачисление|пополнение|поступление|списание|transfer|deposit|credit|debit)(?:\\s+(?:на\\s+сумму|of))?\\s*[:+−-]?\\s*(${AMOUNT_NUMBER})(?![\\d.,])`, 'i'));
+    if (!am&&!bare) return null;
     // am[1] — суффиксная валюта (1 500 ₽), am[2] — префиксная ($500).
-    const amount = parseMoneyNumber(am[1] || am[2] || '');
+    const bareStart=bare?bare.index+bare[0].lastIndexOf(bare[1]):-1;
+    // Prefer the operation amount over a later «available balance» amount.
+    const selected=am&&(!bare||am.index<=bareStart&&am.index+am[0].length>=bareStart+bare[1].length)?am:null;
+    const amountText=selected?(selected[1]||selected[2]):bare[1];
+    const amount = parseMoneyNumber(amountText || '');
     if (!amount) return null;
     // Сначала ДОХОД: «Salary paid» / «Payment received» — это приход,
     // хотя слова paid/payment есть и в расходном списке
     let sign = 0;
-    if (INCOME_RE.test(text)) sign = 1;
-    else if (SPEND_RE.test(text)) sign = -1;
+    // Removing only the amount joins direction words separated by the sum:
+    // «Перевод 500.000 от ...» → «Перевод от ...».
+    const directionText=text.replace(selected?selected[0]:amountText,' ').replace(/\s+/g,' ').trim();
+    if (INCOME_RE.test(text)||INCOME_RE.test(directionText)) sign = 1;
+    else if (SPEND_RE.test(text)||SPEND_RE.test(directionText)) sign = -1;
     if (!sign) return null;
     // Метка: кусок текста без суммы, коротко
-    const label = text.replace(amountRe, '').replace(/\s+/g, ' ').trim().slice(0, 50) || (sign < 0 ? 'Списание (смс банка)' : 'Пополнение (смс банка)');
+    const label = directionText.slice(0, 50) || (sign < 0 ? 'Списание (смс банка)' : 'Пополнение (смс банка)');
     return { amount: sign * amount, label, category: 'смс банка' };
 }
 
@@ -545,7 +557,7 @@ export function harvestBankTags() {
         let bm;
         while ((bm = BANK_TAG_RE.exec(tt)) !== null) {
             const j = safeJson(bm[1]);
-            const a = Math.abs(roundMoney(j?.amount));
+            const a = roundMoney(j?.amount);
             if (a) bankAmts.push({ i, a });
         }
     }
@@ -693,7 +705,7 @@ export function harvestBankTags() {
                 // Кросс-сообщенческий анти-дубль: та же сумма уже оформлена
                 // тегом tel:bank поблизости → смс лишь уведомление, помечаем
                 // обработанной и НЕ добавляем операцию
-                if (nearBankAmt(msgIndex, Math.abs(tx.amount))) {
+                if (nearBankAmt(msgIndex, tx.amount)) {
                     seen.add(h); b.seenTags.push(h);
                     continue;
                 }

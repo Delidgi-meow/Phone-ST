@@ -6,6 +6,7 @@ import { getMeta, saveMeta, keyOf, scanChat, getSettings, stripThink, textMentio
 import { buildPhoneImageContext, applyPhoneImagePresets } from './image-context.js';
 import { generateIsolatedImage, imageProviderSupportsReferences } from './image-provider.js';
 import { personaImageTags, isolateShopImageSettings, shopProductTags, shopBooruPrompt } from './shop-image.js';
+import { contactImageSubjects, contactImageSettings, contactReferenceHints, contactReferenceMatches } from './contact-images.js';
 import { generatePhoneBlockPrompt } from './external-image-blocks.js';
 import { lang } from './i18n.js';
 import { getBank, addTransaction } from './bank.js';
@@ -2214,6 +2215,23 @@ Write ONE punchy status label, 2-5 words. Make it flavorful and specific to thei
     return String(raw || '').replace(/<!--[\s\S]*?-->/g, '').replace(/["'«»]/g, '').trim().split('\n')[0].slice(0, 42);
 }
 
+export async function regenerateIgComment(post,comment){
+    const owner=getMeta();if(!comment||comment.ak==='user'||isUserName(comment.author))return null;
+    const index=(post.comments||[]).findIndex(item=>item.id===comment.id);if(index<0)return null;
+    const history=post.comments.slice(Math.max(0,index-8),index).map(item=>({author:item.author,text:String(item.text).slice(0,600)}));
+    const prompt=`${await taskHeader('rewrite ONE existing public Instagram comment as '+JSON.stringify(comment.author)+'.',{contactNames:[comment.author]})}
+POST by ${JSON.stringify(post.author)}: ${JSON.stringify(post.caption||'')}. Photo description: ${JSON.stringify(post.imgDesc||'')}
+EARLIER COMMENTS: ${JSON.stringify(history)}
+COMMENT TO REPLACE: ${JSON.stringify(comment.text)}
+Write the same account's complete comment, 1–2 concise sentences, in character, reacting to this public post and earlier comments. Finish the thought; never end mid-sentence. No private knowledge, narration or user actions. This replaces an existing comment, not a new interaction. ${uiLangLine()}
+Return JSON only: {"text":"complete comment, about 350 characters"}.`;
+    const result=parseJsonObject(await socialGen(prompt,{maxTokens:650,prefill:'{"text":"'}));
+    if(getMeta()!==owner)return null;
+    if(!result||typeof result.text!=='string'||!result.text.trim())throw new Error('Не удалось переписать комментарий. Исходный текст сохранён.');
+    const current=post.comments.find(item=>item.id===comment.id);if(!current)return null;
+    current.text=result.text.trim().slice(0,4000);saveMeta();return current;
+}
+
 export async function generateIgComments(post) {
     const owner=getMeta();
     // Экономия: описание есть → фото не прикладываем (галочка visionInComments переопределяет)
@@ -2298,7 +2316,7 @@ export async function maybeGenerateStoryEvent(platform = 'phone', post = null, {
     const pending = s.rpConsequences.filter(c => c.status === 'pending').map(c => c.summary).join('\n');
     const posts = [
         ...s.tweets.filter(p => p.ak === 'user').slice(0, 6).map(p => `Twitter: ${p.text}; replies: ${(p.replies || []).slice(-4).map(c => `${c.author}: ${c.text}`).join(' | ') || 'none'}`),
-        ...s.igPosts.filter(p => p.ak === 'user').slice(0, 6).map(p => `Instagram: ${p.caption || ''}; photo: ${p.imgDesc || 'attached/undescribed'}; comments: ${(p.comments || []).slice(-4).map(c => `${c.author}: ${c.text}`).join(' | ') || 'none'}`),
+        ...s.igPosts.filter(p => p.ak === 'user').slice(0, 6).map(p => `Instagram: ${p.caption || ''}; photo: ${p.imgDesc || 'attached/undescribed'}; comments: ${(p.comments || []).slice(-4).map(c => `${c.author}: ${String(c.text).slice(0,500)}`).join(' | ') || 'none'}`),
     ].join('\n');
     const journal = getSocialJournalEntries().slice(0, 12).map(e => e.text).join('\n');
     const prompt = `${await taskHeader('propose THREE optional, canon-grounded story events for the continuing roleplay.')}
@@ -2372,9 +2390,13 @@ export function compressImage(file, maxDim = 720, quality = 0.82) {
 }
 
 // ═══ Аватарки контактов (хранятся в meta.avatars по ключу контакта) ═══
-export function setContactAvatar(key, dataUrl) {
+export function setContactAvatar(key, dataUrl, profile=null) {
     const m = getMeta();
+    key=key==='__user__'?key:resolveContactKey(key);
     if (!m.avatars || typeof m.avatars !== 'object') m.avatars = {};
+    if(!m.avatarProfiles||typeof m.avatarProfiles!=='object')m.avatarProfiles={};
+    if(profile&&dataUrl)m.avatarProfiles[key]={appearance:String(profile.appearance||'').slice(0,1800),tags:String(profile.tags||'').slice(0,1800)};
+    else if(m.avatars[key]!==dataUrl||!dataUrl)delete m.avatarProfiles[key];
     if (dataUrl) m.avatars[key] = dataUrl;
     else delete m.avatars[key];
     saveMeta();
@@ -2491,6 +2513,32 @@ export function avatarForAuthor(ak) {
         return getContactAvatar(ak.slice(8));
     }
     return '';
+}
+
+// Prepare a stable appearance once; later pictures reuse it without another text call.
+export async function generateContactAvatar(contact,{onStatus=null,cancelKey=null,isCurrent=()=>true}={}){
+    const owner=getMeta(),key=resolveContactKey(contact.key||contact.name),name=contact.originalName||contactOriginalName(key,contact.name);
+    const current=()=>getMeta()===owner&&isCurrent();
+    if(!name||!current())throw new ImageGenCancelled();
+    if(!await isImageGenAvailable())throw new Error('Картинко-расширение не настроено. Выбери подключение в настройках телефона.');
+    if(!current())throw new ImageGenCancelled();
+    onStatus?.('Составляю внешность…');
+    const appearanceContext=buildPhoneImageContext(name,imgBucket(),null).hints;
+    const prior=getMeta().avatarProfiles?.[key];
+    const prompt=`${await taskHeader('prepare the appearance for ONE contact profile avatar: '+JSON.stringify(name)+'.',{contactNames:[name]})}
+TARGET: ${JSON.stringify(name)}. This is the canonical contact, even if saved under another label. Describe ONLY this person. Another character's card and the user persona are background, not this person's appearance.
+EXISTING IMAGE DETAILS: ${String(prior?.appearance||appearanceContext||'').slice(0,2600)}
+USER PREFERENCES: ${JSON.stringify(String(contact.description||'').slice(0,1400))}
+Preserve established age, gender, face, hair, eyes and distinctive traits. Apply the user's requested appearance changes. If traits are unknown, choose a coherent appearance fitting this character and setting; do not copy another character. Use a normal clothed head-and-shoulders portrait, one person, simple background, readable face, no collage, text, phone UI or watermark. Do not describe story actions or changing moods. The appearance will be reused for later photos.
+Return JSON only, both fields in English: {"appearance":"stable visible appearance, at most 900 characters","tags":"comma-separated Danbooru-style tags for this exact portrait, at most 900 characters"}.`;
+    if(!current())throw new ImageGenCancelled();
+    const result=parseJsonObject(await socialGen(prompt,{maxTokens:1000,prefill:'{"appearance":"'}));
+    if(!current())throw new ImageGenCancelled();
+    const appearance=String(result?.appearance||'').trim().slice(0,1800),tagList=String(result?.tags||'').split(',').map(value=>value.trim().toLowerCase()).filter(value=>value&&/^[a-z0-9_ ().:+\-/]+$/i.test(value)),tags=[...new Set(tagList)].join(', ').slice(0,1800);
+    if(!appearance||tagList.length<3)throw new Error('Не удалось составить внешность и теги контакта. Можно повторить.');
+    const image=await generatePostImage({kind:'avatar',ak:'contact:'+key,author:name,contactAvatarKey:key,contactAppearance:{appearance,tags},preparedImageTags:tags,imgDesc:name+': '+appearance,framing:'portrait, head and shoulders, one person, looking at viewer, simple background, no text, no watermark',aspect:'1:1'},onStatus,cancelKey);
+    if(!current())throw new ImageGenCancelled();
+    return {image,appearance,tags};
 }
 
 // Короткий портрет для вымышленных аккаунтов-комментаторов. Сохраняется прямо
@@ -2871,6 +2919,11 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
     if(isShop&&post.tryOn&&!tryOnAvatar&&!personaTags)throw new Error('Для примерки нужны теги внешности персоны в картинкорасширении или её аватарка и модель с поддержкой референсов.');
     const isUserPost = post.ak === 'user';
     const isContactPost = typeof post.ak === 'string' && post.ak.startsWith('contact:');
+    const contactSubjects=isShop?[]:contactImageSubjects(post,getContactAvatar);
+    const contactRefsSupported=contactSubjects.some(item=>item.src)&&await imageProviderSupportsReferences(mod,sourceSettings);
+    const contactBooru=contactSubjects.length>0&&(st.imgTagMode||/novelai|nai-diffusion/i.test(sourceSettings.apiType+' '+useModel));
+    const contactOverrides=contactSubjects.filter(item=>contactRefsSupported||item.appearance||item.tags);
+    const contextSettings=contactOverrides.length?contactImageSettings(sourceSettings,contactOverrides):sourceSettings;
     // В кадре ли САМА юзерка на её собственном посте? По умолчанию она — ФОТОГРАФ:
     // «Тёма ест бургер» — в кадре Тёма, а не она. В кадре она, если описание
     // упоминает её имя/селфи-слова, описания нет вовсе, это OF или её фейскам-стрим.
@@ -2886,6 +2939,7 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
     const blogAuthorOut = !isUserPost && !!post.blog && !!post.author && !!selfDesc
         && !textMentionsName(selfDesc, post.author);
     post._behindCamera = (isUserPost && !userInFrame) || blogAuthorOut; // для buildImagePrompt/booru
+    if(isContactPost&&!isShop&&getContactAvatar(post.ak.slice(8)))post._behindCamera=!contactSubjects.some(item=>item.key===resolveContactKey(post.ak.slice(8)));
     post._cameraName = isUserPost ? getUserName() : (post.author || '');
     const charName = mainCharName();
     const charKey = keyOf(charName);
@@ -2896,19 +2950,24 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
     // Имя автора из поиска убираем, когда он за камерой: иначе «пост Вадима»
     // сам по себе тянул его реф в каждый кадр
     const mentionsChar = !!charName && textMentionsName(
-        `${post.imgDesc || ''} ${post.caption || ''} ${blogAuthorOut ? '' : (post.author || '')}`, charName);
-    const wantChar = !isShop&&(isCharPost || mentionsChar);
+        `${post.imgDesc || post.caption || ''} ${post._behindCamera ? '' : (post.author || '')}`, charName);
+    const wantChar = !isShop&&(isCharPost&&!post._behindCamera || mentionsChar)&&!contactSubjects.some(item=>item.key===resolveContactKey(charName));
     // Анонимный рандом-аккаунт = НЕ юзер, НЕ контакт (НПС), НЕ главный персонаж.
     // Только для него ставим запрет на персону/главперсонажей.
-    const anonymous = !isUserPost && !isContactPost && !isCharPost;
+    const anonymous = !isUserPost && !isContactPost && !isCharPost && !contactSubjects.length;
 
     // Match on the original scene before translation drops Cyrillic names.
     // The author is a subject hint only when they are actually in the frame.
-    const referenceMatchPrompt = [post.imgDesc, post.caption,
+    const referenceMatchPrompt = [post.imgDesc || post.caption,
         !post._behindCamera && !anonymous ? post.author : ''].filter(Boolean).join('\n');
     const imageContext = isShop ? {hints:personaTags,presetTags:personaTags?[personaTags]:[],lorebookDescriptions:[],references:[]} : st.imageGenExtensionContext !== false
-        ? buildPhoneImageContext(referenceMatchPrompt, nvSettings || imgBucket(), mod.parser)
+        ? buildPhoneImageContext(referenceMatchPrompt, contextSettings, mod.parser)
         : { hints: '', presetTags: [], lorebookDescriptions: [], references: null };
+    if(contactSubjects.length){
+        imageContext.references=contactReferenceMatches(imageContext.references,contactSubjects);
+        const hints=contactReferenceHints(contactSubjects);if(hints)imageContext.hints=[imageContext.hints,hints].filter(Boolean).join('\n');
+        imageContext.lorebookDescriptions.push(...contactSubjects.map(item=>contactBooru&&item.tags?item.tags:item.appearance||item.tags).filter(Boolean));
+    }
 
     let prompt;
     let externalInstruction = null;
@@ -2918,10 +2977,10 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
             imageContext: imageContext.hints, parser: mod.parser, onStatus, signal,
         });
         prompt = externalInstruction.prompt;
-    } else if (st.imgTagMode || shopBooru) {
+    } else if (st.imgTagMode || shopBooru || contactBooru) {
         // Booru-режим: стиль/кадр из настроек (может быть тег-строкой) + сцена в теги
         if (onStatus) onStatus('Составляю теги...');
-        const tags = await sceneToBooruTags(post, { anonymous, imageContext: imageContext.hints });
+        const tags = post.kind==='avatar'&&post.preparedImageTags?post.preparedImageTags:await sceneToBooruTags(post, { anonymous, imageContext: imageContext.hints });
         const framing = isShop?'':(post.framing || (post.kind === 'of' ? (st.imgPromptOf || '') : (st.imgPromptIg || ''))).trim();
         if(shopBooru&&!tags)throw new Error('Не удалось собрать Danbooru-теги товара. Нажми перерисовку, чтобы повторить; запрос картинки не отправлен.');
         prompt = tags
@@ -2929,16 +2988,16 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
             : buildImagePrompt(post, { anonymous, allowChar: wantChar });
         // Теги — англоязычные, имён в них не остаётся: без этого NPC-реф
         // в booru-режиме не подцепился бы никогда
-        if (prompt && !anonymous && !isShop) {
+        if (prompt && !anonymous && !isShop && !contactSubjects.length) {
             prompt += npcNamesLine(
-                `${post.imgDesc || ''} ${post.caption || ''} ${post._behindCamera ? '' : (post.author || '')}`, prompt);
+                `${post.imgDesc || post.caption || ''} ${post._behindCamera ? '' : (post.author || '')}`, prompt);
         }
     } else {
         prompt = buildImagePrompt(post, { anonymous, allowChar: wantChar });
     }
     // Deterministic preset values survive conversion even if the text model
     // omits a trait. Text-only lorebook entries also work without an image.
-    if (st.imageGenExtensionContext !== false&&!isShop) prompt = applyPhoneImagePresets(prompt, nvSettings || imgBucket());
+    if (st.imageGenExtensionContext !== false&&!isShop) prompt = applyPhoneImagePresets(prompt, contextSettings);
     const details = [...new Set([...imageContext.presetTags, ...imageContext.lorebookDescriptions])]
         .filter(detail => detail && !prompt.includes(detail));
     if (details.length&&!shopBooru) prompt += '\n\n' + details.join('\n');
@@ -2950,11 +3009,11 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
 
     // Встроенный драйвер (форки без экспортов)
     if (mod.builtin) {
-        return _generateViaBuiltin(post, { prompt, wantChar, isUserPost: userInFrame&&(!isShop||tryOnAvatar), onStatus, signal, instruction: externalInstruction });
+        return _generateViaBuiltin(post, { prompt, wantChar, isUserPost: userInFrame&&(!isShop||tryOnAvatar), onStatus, signal, instruction: externalInstruction,contactReferences:contactRefsSupported?contactSubjects.filter(item=>item.src):[] });
     }
 
     // Settings belong to this request; never overwrite the image extension's state.
-    const requestSettings = isShop?isolateShopImageSettings(sourceSettings,{tryOn:!!tryOnAvatar,avatarId:personaAvatarId,personaName:post.author||getUserName()}):sourceSettings;
+    const requestSettings = isShop?isolateShopImageSettings(sourceSettings,{tryOn:!!tryOnAvatar,avatarId:personaAvatarId,personaName:post.author||getUserName()}):contextSettings;
     if (st.imageGenStyleId && requestSettings.styles?.some(style => style?.id === st.imageGenStyleId)) {
         requestSettings.activeStyleId = st.imageGenStyleId;
     }
@@ -2969,6 +3028,11 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
         requestSettings.overrideImageSize = false;
     }
     const genOptions = { providerSettings: requestSettings };
+    if(contactSubjects.length){
+        genOptions.referencePolicy='contacts';genOptions.includeReferencePromptBlocks=false;
+        if(contactRefsSupported)genOptions.phoneContactReferences=contactSubjects.filter(item=>item.src).map(item=>({name:item.name,imagePath:item.src,description:item.appearance||'Preserve this person’s face and identity; clothing and pose follow the requested scene.'}));
+        genOptions.referenceInstruction=(post.kind==='avatar'?'Reference images show the named person. Preserve their face and identity while applying the requested appearance preferences.':'References show the exact appearance of the named contacts in this scene. Preserve each person’s face and hair; clothing, pose and background follow the scene. Do not add anyone who is behind the camera.')+' Contact reference order: '+contactSubjects.map((item,index)=>(index+1)+' = '+item.name).join('; ')+'.';
+    }
     if(isShop){genOptions.referencePolicy=tryOnAvatar?'persona':'none';genOptions.includeReferencePromptBlocks=false;genOptions.referenceInstruction='The reference shows the exact persona identity. Preserve face, hair and body; replace the outfit with the catalog garment and show that garment clearly.';}
     if (externalInstruction) {
         for (const key of ['imageSize', 'quality', 'preset']) {
@@ -2997,7 +3061,7 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
                 src = await saveBase64AsFile(b64, 'glassphone', `iggen_${Date.now()}`, 'jpeg');
             } catch (e) { /* оставляем dataURL */ }
         }
-        if (signal?.aborted) throw new ImageGenCancelled();
+        if (signal?.aborted||getMeta()!==owner) throw new ImageGenCancelled();
         post.image = src;
         saveMeta();
         return src;
@@ -3103,7 +3167,8 @@ async function _fetchB64(url) {
     } catch (e) { return null; }
 }
 
-async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, onStatus, signal = null, instruction = null }) {
+async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, onStatus, signal = null, instruction = null,contactReferences=[] }) {
+    const owner=getMeta(),check=()=>{if(getMeta()!==owner||signal?.aborted)throw new ImageGenCancelled();};
     const cfgBase = imgBucket() || {};
     const st = getSettings();
     // Телефонный профиль подключения: его поля поверх активных (фолбэк на базу)
@@ -3130,6 +3195,8 @@ async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, onStatu
     // Рефы: телефон сам решает, чей реф нужен (галочки форка не смотрим —
     // наш гейт wantChar/isUserPost уже отфильтровал, кому реф положен)
     const refs = [];
+    for(const reference of contactReferences){const image=await _fetchB64(reference.src);check();if(image)refs.push(image);}
+    if(contactReferences.length&&!refs.length)throw new Error('Не удалось загрузить аватарку контакта для референса.');
     try {
         const ctx = SillyTavern.getContext();
         if (wantChar) {
@@ -3144,18 +3211,10 @@ async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, onStatu
             const b = await _fetchB64(`/User Avatars/${encodeURIComponent(personaAvatar)}`);
             if (b) refs.push(b);
         }
-        // НПС без карточки (контакт/стример): единственный возможный реф —
-        // аватар контакта, загруженный в телефоне
-        if (!refs.length && typeof post.ak === 'string' && post.ak.startsWith('contact:')) {
-            const av = getContactAvatar(post.ak.slice('contact:'.length));
-            if (av) {
-                const b = String(av).startsWith('data:') ? (String(av).split(',')[1] || null) : await _fetchB64(av);
-                if (b) refs.push(b);
-            }
-        }
     } catch (e) { /* без рефов */ }
+    check();
     if (refs.length > 0) {
-        fullPrompt = `[The reference image(s) show the EXACT appearance of the character(s) — copy face, hair, body precisely.]\n\n${fullPrompt}`;
+        fullPrompt = (post.kind==='avatar'?'[References show this person’s identity. Preserve their face while applying the requested appearance preferences.]':'[The reference image(s) show the EXACT appearance of the character(s) — copy face, hair, body precisely.]')+'\n'+(contactReferences.length?'Contact reference order: '+contactReferences.map((item,index)=>(index+1)+' = '+item.name).join('; ')+'.\n':'')+'\n'+fullPrompt;
     }
 
     onStatus?.('Генерация...');
@@ -3202,7 +3261,7 @@ async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, onStatu
             try { nsrc = await saveBase64AsFile(nb64, 'glassphone', `iggen_${Date.now()}`, /png/i.test(nurl) ? 'png' : 'jpeg'); }
             catch (e) { /* оставляем dataURL */ }
         }
-        post.image = nsrc;
+        check();post.image = nsrc;
         saveMeta();
         return nsrc;
     }
@@ -3270,7 +3329,7 @@ async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, onStatu
         else if (d?.url) {
             // URL → тянем и конвертим (для сохранения файлом)
             b64 = await _fetchB64(d.url);
-            if (!b64) { post.image = d.url; saveMeta(); return d.url; }
+            if (!b64) { check();post.image = d.url; saveMeta(); return d.url; }
         }
         if (!b64) throw new Error('API не вернул картинку');
     }
@@ -3279,7 +3338,7 @@ async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, onStatu
     try {
         src = await saveBase64AsFile(b64, 'glassphone', `iggen_${Date.now()}`, mime.includes('png') ? 'png' : 'jpeg');
     } catch (e) { /* оставляем dataURL */ }
-    post.image = src;
+    check();post.image = src;
     saveMeta();
     return src;
 }

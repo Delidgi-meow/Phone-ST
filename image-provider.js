@@ -14,7 +14,7 @@ function waitForRetry(ms, signal) {
 
 export async function imageProviderSupportsReferences(mod,settings){
     if(mod.folder&&!mod.builtin){
-        try{const providers=await import('/scripts/extensions/third-party/'+mod.folder+'/src/providers.js');const provider=providers.resolveActiveProvider(settings);if(provider)return provider.supportsReferences?.(settings)!==false;}catch{/* A single-file fork uses the built-in driver below. */}
+        try{const providers=await import('/scripts/extensions/third-party/'+mod.folder+'/src/providers.js');const provider=providers.resolveActiveProvider(settings);return !!provider&&provider.supportsReferences?.(settings)!==false;}catch{return false;}
     }
     const model=String(settings.naisteraModel||settings.model||'').toLowerCase();
     if(settings.apiType==='naistera')return ['grok','nano banana','grok-pro'].includes(model);
@@ -37,7 +37,7 @@ export async function generateIsolatedImage(mod, prompt, style, onStatus, option
     const provider = providers.resolveActiveProvider(settings);
     if (!provider) throw new Error('Провайдер картинок не настроен');
     const refsEnabled = provider.supportsReferences?.(settings)!==false;
-    const matched = refsEnabled&&!options.referencePolicy ? [...(sceneReferences || []), ...(mod.parser?.getMatchedAdditionalReferences?.(prompt) || [])] : [];
+    const matched = !refsEnabled?[]:options.referencePolicy==='contacts'?(sceneReferences||[]):!options.referencePolicy?[...(sceneReferences || []), ...(mod.parser?.getMatchedAdditionalReferences?.(prompt) || [])]:[];
     const seen = new Set();
     const matchedAdditionalRefs = matched.filter(ref => {
         const key = JSON.stringify([ref.name, ref.imagePath]);
@@ -45,7 +45,21 @@ export async function generateIsolatedImage(mod, prompt, style, onStatus, option
         seen.add(key);
         return true;
     }).sort((a, b) => (Number(b.priority) || 0) - (Number(a.priority) || 0));
-    const references = refsEnabled&&options.referencePolicy!=='none' ? await provider.collectReferences({ prompt, messageId: options.messageId, matchedAdditionalRefs, providerOptions: options }) : [];
+    let references=[];
+    if(refsEnabled&&options.referencePolicy!=='none'){
+        const contactRefs=options.phoneContactReferences||[];
+        if(contactRefs.length){
+            // Use the provider's own encoding and sizing (including NovelAI Precise Reference).
+            const avatarSettings={...structuredClone(settings),sendCharAvatar:false,sendUserAvatar:false,naisteraSendCharAvatar:false,naisteraSendUserAvatar:false,swSendOutfitImageBot:false,swSendOutfitImageUser:false,autoDetectNames:false,imageContextEnabled:false,npcList:[],npcReferences:[],characterReferenceLibrary:{characters:{},users:{}},activeCustomReferenceProfiles:{char:'',user:''}};
+            references=await provider.collectReferences({prompt,messageId:options.messageId,matchedAdditionalRefs:contactRefs,providerOptions:{...options,providerSettings:avatarSettings}});
+            if(!references.length)throw new Error('Не удалось загрузить аватарку контакта для референса. Проверь изображение в профиле контакта.');
+        }
+        throwIfAborted(options.signal);
+        references.push(...await provider.collectReferences({ prompt, messageId: options.messageId, matchedAdditionalRefs, providerOptions: options }));
+        let limit=Math.max(1,Number(provider.capabilities?.referencesMaxCount)||16);
+        if(settings.apiType==='gemini')try{const caps=await import('/scripts/extensions/third-party/'+mod.folder+'/src/providers/caps.js');limit=caps.getGeminiCapabilities(settings.model).maxReferences||limit;}catch{/* Use the provider's declared limit. */}
+        const seenImages=new Set();references=references.filter(ref=>{const key=typeof ref==='string'?ref:ref.image;if(!key||seenImages.has(key))return false;seenImages.add(key);return true;}).slice(0,limit);
+    }
     throwIfAborted(options.signal);
     let requestPrompt = prompt;
     if (settings.apiType !== 'gemini' && refsEnabled&&!options.referencePolicy) {

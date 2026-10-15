@@ -35,7 +35,7 @@ import {
     postIg, likeIg, delIg, addIgComment, delIgComment,
     getOfPosts, postOf, likeOf, delOf, addOfComment, delOfComment, generateOfComments, getSocial,
     migrateOfWallet, ofIsText,
-    generateTweetFeed, generateTweetComments, generateAuthorReply, generateReplyToComment, generateIgFeed, generateIgComments,
+    generateTweetFeed, generateTweetComments, generateAuthorReply, generateReplyToComment, generateIgFeed, generateIgComments, regenerateIgComment,
     regenerateTweet, regenerateIgPost, refreshFeed,
     compressImage, setContactAvatar, getContactAvatar, avatarForAuthor, setUserAvatar, getUserAvatar,
     timeAgo, makeHandle, getUserName, generatePostImage, cancelImageGen, isImageGenAvailable, resolveAuthorKey,
@@ -424,7 +424,7 @@ const LEGACY_SKINS = { rose: 'sunset', emerald: 'fern', mono: 'lcd' };
 const THEME_BODY_CLASSES = [...SKINS, ...Object.values(LEGACY_SKINS)].map(sk => `gp-theme-${sk}`);
 const THEME_INFO = [
     { id: 'liquid', name: 'Жидкое стекло', note: 'Блики, глубина и воздух', colors: ['#a8d7ff', '#b3eedc', '#e9f4ff'] },
-    { id: 'indigo', name: 'Индиго', note: 'Liquid glass', colors: ['#6a8dff', '#9a6aff', '#4aaaff'] },
+    { id: 'indigo', name: 'Индиго', note: 'Синее сияние', colors: ['#6a8dff', '#9a6aff', '#4aaaff'] },
     { id: 'quiet', name: 'Тихий', note: 'Графит и роза', colors: ['#e79bb4', '#c9738f', '#2a2927'] },
     { id: 'sunset', name: 'Закат', note: 'Тёплое стекло', colors: ['#ff8a5f', '#ff5a8c', '#a04a45'] },
     { id: 'zephyr', name: 'Зефир', note: 'Мягкий kawaii', colors: ['#ff9ec7', '#b79bff', '#8dcfff'] },
@@ -3056,6 +3056,7 @@ function renderIgView(screen) {
                                 <span class="gp-tw-name">${esc(c.author)}</span>
                                 <span class="gp-tw-time">· ${esc(timeAgo(c.time))}</span>
                                 <button class="gp-reply-btn" data-replyto-ig="${esc(c.id)}" title="Ответить">${ic('fa-reply')}</button>
+                                ${c.ak!=='user'?`<button type="button" class="gp-reply-btn" data-reroll-igcomment="${esc(c.id)}" aria-label="Переписать комментарий" title="Переписать комментарий" ${genBusy?'disabled':''}>${bankIcon('RotateCw')}</button>`:''}
                                 <button class="gp-reply-del" data-del-igcomment="${esc(c.id)}" title="Удалить">${ic('fa-xmark')}</button>
                             </div>
                             ${c.replyTo ? `<div class="gp-reply-to">${ic('fa-reply')} ${esc(c.replyTo.author)}</div>` : ''}
@@ -3087,6 +3088,13 @@ function renderIgView(screen) {
             input.focus();
         }
     }));
+
+    screen.querySelectorAll('[data-reroll-igcomment]').forEach(button=>button.onclick=async()=>{
+        const comment=comments.find(item=>item.id===button.dataset.rerollIgcomment);if(!comment||genBusy)return;
+        genBusy=true;render();
+        try{await regenerateIgComment(p,comment);}catch(error){if(getMeta()===owner)toast(String(error.message||error),'fa-circle-exclamation');}
+        finally{genBusy=false;if(currentScreen==='igview'&&getMeta()===owner)render();}
+    });
 
     // Удаление комментариев
     screen.querySelectorAll('[data-del-igcomment]').forEach(b => b.addEventListener('click', (e) => {
@@ -5745,7 +5753,7 @@ function drawChannelAvatar(ch) {
     const person = ch.mine || !!ch.person || ak.startsWith('contact:');
     const who = ch.mine ? getUserName() : (ch.author || '');
     return generatePostImage({
-        ak, kind: 'ig', aspect: '1:1',
+        ak, kind: person?'avatar':'ig', aspect: '1:1',
         author: who || ch.name,
         imgDesc: person && who
             ? `${who}${ch.desc ? `. ${ch.desc}` : ''}`

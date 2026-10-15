@@ -77,7 +77,7 @@ export function repairContactMetadata(meta) {
             const previous = ids[old];
             record.aliases.push(old,previous?.originalName,meta.names?.[old],meta.handles?.[old],...(Array.isArray(previous?.aliases) ? previous.aliases : []));
             Object.defineProperty(meta.contactKeyRedirects,old,{value:canonical,writable:true,configurable:true,enumerable:true});
-            for (const field of ['names','handles','avatars','threadAppearance']) {
+            for (const field of ['names','handles','avatars','avatarProfiles','threadAppearance']) {
                 const map=meta[field];if(!plain(map)||!own(map,old))continue;
                 if (!own(map,canonical) || !map[canonical]) map[canonical]=map[old];
                 else if (field === 'threadAppearance' && plain(map[old]) && plain(map[canonical])) map[canonical]={...map[old],...map[canonical]};

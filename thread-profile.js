@@ -4,6 +4,7 @@ import { saveBase64AsFile } from '../../../utils.js';
 import { openPhoneSheet, closePhoneSheet } from './phone-modal.js';
 import { editThreadAppearance } from './thread-appearance.js';
 import { lang } from './i18n.js';
+import { contactAvatarGeneratorHtml, bindContactAvatarGenerator } from './contact-avatar-ui.js';
 const L=(ru,en)=>lang()==='en'?en:ru;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const I=n=>'<i class="fa-solid '+n+'" aria-hidden="true"></i>';
@@ -11,8 +12,8 @@ function avatar(t){const url=getContactAvatar(t.key);return url?'<img src="'+esc
 export function openThreadProfile(screen,thread,api){
     const t=getThread(thread.key)||thread,root=getMeta(),src=getContactAvatar(t.key),handle=t.isGroup?'':handleFor('contact:'+t.key,t.originalName||t.name);
     const shade=openPhoneSheet(screen,t.name,'<div class="gp-contact-profile">'+
-        '<div class="gp-contact-profile-hero"><div class="gp-contact-profile-backdrop"></div><button type="button" class="gp-profile-avatar" id="gp-profile-avatar" aria-label="'+L('Изменить фото контакта','Change contact photo')+'">'+(t.isGroup?I('fa-users'):avatar(t))+'</button>'+
-        '<input type="file" accept="image/*" id="gp-profile-avatar-file" hidden><h1>'+esc(t.name)+'</h1><p>'+esc(t.isGroup?(t.members||[]).join(', '):t.originalName+' · '+handle)+'</p>'+
+        '<div class="gp-contact-profile-hero"><div class="gp-contact-profile-backdrop"></div><div class="gp-contact-avatar-wrap"><button type="button" class="gp-profile-avatar" id="gp-profile-avatar" aria-label="'+L('Изменить фото контакта','Change contact photo')+'">'+(t.isGroup?I('fa-users'):avatar(t))+'</button>'+
+        '<input type="file" accept="image/*" id="gp-profile-avatar-file" hidden>'+(!t.isGroup?contactAvatarGeneratorHtml():'')+'</div><h1>'+esc(t.name)+'</h1><p>'+esc(t.isGroup?(t.members||[]).join(', '):t.originalName+' · '+handle)+'</p>'+
         '<div class="gp-profile-shortcuts">'+(!t.isGroup?'<button type="button" data-profile-call title="'+L('Звонок','Call')+'" aria-label="'+L('Звонок','Call')+'" '+(!t.number?'disabled':'')+'>'+I('fa-phone')+'</button>':'')+
         '<button type="button" data-profile-wall title="'+L('Оформление чата','Chat appearance')+'" aria-label="'+L('Оформление чата','Chat appearance')+'">'+I('fa-image')+'</button></div></div>'+
         '<div class="gp-profile-fields"><label>'+L('Имя в твоих контактах','Your saved name')+'<input id="gp-profile-name" maxlength="60" value="'+esc(t.name)+'"></label>'+
@@ -24,6 +25,9 @@ export function openThreadProfile(screen,thread,api){
     shade.classList.add('gp-contact-profile-shade');
     if(src)shade.querySelector('.gp-contact-profile-backdrop').style.backgroundImage='url('+JSON.stringify(src)+')';
     const avatarButton=shade.querySelector('#gp-profile-avatar'),file=shade.querySelector('#gp-profile-avatar-file');
+    if(!t.isGroup)shade.cleanup=bindContactAvatarGenerator(shade,{contact:()=>({key:t.key,name:t.originalName||t.name}),toast:api.toast,
+        onBusy:busy=>{avatarButton.disabled=busy;shade.querySelector('#gp-profile-save').disabled=busy;},
+        onGenerated:result=>{setContactAvatar(t.key,result.image,result);avatarButton.innerHTML='<img src="'+esc(result.image)+'" alt="">';shade.querySelector('.gp-contact-profile-backdrop').style.backgroundImage='url('+JSON.stringify(result.image)+')';api.changed();}});
     avatarButton.onclick=()=>file.click();
     file.onchange=async()=>{
         if(!file.files[0])return;avatarButton.disabled=true;

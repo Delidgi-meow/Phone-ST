@@ -501,6 +501,7 @@ jQuery(async () => {
         setTimeout(() => {
             resetIncomingCounters();
             harvestInstagramTags();flushInstagramJournal();
+            try { if(harvestBankTags()>0){updatePhoneInjection();if(isPhoneOpen())render();} } catch(error) { console.warn('[GlassPhone] Initial bank sync:',error); }
             try { for (const call of getCalls().history.filter(item => item.status === 'ringing')) notifyIncomingCall(call); }
             catch (error) { console.warn('[GlassPhone] Call notifications:', error); }
         }, 800);
