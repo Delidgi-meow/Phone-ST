@@ -91,6 +91,8 @@ let currentScreen = 'home';     // + 'of' | 'ofnew' | 'ofview'
 let currentThreadKey = null;
 let currentTweetId = null;
 let currentPostId = null;
+let phoneViewOwner = null;
+let lastUnlockedScreen = 'home';
 let typingKey = null;           // тред, в котором «печатает…»
 let sending = false;
 let _smsDraftImage = null;      // фото, приложенное к смс (dataURL до отправки)
@@ -589,7 +591,23 @@ export function isPhoneOpen() {
     return document.getElementById('gp-overlay')?.classList.contains('gp-open') || false;
 }
 
+// Закрытие прячет телефон, а не завершает приложение. Возврат из блокировки
+// сохраняет текущие IDs переписки/поста; экран другого RP-чата не переносим.
+function syncPhoneViewOwner() {
+    const owner = getMeta();
+    if (phoneViewOwner === owner) return;
+    phoneViewOwner = owner;
+    currentScreen = 'home';
+    lastUnlockedScreen = 'home';
+    currentThreadKey = null;
+    currentTweetId = null;
+    currentPostId = null;
+    currentIgDmThread = '';
+    _lastFocusKey = null;
+}
+
 export function openPhone(threadKey = null) {
+    syncPhoneViewOwner();
     createPhone();
     applySkin();
     const ov = document.getElementById('gp-overlay');
@@ -604,7 +622,10 @@ export function openPhone(threadKey = null) {
         currentScreen = 'thread';
         currentThreadKey = threadKey;
     } else if (getSettings().lockScreen !== false) {
+        if (currentScreen !== 'lock') lastUnlockedScreen = currentScreen;
         currentScreen = 'lock';
+    } else if (currentScreen === 'lock') {
+        currentScreen = lastUnlockedScreen;
     }
     render();
     tickClock();
@@ -634,6 +655,7 @@ export function openPhone(threadKey = null) {
 }
 
 export function closePhone() {
+    if (currentScreen !== 'lock') lastUnlockedScreen = currentScreen;
     parkPhoneSettings();
     document.getElementById('gp-screen')?.querySelectorAll('.gp-phone-sheet-shade').forEach(closePhoneSheet);
     clearThreadAppearance();
@@ -682,6 +704,7 @@ const BLEED_SCREENS = new Set(['discord', 'dchannel', 'twitch', 'stream', 'mystr
 export function render() {
     const screen = document.getElementById('gp-screen');
     if (!screen || !isPhoneOpen()) return;
+    syncPhoneViewOwner();
     document.getElementById('gp-phone')?.classList.toggle('gp-home-active',currentScreen==='home');
     screen.dataset.phoneView=currentScreen;
     const modal=screen.querySelector('.gp-phone-sheet-shade');
@@ -1207,7 +1230,7 @@ function renderLock(screen) {
         </div>`;
 
     applyLockAppearance(screen);
-    const unlock = () => { goto('home'); };
+    const unlock = () => { goto(lastUnlockedScreen); };
     screen.querySelectorAll('[data-lock-note]').forEach(el => el.addEventListener('click', () => {
         const n = notes[parseInt(el.getAttribute('data-lock-note'))];
         if (n) n.go(); else unlock();
