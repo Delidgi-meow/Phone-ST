@@ -47,6 +47,16 @@ function socialActive() {
 }
 
 function buildPrompt() {
+    if (getSettings().quietMode) {
+        const parts = ['<phone_directive>',
+            'PHONE QUIET MODE: incoming phone activity is disabled. No incoming SMS, calls, Direct, social posts, reactions, channel posts or other phone notifications; do not narrate their arrival or output their event tags. Do not queue them for later. Bank and calendar still track established story events.'];
+        if (phoneTurnState() === 'now') parts.push('The latest user phone message is an app action. Return <!--tel:silent--> and applicable bank/calendar/clock tags only, with no visible prose or invented user actions.');
+        for (const producer of [bankInjectRule, getBankSummaryLine, plansInjectRule, plansInjectLine]) {
+            try { const text = producer(); if (text) parts.push(text); } catch (_error) { /* Optional state. */ }
+        }
+        if (getSettings().timeTag !== false) parts.push('CLOCK: last line <!--tel:time:HH:MM DD.MM.YYYY--> using story time.');
+        return parts.concat('</phone_directive>').join('\n');
+    }
     const { contacts, threads } = scanChat();
     const meta = getMeta(), settings = getSettings(), phoneTurn = phoneTurnState();
     const compact = !!settings.compactRules;
@@ -85,6 +95,7 @@ function buildPrompt() {
             ? 'SMS options: "photo":"visual description"; "voice":true with transcript in "text"; "chat":"exact group name"; "shot":{"app":"tw|ig|ch","author":"post author","text":"existing post text"}.'
             : 'SMS optional fields: "photo" describes an attached MMS; "voice":true makes "text" the spoken transcript; "chat" is the exact group name, with "from" a member; "shot":{"app":"tw|ig|ch","author":"post author","text":"existing post text"} forwards an accessible existing post. In ordinary roleplay you may narrate the notification; only the incoming message becomes a tag.'
     ];
+    parts.push('FORWARDED MESSAGES: when a character actually forwards a private chat excerpt, put "shot":{"app":"msg","messages":[{"author":"OriginalSpeaker","text":"exact shared message"}]} in tel:sms or tel:igdm. The sender must have participated in or been shown that exchange. Recipients learn only the attached excerpts, never the rest of another phone/chat. Do not turn a forward into a new message from its original author.');
     if (settings.timeTag !== false) parts.push('CLOCK: last line of every reply: <!--tel:time:HH:MM DD.MM.YYYY-->. Use story time and date; advance by elapsed scene time.');
     if (phoneTurn === 'now') {
         parts.push('PHONE-ONLY NOW: the latest [СМС → Name]/[SMS → Name], [СМС в чат «Name»]/[SMS to chat «Name»], or [Голосовое → Name]/[Voice → Name] is an app message, not spoken in the room. Output only hidden tags: 1–5 incoming tel:sms replies (group replies include "chat"), any newly confirmed plan/transaction, and the clock if enabled. If unavailable or unwilling, use <!--tel:silent--> instead of SMS. No visible prose or user actions.');

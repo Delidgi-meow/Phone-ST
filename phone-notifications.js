@@ -29,7 +29,7 @@ export function clearPhoneNotifications(){
 }
 
 export function showIncomingCallNotice(call,api){
-    if(!call||call.status!=='ringing'||!getSettings().isEnabled)return;
+    if(!call||call.status!=='ringing'||!getSettings().isEnabled||getSettings().quietMode)return;
     const host=notificationHost();
     if([...host.querySelectorAll('[data-phone-call]')].some(el=>el.dataset.phoneCall===call.id))return;
     const owner=getMeta(), card=document.createElement('section'), image=getContactAvatar(call.key);
@@ -57,7 +57,7 @@ export function showIncomingCallNotice(call,api){
     };
     host.prepend(card);
     const timer=setInterval(()=>{
-        if(!current()||!getSettings().isEnabled){remove();if(getMeta()===owner)api.changed();return;}
+        if(!current()||!getSettings().isEnabled||getSettings().quietMode){remove();if(getMeta()===owner)api.changed();return;}
         const name=getThread(call.key)?.name||call.name;
         if(card.querySelector('[data-caller-name]').textContent!==name)card.querySelector('[data-caller-name]').textContent=name;
     },1000);

@@ -1,13 +1,13 @@
 import { registerPhoneSettings } from './phone-settings.js';
 
 import { eventSource, event_types, saveSettingsDebounced, saveChatConditional } from '../../../../script.js';
-import { getSettings, getMeta, GP_VERSION, invalidateChatCache, factoryReset, wipePhoneTraces, captureRoleplayOutgoing } from './state.js';
+import { getSettings, getMeta, GP_VERSION, invalidateChatCache, factoryReset, wipePhoneTraces, captureRoleplayOutgoing, setPhoneQuietMode } from './state.js';
 import { updatePhoneInjection } from './prompts.js';
 import { initUI, checkNewIncoming, resetIncomingCounters, updateFabBadge, render, isPhoneOpen, closePhone, applySkin, applyWallpaper, applyChatHiding, toast, notifyBankReminders, notifyDeliveries, deliverScamSms } from './ui.js';
 import { harvestSocialTags, setUserHandle, getUserHandle, listIigProfiles, listIigStyles, listImageBuckets, currentExtModel, stripFakeJournal } from './social.js';
 import { harvestBankTags } from './bank.js';
 import { harvestPlanTags } from './plans.js';
-import { harvestPhoneCalls, getCalls } from './calls.js';
+import { harvestPhoneCalls, getCalls, endPhoneCall } from './calls.js';
 import { clearPhoneNotifications } from './phone-notifications.js';
 import { notifyIncomingCall } from './ui.js';
 import { openInstagram, instagramEventVisible } from './ui.js';
@@ -54,6 +54,7 @@ function setupSettingsPanel() {
             <label><input type="checkbox" id="gp-set-enabled" ${s.isEnabled ? 'checked' : ''}><span>Включено</span></label>
             <label><input type="checkbox" id="gp-set-fab" ${s.showFab ? 'checked' : ''}><span>Плавающая кнопка</span></label>
             <label><input type="checkbox" id="gp-set-inject" ${s.injectPrompt ? 'checked' : ''}><span>Инструкции для модели</span></label>
+            <label><input type="checkbox" id="gp-set-quiet" ${s.quietMode ? 'checked' : ''}><span>Без звука<small class="gp-quiet-hint">Пауза входящих · банк и календарь работают</small></span></label>
         </div>
 
         <details class="gp-settings-group">
@@ -61,8 +62,8 @@ function setupSettingsPanel() {
             <div class="gp-settings-group-body gp-settings-grid">
                 <label class="gp-settings-field"><span>Глубина инжекта</span><input type="number" id="gp-set-depth" class="text_pole gp-settings-number" min="0" max="100" step="1" value="${Math.max(0, Number(s.injectDepth) || 0)}"><small>0 — перед последним ходом</small></label>
                 <label class="gp-settings-field"><span>Макс. длина ответа</span><input type="number" id="gp-set-maxtokens" class="text_pole gp-settings-number" min="0" max="32000" step="256" value="${s.socialMaxTokens || 0}"><small>Верхняя граница; 0 = автоматически по задаче</small></label>
-                <label class="gp-settings-field gp-settings-wide"><span>Профиль для соцсетей</span><span class="gp-settings-control-row"><select id="gp-set-profile" class="text_pole"></select><button class="menu_button gp-settings-icon-button" id="gp-profile-test" type="button" title="Проверить профиль (маленький запрос)" aria-label="Проверить профиль (маленький запрос)"><i class="fa-solid fa-plug-circle-check"></i></button></span></label>
-                <label class="gp-settings-field"><span>Контекст соцсетей</span><select id="gp-set-ctxmode" class="text_pole"><option value="rich" ${s.socialContextMode !== 'lite' ? 'selected' : ''}>История + лорбук + карточка бота</option><option value="lite" ${s.socialContextMode === 'lite' ? 'selected' : ''}>Изолированно (только срез чата)</option></select><small>Звонки всегда используют карточку, лорбук и историю ролевой.</small></label>
+                <label class="gp-settings-field gp-settings-wide"><span>Профиль генерации телефона</span><span class="gp-settings-control-row"><select id="gp-set-profile" class="text_pole"></select><button class="menu_button gp-settings-icon-button" id="gp-profile-test" type="button" title="Проверить профиль (маленький запрос)" aria-label="Проверить профиль (маленький запрос)"><i class="fa-solid fa-plug-circle-check"></i></button></span><small>SMS, Direct, звонки и соцсети. Без выбранного профиля — текущий API.</small></label>
+                <label class="gp-settings-field"><span>Контекст генерации телефона</span><select id="gp-set-ctxmode" class="text_pole"><option value="rich" ${s.socialContextMode !== 'lite' ? 'selected' : ''}>История + лорбук + карточка бота</option><option value="lite" ${s.socialContextMode === 'lite' ? 'selected' : ''}>Только срез истории</option></select><small>SMS и Direct получают свой диалог без чужих переписок. Звонки всегда используют карточку, лорбук и историю ролевой.</small></label>
                 <label class="gp-settings-field"><span>Твой ник (@)</span><input type="text" id="gp-set-handle" class="text_pole" maxlength="21" placeholder="авто из имени"></label>
                 <label class="gp-settings-field"><span>Узнать автора анонимки</span><input type="number" id="gp-set-anonprice" class="text_pole gp-settings-number" min="0" step="100" value="${Number(s.anonRevealPrice) || 2500}"><small>цена первого имени, дальше растёт</small></label>
                 <div class="gp-settings-checks gp-settings-wide">
@@ -238,6 +239,19 @@ function setupSettingsPanel() {
         getSettings().injectPrompt = this.checked;
         saveSettingsDebounced();
         updatePhoneInjection();
+    });
+    $('#gp-set-quiet').on('change', function () {
+        if (!setPhoneQuietMode(this.checked)) return;
+        if (this.checked) {
+            clearPhoneNotifications();
+            for (const call of getCalls().history) {
+                if (['ringing', 'connecting', 'active'].includes(call.status)) endPhoneCall(call.id);
+            }
+        }
+        saveSettingsDebounced();
+        resetIncomingCounters();
+        updatePhoneInjection();
+        if (isPhoneOpen()) render();
     });
     $('#gp-set-depth').on('change', function () {
         const value = Math.max(0, Math.min(100, parseInt(this.value) || 0));

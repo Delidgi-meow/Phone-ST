@@ -8,6 +8,10 @@ import { generateIsolatedImage, imageProviderSupportsReferences } from './image-
 import { personaImageTags, isolateShopImageSettings, shopProductTags, shopBooruPrompt } from './shop-image.js';
 import { contactImageSubjects, contactImageSettings, contactReferenceHints, contactReferenceMatches } from './contact-images.js';
 import { generatePhoneBlockPrompt } from './external-image-blocks.js';
+import { savedImagePrompt, saveImagePrompt } from './image-prompt-cache.js';
+import { getPhoneActivityText, phoneActivityAllowed, getThread } from './state.js';
+import { messageForward } from './message-forward.js';
+import { publicRoleplayMessage, privateThreadTurns } from './private-context.js';
 import { lang } from './i18n.js';
 import { getBank, addTransaction, privateBankPrompt } from './bank.js';
 import { logReq, logOk, logFail } from './debug-log.js';
@@ -332,7 +336,7 @@ export function harvestSocialTags() {
     let migratedLegacyKeys = false;
     for (let msgIndex = 0; msgIndex < chat.length; msgIndex++) {
         const msg = chat[msgIndex];
-        const sourceText = getPhoneMessageText(msg);
+        const sourceText = getPhoneActivityText(msg, msgIndex);
         if (!msg || !sourceText || msg.is_user || (msg.is_system && !/<!--\s*tel:/i.test(sourceText))) continue;
         // Теги в CoT-блоках не считаются (иначе дубли постов)
         const text = stripThink(sourceText);
@@ -929,11 +933,6 @@ async function recoverGeneratedText(error, finish, prefill = '') {
     return complete;
 }
 
-function publicContextMessage(message) {
-    const text = getPhoneMessageText(message);
-    return !/<!--\s*tel:(?:priv\b|out:|sms:|sent:)|\[(?:СМС|SMS|Голосовое|Voice)\s*(?:→|в\s+чат|to\s+chat)/i.test(text);
-}
-
 // Компактный срез последних сообщений чата — вместо полного контекста
 export function rpContextBlock(count = 12, { publicOnly = false } = {}) {
     try {
@@ -943,7 +942,7 @@ export function rpContextBlock(count = 12, { publicOnly = false } = {}) {
         // publicOnly: посторонние не должны читать её переписку и приложения
         const tail = chat
             .filter(m => m && m.mes && !m.is_system)
-            .filter(m => !publicOnly || publicContextMessage(m))
+            .filter(m => !publicOnly || publicRoleplayMessage(m))
             .slice(-count);
         if (tail.length === 0) return '';
         const lines = tail.map(m => {
@@ -1039,15 +1038,17 @@ function attachImageToMessages(messages, dataUrl) {
 
 // Мультимодальная обёртка: картинка добавляется в user-сообщение, а финальное
 // assistant-сообщение с префиллом остаётся последним.
-async function currentApiVision(promptOrMessages, image, maxTokens = 1024) {
+async function currentApiVision(promptOrMessages, image, maxTokens = 1024, beforeRequest = null) {
     try {
         const dataUrl = await toDataUrl(image);
         if (!dataUrl) return null;
         const messages = Array.isArray(promptOrMessages)
             ? promptOrMessages
             : [{ role: 'user', content: String(promptOrMessages || '') }];
+        beforeRequest?.();
         return await currentApiRequest(attachImageToMessages(messages, dataUrl), maxTokens);
     } catch (e) {
+        if (e.name === 'AbortError') throw e;
         console.warn('[GlassPhone] currentApiVision failed:', e);
         return null;
     }
@@ -1187,6 +1188,14 @@ function socialTokenLimit(requested = 1024) {
 
 async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '' } = {}) {
     const st = getSettings();
+    const activityVersion = st.phoneActivityVersion;
+    const checkActivity = () => {
+        if (phoneActivityAllowed(activityVersion)) return;
+        const error = new Error('Без звука: входящая активность телефона приостановлена.');
+        error.name = 'AbortError';
+        throw error;
+    };
+    checkActivity();
     const profileId = st.socialProfileId;
     // User limit is a ceiling; small tasks keep their own smaller budgets.
     maxTokens = socialTokenLimit(maxTokens);
@@ -1196,6 +1205,7 @@ async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '' 
     const fallbackPrompt = legacyPrompt(prompt, prefill, usePrefill, useFigureSpaces);
 
     const finish = (raw) => {
+        checkActivity();
         let out = cleanGenOutput(raw);
         if (useFigureSpaces) out = unfigureSpaces(out);
         if (!usePrefill) return out;
@@ -1218,6 +1228,7 @@ async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '' 
         try {
             const built = profileInfo(profileId);
             logReq('запрос (профиль)', `${built?.info || profileId} · ${String(prompt).length} симв.${image ? ' + фото' : ''}${usePrefill ? ' · assistant-prefill' : ''}${useFigureSpaces ? ' · U+2007' : ''} · max ${maxTokens}`);
+            checkActivity();
             const res = await profileRequest(profileId, requestMessages, maxTokens);
             logOk('ответ (профиль)', `${String(res.content || '').length} симв.`);
             return finish(res.content);
@@ -1241,6 +1252,7 @@ async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '' 
                     }
                     console.warn('[GlassPhone] профиль не принял assistant-prefill; fallback к текстовой эмуляции:', root);
                     logReq('повтор (эмуляция префилла)', `${profileId} · max ${maxTokens}`);
+                    checkActivity();
                     const retry = await profileRequest(profileId, [{ role: 'user', content }], maxTokens);
                     logOk('ответ (эмуляция префилла)', `${String(retry.content || '').length} симв.`);
                     return finish(retry.content);
@@ -1266,7 +1278,8 @@ async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '' 
 
     // Путь 2: есть картинка, профиля нет → прямой мультимодальный запрос текущим API
     if (image) {
-        const vis = await currentApiVision(messages, image, maxTokens);
+        checkActivity();
+        const vis = await currentApiVision(messages, image, maxTokens, checkActivity);
         if (vis !== null) return finish(vis);
         console.warn('[GlassPhone] vision: прямой канал не сработал — запрос уйдёт БЕЗ фото');
     }
@@ -1275,6 +1288,7 @@ async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '' 
     // пробуем настоящий массив user + assistant, без пресета и истории ST.
     if (usePrefill) {
         logReq('запрос (текущий API)', `assistant-prefill · max ${maxTokens}${useFigureSpaces ? ' · U+2007' : ''}`);
+        checkActivity();
         const direct = await currentApiRequest(messages, maxTokens);
         if (direct !== null) {
             logOk('ответ (текущий API)', `${String(direct || '').length} симв.`);
@@ -1287,6 +1301,7 @@ async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '' 
     // Путь 4: text-completion/несовместимый API через generateRaw.
     logReq('запрос (текущий API)', `max ${maxTokens}${image ? ' · фото не приложено' : ''}${usePrefill ? ' · эмуляция префилла' : ''}${useFigureSpaces ? ' · U+2007' : ''}`);
     try {
+        checkActivity();
         const res = await generateRaw({ prompt: fallbackPrompt, responseLength: maxTokens });
         logOk('ответ (текущий API)', `${String(res || '').length} симв.`);
         return finish(res);
@@ -1323,8 +1338,8 @@ export async function testSocialProfile() {
 // ── Автоописание фото поста (вижн): заполняет imgDesc, если юзер его не написала.
 // Без описания персонажи в ОСНОВНОЙ ролевой не знают, что на фото (в инжекцию
 // картинку не приложишь) — поэтому описываем фото сами, один раз при публикации.
-// Пути: профиль соцсетей (чисто) ИЛИ фолбэк через generateQuietPrompt+quietImage
-// на основном API (может обрасти CoT-шумом — чистим). Так вижн работает ВСЕГДА.
+// Пути: отдельный профиль или прямой vision-запрос текущим API, без полного
+// пресета и истории Tavern. При ошибке возвращается пустое описание.
 // In-flight дедуп: публикация и открытие поста могли запустить описание ПАРАЛЛЕЛЬНО
 // (двойной запрос к API). Один пост — один запрос, остальные ждут его же промис.
 const _describeInFlight = new Map();
@@ -1373,46 +1388,45 @@ async function _describePostImageInner(post) {
     return true;
 }
 
-// ═══ СМС с фото: описание + ответ ОДНИМ vision-запросом ═══
-// Экономия: раньше картинка уходила в API дважды (describe + ответ), а фолбэк
-// через quietImage гнал полный контекст с пресетом (10к+ токенов) и пресет
-// перехватывал задачу. Возвращает {desc, replies:[{from,text}]} или null.
-export async function generateSmsPhotoReply({ contactName, isGroup = false, members = [], userText = '', image }) {
-    if (!image) return null;
+// SMS uses an isolated request: never let a recipient read other phone threads
+// through Tavern's full-history generation pipeline. Vision shares this path.
+export async function generatePrivateSmsReply({ threadKey, contactName, isGroup = false, members = [], messages, image = null, regenerate = false }) {
+    if (!phoneActivityAllowed()) throw Object.assign(new Error('Входящие отключены'), { name: 'AbortError' });
     const owner = getMeta();
+    const activityVersion = getSettings().phoneActivityVersion;
+    const thread = getThread(threadKey || contactName);
+    const turns = privateThreadTurns(messages || thread?.messages, { user: getUserName(), peer: contactName });
     const target = isGroup
         ? `the group chat «${contactName}» (members: ${members.join(', ') || '?'})`
         : contactName;
-    const header = await taskHeader(`reply to an SMS that ${getUserName()} just sent from ${getUserName()}'s phone, and describe the attached photo.`);
-    if (getMeta() !== owner) return null;
+    const header = await taskHeader(`reply in the private SMS conversation with ${target}.`, { publicOnly: true, contactNames: isGroup ? members : [contactName] });
+    if (getMeta() !== owner || !phoneActivityAllowed(activityVersion)) throw Object.assign(new Error('Запрос отменён'), { name: 'AbortError' });
     const prompt = `${header}
-${getUserName()} texted ${target}: "${userText || '(only the photo, no text)'}"
-Their PHOTO is ATTACHED to this request — LOOK at it and react to what you actually see.
-
-Output STRICT JSON object ONLY — no markdown, no backticks, no <think>, no HTML comments:
-{"photo_description":"visible subjects and details, one concise paragraph: who/what is in the frame, pose, facial expression, clothes, setting, lighting, mood, small details","replies":[{"from":"SenderName","text":"reply text","bank":[]}]}
-${privateBankPrompt(isGroup ? 'the named sender of each reply (an established group member)' : contactName)} Put any payment array in that sender's reply object, not at the root.
-Reply rules: 1-5 short messages in the character's own texting voice, in-character reaction to the photo and their text, ${isGroup ? 'Several members may reply in a row — "from" = member name.' : `Every reply has "from":"${contactName}".`} If the character realistically would NOT reply right now, use an empty "replies" array.
-${uiLangLine()}`;
-
-    try {
-        const raw = await socialGen(prompt, { maxTokens: 1500, image, prefill: '{"photo_description":"' });
-        if (getMeta() !== owner) return null;
-        const obj = parseJsonObject(raw);
-        if (!obj) return null;
-        const desc = String(obj.photo_description || '').trim().replace(/\s*\n+\s*/g, ' ').slice(0, 3000);
-        const replies = Array.isArray(obj.replies)
-            ? obj.replies.filter(r => r && r.text).map(r => ({
-                from: String(r.from || contactName),
-                text: String(r.text).slice(0, 500),
-                bank: Array.isArray(r.bank) ? r.bank.slice(0, 5) : [],
-            })).slice(0, 5)
-            : [];
-        return { desc, replies };
-    } catch (e) {
-        console.warn('[GlassPhone] generateSmsPhotoReply failed:', e);
-        return null;
-    }
+RECIPIENT: ${JSON.stringify(target)}. Saved locally as ${JSON.stringify(thread?.name || contactName)}; this label is the same person, not a new identity. Use this person's established voice; an NPC does not inherit the main character's identity.
+OWN SMS HISTORY (chronological; this is the only private conversation available): ${JSON.stringify(turns)}
+Forwarded messages disclose ONLY the excerpts in "shared.messages". Do not assume omitted lines, quote unshared wording, or read the source conversation. A plausible inference must remain an inference. Background story guides the author; each speaker only knows what they witnessed or were told.
+${image ? 'The current photo is ATTACHED. Describe visible contents in "photo_description" and react to what you see.' : 'No current photo is attached. Keep "photo_description" empty; do not invent its contents.'}
+Write 1-5 natural short messages to the latest user entry, without narration, user actions, HTML or phone tags. ${isGroup ? 'Only established listed group members may reply; "from" is the member name.' : `Every reply has "from":${JSON.stringify(contactName)}.`} If unavailable or unwilling, return "replies":[]. Voice entries are transcripts the speaker hears.
+Optional "voice":true marks a spoken transcript; "photo":"visible scene" describes an MMS the speaker actually sends. Optional "forward":{"app":"msg","messages":[{"author":"original speaker","text":"shared line"}]} may share excerpts from the replying character's own correspondence, consistent with established events. It never grants access to another phone.
+${regenerate ? 'This replaces wording of an existing reply. Return bank:[] and plans:[]; do not repeat or create financial/calendar actions.' : privateBankPrompt(isGroup ? 'the named sender of each reply (an established group member)' : contactName) + ' Put payments in that sender\'s reply object. Optional "plans" in that reply records only a newly confirmed agreement from this conversation: {"date":"DD.MM.YYYY","time":"HH:MM","text":"specific plan","who":"user|char|both"}. To explicitly cancel/complete/reschedule a plan already discussed here, use its exact text with "status":"cancelled|done|open" and date/time when known. Suggestions and time passing are not completion; never invent user actions or repeat recorded plans.'}
+${uiLangLine()}
+Return JSON only: {"photo_description":"","replies":[{"from":"canonical sender","text":"message","bank":[],"plans":[]}]}.`;
+    const raw = await socialGen(prompt, { maxTokens: 2200, image, prefill: '{"photo_description":"' });
+    if (getMeta() !== owner || !phoneActivityAllowed(activityVersion)) throw Object.assign(new Error('Запрос отменён'), { name: 'AbortError' });
+    const obj = parseJsonObject(raw);
+    if (!obj || !Array.isArray(obj.replies)) throw new Error('Не удалось прочитать ответ SMS');
+    const replies = obj.replies.filter(reply => reply && typeof reply === 'object').map(reply => {
+        const from = isGroup ? members.find(member => resolveContactKey(member) === resolveContactKey(reply.from)) : contactName;
+        return {
+            from, text: String(reply.text || '').trim().slice(0, 1800),
+            forward: messageForward(reply.forward),
+            ...(reply.voice ? { voice: true } : {}),
+            ...(reply.photo ? { photo: String(reply.photo).slice(0, 1000) } : {}),
+            bank: !regenerate && Array.isArray(reply.bank) ? reply.bank.slice(0, 5) : [],
+            plans: !regenerate && Array.isArray(reply.plans) ? reply.plans.slice(0, 5) : [],
+        };
+    }).filter(reply => reply.from && (reply.text || reply.forward || reply.photo)).slice(0, 5);
+    return { desc: String(obj.photo_description || '').trim().replace(/\s*\n+\s*/g, ' ').slice(0, 3000), replies };
 }
 
 // Толерантный парс JSON-ОБЪЕКТА из ответа модели
@@ -1511,7 +1525,7 @@ async function richContext({ publicOnly = false, contactNames = [] } = {}) {
                 // иначе запись могла бы всплыть из её же переписки
                 const chat = (ctx.chat || [])
                     .filter(m => m && m.mes && !m.is_system)
-                    .filter(m => !publicOnly || publicContextMessage(m));
+                    .filter(m => !publicOnly || publicRoleplayMessage(m));
                 const chatForWI = chat.map(x => `${x.name}: ${stripThink(getPhoneMessageText(x)).replace(/<!--[\s\S]*?-->/g, '')}`).reverse();
                 if(contactNames.length)chatForWI.unshift('Phone conversation participants: '+contactNames.join(', '));
                 const scanData = {
@@ -1535,6 +1549,11 @@ async function richContext({ publicOnly = false, contactNames = [] } = {}) {
 
 // Общая шапка задачи. rich: карточка+персона+лорбук+история; lite: только срез чата.
 async function taskHeader(what, { publicOnly = false, contactNames = [], brief = false } = {}) {
+    const activityVersion = getSettings().phoneActivityVersion;
+    const checkActivity = () => {
+        if (!phoneActivityAllowed(activityVersion)) throw Object.assign(new Error('Запрос телефона отменён'), {name:'AbortError'});
+    };
+    checkActivity();
     const rich = !brief && getSettings().socialContextMode !== 'lite';
     const blocks = [
         'PHONE TASK: ' + what,
@@ -1558,6 +1577,7 @@ async function taskHeader(what, { publicOnly = false, contactNames = [], brief =
         const identities = contactIdentityPrompt();
         if (identities) blocks.push(identities);
     }
+    checkActivity();
     return blocks.join('\n\n') + '\n';
 }
 
@@ -1831,19 +1851,6 @@ Format: [{"from":"sender: short name or a phone number in the local format","tex
     if (!it || !it.from || !it.text) return null;
     return { from: String(it.from).slice(0, 40), text: String(it.text).slice(0, 300) };
 }
-
-// ── Новости: лента города/мира под лорбук и сюжет ──
-export async function generateNewsFeed(existingTitles = []) {
-    const prompt = `${await taskHeaderPub(`generate a news feed for the news app on ${getUserName()}'s phone.`)}
-Invent 7-10 news items for the CITY/WORLD of the roleplay: local incidents, society gossip, economy, oddities, weather warnings, culture. 1-2 items MAY obliquely echo recent roleplay events (from an outsider's/press point of view, no private details the press couldn't know). The rest — living world background.
-${existingTitles.length ? `Do not repeat these existing headlines: ${existingTitles.join('; ')}` : ''}
-"tag" — short category (происшествия/светская хроника/экономика/культура/странное...). "title" max 80 chars, "text" 1-3 sentences. NO emojis.
-${uiLangLine()}
-${JSON_RULES}
-Format: [{"tag":"категория","title":"заголовок","text":"текст новости"}]`;
-    return await socialGenArray(prompt, { maxTokens: 2048, prefill: '[{"tag":"' });
-}
-
 
 // ── Дискорд: серверы и жизнь каналов ──
 // ── Каналы (как в телеграме): чужие каналы, их посты и обсуждение ──
@@ -2875,7 +2882,7 @@ export class ImageGenCancelled extends Error {
     constructor() { super('Генерация отменена'); this.name = 'ImageGenCancelled'; }
 }
 
-export function generatePostImage(post, onStatus = null, cancelKey = null) {
+export function generatePostImage(post, onStatus = null, cancelKey = null, options = {}) {
     const owner=getMeta();
     const ctl = new AbortController();
     if (cancelKey) {
@@ -2885,7 +2892,7 @@ export function generatePostImage(post, onStatus = null, cancelKey = null) {
     const run = async () => {
         if(getMeta()!==owner)throw new ImageGenCancelled();
         if (ctl.signal.aborted) throw new ImageGenCancelled();
-        const src = await _generatePostImage(post, onStatus, ctl.signal);
+        const src = await _generatePostImage(post, onStatus, ctl.signal, cancelKey, options);
         if (ctl.signal.aborted) throw new ImageGenCancelled();
         return src;
     };
@@ -2905,7 +2912,7 @@ export function generatePostImage(post, onStatus = null, cancelKey = null) {
 //  • прочее → без авто-рефов (лорбук-рефы по ключевым словам работают)
 // АСПЕКТ: по overrideAspectRatio/overrideImageSize расширение ИГНОРИРУЕТ наш аспект
 // (у юзера стоял 16:9). Снимаем оверрайды на время генерации → побеждает наш 1:1.
-async function _generatePostImage(post, onStatus = null, signal = null) {
+async function _generatePostImage(post, onStatus = null, signal = null, cancelKey = null, options = {}) {
     const owner=getMeta();
     const mod = await loadImageExt();
     if(getMeta()!==owner)throw new ImageGenCancelled();
@@ -2915,6 +2922,7 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
 
     const st = getSettings();
     const isShop=post.kind==='shop';
+    const blockKey = st.imageGenBlockKey || '';
     const sourceSettings=structuredClone(nvSettings||imgBucket()||{}),phoneProfile=_imgProfile(st.imageGenProfileId);
     if(phoneProfile)for(const [key,value]of Object.entries(phoneProfile))if(key!=='id'&&key!=='name'&&key in sourceSettings)sourceSettings[key]=value;
     const useModel=effectiveModel(sourceSettings);if(useModel)sourceSettings.model=useModel;
@@ -2977,10 +2985,17 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
 
     let prompt;
     let externalInstruction = null;
-    if (st.imageGenBlockKey) {
+    if (getMeta() !== owner || signal?.aborted) throw new ImageGenCancelled();
+    const cached = options.regeneratePrompt ? null : options.preparedPrompt || savedImagePrompt(post, cancelKey, blockKey);
+    if (cached) {
+        prompt = cached.prompt;
+        externalInstruction = cached.instruction ? { ...cached.instruction } : null;
+        onStatus?.('Рисую с сохранённым промптом…');
+    } else {
+    if (blockKey) {
         const framing = post.framing || (post.kind === 'of' ? st.imgPromptOf : st.imgPromptIg) || '';
         externalInstruction = await generatePhoneBlockPrompt({ ...post, framing }, {
-            imageContext: imageContext.hints, parser: mod.parser, onStatus, signal,
+            imageContext: imageContext.hints, parser: mod.parser, onStatus, signal, blockKey,
         });
         prompt = externalInstruction.prompt;
     } else if (st.imgTagMode || shopBooru || contactBooru) {
@@ -3012,6 +3027,10 @@ async function _generatePostImage(post, onStatus = null, signal = null) {
         prompt=shopBooruPrompt(prompt,post,personaTags);logOk('Danbooru товара',prompt);
     }else if(isShop)prompt+='\n\n'+(post.tryOn?'CLOTHING FITTING: only the specified persona wears the exact catalog garment; preserve face/hair/body traits, replace the previous outfit, and show the garment clearly. No isolated face portrait.':'CATALOG ITEM ONLY: no humans, no faces, no portraits, no body parts. Depict the exact product and its material, color and shape.');
     if(getMeta()!==owner)throw new ImageGenCancelled();
+    if (signal?.aborted) throw new ImageGenCancelled();
+    saveImagePrompt(post, cancelKey, prompt, externalInstruction, blockKey);
+    }
+    if (getMeta() !== owner || signal?.aborted) throw new ImageGenCancelled();
 
     // Встроенный драйвер (форки без экспортов)
     if (mod.builtin) {
@@ -3358,7 +3377,7 @@ async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, onStatu
 // Сам снимок в чат НЕ уходит: он уже есть в телефоне, а вторым вложением в
 // истории он бы дублировался. Модели достаётся готовое описание — его составляет
 // vision-запрос, который и так идёт на каждый пост и сторис.
-export async function logSocialToChat(text, { marker = '', priv = false } = {}) {
+export async function logSocialToChat(text, { marker = '', priv = false, context = null } = {}) {
     if (getSettings().socialLogToChat === false) return;
     try {
         const ctx = SillyTavern.getContext();
@@ -3378,7 +3397,7 @@ export async function logSocialToChat(text, { marker = '', priv = false } = {}) 
             // tel:priv — то, что произошло в телефоне наедине: переписка,
             // Тиндер, закрытая страница, заметки. Ролевая это видит, а вот
             // генераторы «что говорит город» такие строки не получают.
-            mes: `<!--tel:log-->${priv ? '<!--tel:priv-->' : ''}${marker ? `<!--tel:mark:${String(marker).slice(0, 40)}-->` : ''}\n[Событие мира — соцсети/телефон] ${String(text).slice(0, 1500)}`,
+            mes: `<!--tel:log-->${priv ? '<!--tel:priv-->' : ''}${marker ? `<!--tel:mark:${String(marker).slice(0, 40)}-->` : ''}${context ? `<!--tel:context:${JSON.stringify(context).replace(/</g, '\\u003c')}-->` : ''}\n[Событие мира — соцсети/телефон] ${String(text).slice(0, 1500)}`,
             extra: {
                 type: 'comment',
                 gen_id: Date.now(),
@@ -3460,7 +3479,7 @@ export function getSocialJournalEntries() {
                 index,
                 time: msg?.send_date || '',
                 text: String(msg?.mes || '')
-                    .replace(/<!--tel:log-->/g, '')
+                    .replace(/<!--\s*tel:[\s\S]*?-->/g, '')
                     .replace(/^\s*\[Событие мира — соцсети\/телефон\]\s*/i, '')
                     .trim(),
                 image: msg?.extra?.image || null,
@@ -3555,19 +3574,20 @@ Return ONE JSON object: {"city":"city / district","pages":[{"title":"title","url
 
 export async function generateInstagramDmReply(thread) {
     const owner=getMeta(),original=thread.author;
-    const turns=(thread.messages||[]).slice(-16).map(message=>({speaker:message.dir==='out'?getUserName():original,text:String(message.text||'').slice(0,1600),...(message.share?{shared:{app:message.share.app,author:message.share.author,text:message.share.text}}:{})}));
-    const header = await taskHeader('write one private Instagram Direct reply as '+JSON.stringify(original)+'.',{contactNames:[original]});
+    const turns=privateThreadTurns(thread.messages,{user:getUserName(),peer:original,limit:16});
+    const header = await taskHeader('write one private Instagram Direct reply as '+JSON.stringify(original)+'.',{publicOnly:true,contactNames:[original]});
     if (getMeta() !== owner) throw new Error('Чат изменился');
     const prompt=`${header}
 RECIPIENT: ${JSON.stringify(original)}. Saved by the user as ${JSON.stringify(displayName(thread.contactKey||'',original))}; this is the same person. The main character card describes only that character; for an NPC use their own established lore and personality.
 DIRECT HISTORY (chronological, private to these participants): ${JSON.stringify(turns)}
 ${privateBankPrompt(original)}
-Reply naturally to the latest user message/shared post or story. Refer to what is actually shared, keep your character's voice and relationship, do not invent the user's reply or actions. This is Instagram, not SMS or a phone call. No narration, HTML, phone tags or invented attachments. If a reply is implausible now, return an empty text. ${uiLangLine()}
+Reply naturally to the latest user message/shared post or story. Forwarded messages reveal only the attached excerpts, never the rest of someone else's private chat. Refer to what is actually shared, keep your character's voice and relationship, do not invent the user's reply or actions. This is Instagram, not SMS or a phone call. No narration, HTML, phone tags or invented attachments. If a reply is implausible now, return an empty text. ${uiLangLine()}
+You may attach a forwarded excerpt from the speaker's own correspondence when actually sharing it: optional "forward":{"app":"msg","messages":[{"author":"original speaker","text":"shared message"}]}. This reveals only those excerpts, not access to the source phone; respect established events and character knowledge.
 Return JSON only: {"text":"one concise message, at most 800 characters","bank":[]}.`;
     const result=parseJsonObject(await socialGen(prompt,{maxTokens:1000,prefill:'{"text":"'}));
     if(getMeta()!==owner)throw new Error('Чат изменился');
     if(!result||typeof result.text!=='string')throw new Error('Не удалось прочитать ответ Direct');
-    return {text:result.text.trim().slice(0,1000), bank:Array.isArray(result.bank) ? result.bank.slice(0,5) : []};
+    return {text:result.text.trim().slice(0,1000), share:messageForward(result.forward), bank:Array.isArray(result.bank) ? result.bank.slice(0,5) : []};
 }
 
 export async function generatePhoneCallReply(contact, transcript = [], utterance = '') {

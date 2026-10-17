@@ -1,7 +1,7 @@
 // Каналы: свой и чужие, посты с реакциями, просмотрами и обсуждением.
 // Данные лежат per-chat в meta; генерация — по кнопкам и после своих постов.
 
-import { getMeta, saveMeta, keyOf, stripThink, getSettings, getPhoneMessageText } from './state.js';
+import { getMeta, saveMeta, keyOf, stripThink, getSettings, getPhoneActivityText as getPhoneMessageText } from './state.js';
 import { logSocialToChat, getUserName, getUserHandle, resolveAuthorKey } from './social.js';
 import { getBank, addTransaction, fmtMoney } from './bank.js';
 
@@ -642,7 +642,7 @@ export function harvestChannelTags() {
     for (let i = 0; i < chat.length; i++) {
         const msg = chat[i];
         // Свои сообщения не сканируем: посты в каналы она публикует из телефона
-        const sourceText = getPhoneMessageText(msg);
+        const sourceText = getPhoneMessageText(msg, i);
         if (!msg || msg.is_user || !/tel:chan/i.test(sourceText)) continue;
         const text = stripThink(sourceText);
         const occ = {};
@@ -686,7 +686,7 @@ export function harvestAnonBust() {
     const hits = [];
     for (let i = 0; i < chat.length; i++) {
         const msg = chat[i];
-        const sourceText = getPhoneMessageText(msg);
+        const sourceText = getPhoneMessageText(msg, i);
         if (!msg || msg.is_user || !/tel:anonbust/i.test(sourceText)) continue;
         const text = stripThink(sourceText);
         const occ = {};
@@ -733,7 +733,7 @@ export function harvestAnonTags() {
     let n = 0;
     for (let i = 0; i < chat.length; i++) {
         const msg = chat[i];
-        const sourceText = getPhoneMessageText(msg);
+        const sourceText = getPhoneMessageText(msg, i);
         if (!msg || msg.is_user || !/tel:anon/i.test(sourceText)) continue;
         const text = stripThink(sourceText);
         const occ = {};

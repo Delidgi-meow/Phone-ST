@@ -1,7 +1,8 @@
-import { getMeta, saveMeta, getPhoneMessageText, stripThink, isUserName, isBanned } from './state.js';
+import { getMeta, saveMeta, getPhoneActivityText as getPhoneMessageText, stripThink, isUserName, isBanned, getSettings, phoneActivityAllowed } from './state.js';
 import { generateInstagramDmReply, logSocialToChat, getUserName, getStories, addIgComment, resolveAuthorKey } from './social.js';
 import { getInstagram, addIgDm, addIgActivity, igParty, igThread, igPerson, igEventText } from './instagram-state.js';
 import { applyPrivateBankEvents } from './bank.js';
+import { messageForward } from './message-forward.js';
 
 const busy=new WeakMap();
 const pendingFor=owner=>{if(!busy.has(owner))busy.set(owner,new Set());return busy.get(owner);};
@@ -11,18 +12,22 @@ export function igDmRetryMessage(thread){
     return last?.dir==='out'&&last.replyState!=='complete'&&!igDmBusy(thread)?last:null;
 }
 async function requestIgReply(owner,thread,sent){
+    const activityVersion = getSettings().phoneActivityVersion;
+    if (!phoneActivityAllowed(activityVersion)) { sent.message.replyState='complete'; saveMeta(); return sent; }
     const pending=pendingFor(owner),pendingId=sent.message.id;pending.add(pendingId);sent.message.replyState='pending';saveMeta();
     try{
         const reply=await generateInstagramDmReply(thread);
         if(getMeta()!==owner)return sent;
+        if (!phoneActivityAllowed(activityVersion)) { sent.message.replyState='complete'; saveMeta(); return sent; }
         thread=igThread(thread.id)||thread;
         sent.thread=thread;sent.message=thread.messages.find(message=>message.id===sent.message.id)||sent.message;
-        if(reply?.text){
-            addIgDm(thread,{dir:'in',text:reply.text,source:'reply:'+sent.message.id});
+        if(reply?.text || reply?.share){
+            addIgDm(thread,{dir:'in',text:reply.text,share:reply.share,source:'reply:'+sent.message.id});
             applyPrivateBankEvents(reply.bank,'igdm:'+sent.message.id,thread.author);
         }
         sent.message.replyState='complete';saveMeta();return sent;
     }catch(error){
+        if (getMeta()===owner && !phoneActivityAllowed(activityVersion)) { sent.message.replyState='complete'; saveMeta(); return sent; }
         if(getMeta()===owner){sent.message.replyState='failed';saveMeta();}
         throw error;
     }finally{pending.delete(pendingId);}
@@ -36,7 +41,9 @@ export async function sendIgDm(id,text='',share=null){
     const owner=getMeta(),thread=igThread(id);if(!thread||igDmBusy(thread))return null;
     const sent=addIgDm(thread,{dir:'out',text,share});if(!sent)return null;
     const label=igPerson(thread).name;
-    logSocialToChat(getUserName()+' пишет '+thread.author+' (в контактах «'+label+'») в Instagram Direct: '+(text||'пересылает публикацию')+(share?' [переслано: '+share.author+' — '+share.text+']':''),{priv:true,marker:'igdm:'+sent.message.id});
+    const forwarded=messageForward(share);
+    logSocialToChat(getUserName()+' пишет '+thread.author+' (в контактах «'+label+'») в Instagram Direct: '+(text||'пересылает сообщение')+(share?' [переслано: '+(forwarded?forwarded.messages.length+' сообщений':share.author+' — '+share.text)+']':''),{priv:true,marker:'igdm:'+sent.message.id,
+        ...(forwarded?{context:{app:'instagram',from:getUserName(),to:thread.author,forward:forwarded}}:{})});
     return requestIgReply(owner,thread,sent);
 }
 export function receiveIgStoryReactions(story,result){
@@ -46,11 +53,25 @@ export function receiveIgStoryReactions(story,result){
 export async function flushInstagramJournal(){
     const owner=getMeta();
     const pending=getInstagram().activity.filter(event=>!event.journaled).reverse();if(!pending.length)return;
+    if (getSettings().quietMode) { for (const event of pending) event.journaled=true; saveMeta(); return; }
     // One compact journal entry for a burst of comments/reactions.
-    for(let i=0;i<pending.length;i+=6){if(getMeta()!==owner)return;const batch=pending.slice(i,i+6);for(const event of batch)event.journaled=true;saveMeta();await logSocialToChat('Instagram — '+batch.map(igEventText).join('\n').slice(0,1450),{priv:true,marker:'ign:'+batch.at(-1).id});}
+    for(let i=0;i<pending.length;i+=6){
+        if(getMeta()!==owner)return;
+        const batch=pending.slice(i,i+6),forwards=[];
+        for(const event of batch){
+            event.journaled=true;
+            if(event.kind!=='dm')continue;
+            const message=igThread(event.targetId)?.messages.find(message=>'dm:'+message.id===event.dedupe);
+            const forward=messageForward(message?.share);
+            if(forward)forwards.push({app:'instagram',from:event.author,to:getUserName(),forward});
+        }
+        saveMeta();
+        await logSocialToChat('Instagram — '+batch.map(igEventText).join('\n').slice(0,1450),{priv:true,marker:'ign:'+batch.at(-1).id,...(forwards.length?{context:forwards}:{})});
+    }
 }
 function hash(text){let h=0;for(const char of text)h=(Math.imul(h,31)+char.charCodeAt(0))|0;return h.toString(36);}
 function incomingShare(value){
+    if (value?.app === 'msg') return messageForward(value);
     if(!value||!['ig','st'].includes(value.app))return null;
     const items=value.app==='ig'?(getMeta().social?.igPosts||[]):getStories();
     const found=items.find(item=>item.id===value.id);
@@ -62,18 +83,23 @@ export function harvestInstagramTags(){
     const chat=SillyTavern.getContext()?.chat||[];
     for(let i=0;i<chat.length;i++){
         const message=chat[i];if(!message||message.is_user||message.is_system)continue;
-        const source=stripThink(getPhoneMessageText(message));if(/<!--\s*tel:log\s*-->/i.test(source))continue;
+        const source=stripThink(getPhoneMessageText(message,i));if(/<!--\s*tel:log\s*-->/i.test(source))continue;
         const occurrences={};
         for(const match of source.matchAll(/<!--\s*tel:(igdm|ignotify):(\{[\s\S]*?\})\s*-->/gi)){
             const base=match[1]+':'+hash(match[2])+':'+(message.send_date||message.extra?.gen_id||i),key=base+':'+(occurrences[base]=(occurrences[base]||0)+1);
             if(seen.has(key))continue;
+            if (getSettings().quietMode) { seen.add(key); data.seenTags.push(key); changed=true; continue; }
             let event;try{event=JSON.parse(match[2]);}catch{continue;}
             if(typeof event.from!=='string'||!event.from.trim()||isUserName(event.from)||isBanned(event.from)||(event.to&&!isUserName(event.to)))continue;
+            const existingActivity=new Set(data.activity.map(item=>item.id));
             if(match[1].toLowerCase()==='igdm'){
                 const share=incomingShare(event.shot);
                 if((typeof event.text!=='string'||!event.text.trim())&&!share)continue;
                 const story=event.storyId?getStories().find(item=>item.id===event.storyId&&item.ak==='user'):null;
-                if(addIgDm({name:event.from,handle:event.handle||''},{text:event.text||'',source:key,share:share||(story?{app:'st',id:story.id,author:story.author,text:story.caption||story.imgDesc,image:story.image,replyTo:true}:null)}))added++;
+                const received=addIgDm({name:event.from,handle:event.handle||''},{text:event.text||'',source:key,share:share||(story?{app:'st',id:story.id,author:story.author,text:story.caption||story.imgDesc,image:story.image,replyTo:true}:null)});
+                if(received){
+                    added++;
+                }
             }else{
                 const kind=event.kind;if(!['like','comment','follow','story_like'].includes(kind))continue;
                 const target=kind==='story_like'?'story':kind==='follow'?'profile':'post';
@@ -91,6 +117,9 @@ export function harvestInstagramTags(){
                     }
                 }
             }
+            // These events already exist as full tags in Tavern. Journal only
+            // events created by separate app requests, not another copy here.
+            for(const activity of data.activity)if(!existingActivity.has(activity.id))activity.journaled=true;
             seen.add(key);data.seenTags.push(key);changed=true;
         }
     }

@@ -16,6 +16,8 @@ export const MONTHS_I18N = {
 
 // ── Точный словарь (ключ = русская строка после trim) ──
 const DICT = {
+    'Без звука':'Quiet mode',
+    'Пауза входящих · банк и календарь работают':'Incoming activity paused · bank and calendar remain active',
     'Полное погашение':'Full repayment',
     'Отменено':'Cancelled','Выполнено':'Completed','Календарь обновлён':'Calendar updated',
     'Личный счёт':'Personal account','Доступно':'Available','Пополнить':'Add money','Перевести':'Transfer',
@@ -457,6 +459,10 @@ const DICT = {
     // Добор по аудиту шаблонов
     '0 = по подписке': '0 = subscription-only', '0 — перед последним ходом': '0 — before the last turn',
     'Глубина инжекта': 'Injection depth', 'Журнал соцсетей в чат': 'Social log to chat',
+    'Профиль генерации телефона': 'Phone generation profile', 'Контекст генерации телефона': 'Phone generation context',
+    'SMS, Direct, звонки и соцсети. Без выбранного профиля — текущий API.': 'SMS, Direct, calls and social apps. Uses the current API when no profile is selected.',
+    'Только срез истории': 'Recent history only',
+    'SMS и Direct получают свой диалог без чужих переписок. Звонки всегда используют карточку, лорбук и историю ролевой.': 'SMS and Direct receive their own conversation, excluding other private threads. Calls always use the card, lorebook and roleplay history.',
     'Загрузить список моделей': 'Load model list', 'Изменить @ник': 'Edit @handle',
     'Инструкции для модели': 'Model instructions', 'Компактные правила в инжекте': 'Compact injection rules',
     'Написать собственное действие или реплику': 'Write your own action or line',

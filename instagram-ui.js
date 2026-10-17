@@ -5,6 +5,8 @@ import { getUserName, avatarForAuthor, handleFor, timeAgo } from './social.js';
 import { bankIcon as icon } from './bank-icons.js';
 import { openPhoneSheet, closePhoneSheet } from './phone-modal.js';
 import { lang } from './i18n.js';
+import { messageForwardHtml, forwardMessageSnapshot } from './message-forward.js';
+import { bindMessageForwarding } from './message-forward-ui.js';
 const L=(ru,en)=>lang()==='en'?en:ru;
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const badge=count=>count?'<i class="gp-insta-badge">'+(count>9?'9+':count)+'</i>':'';
@@ -48,6 +50,13 @@ export function renderInstagramThread(host,id,api){
     }
     markIgRead(id);
     host.innerHTML=`<div class="gp-instagram-shell"><header class="gp-insta-subheader"><button type="button" data-insta-back aria-label="${L('Назад','Back')}">${icon('ChevronLeft')}</button>${ava(person.name,avatarForAuthor(thread.ak),'is-small')}<div><h2>${esc(person.name)}</h2><small>${esc(thread.handle||handleFor(thread.ak,thread.author))}</small></div></header><div class="gp-insta-conversation">${thread.messages.map(message=>`<div class="gp-insta-dm-message ${message.dir==='out'?'is-out':'is-in'}">${message.share?`<button type="button" class="gp-insta-shared" data-insta-shared="${esc(message.id)}">${message.share.image?`<img src="${esc(message.share.image)}" alt="">`:icon(message.share.app==='st'?'CircleUserRound':'Image')}<span><small>${message.share.app==='st'?L('История','Story'):L('Публикация','Post')} · ${esc(message.share.author)}</small><b>${esc(message.share.text||L('Фото','Photo'))}</b></span></button>`:''}${message.text?`<span>${esc(message.text)}</span>`:''}<time>${esc(new Date(message.at).toLocaleTimeString(lang()==='en'?'en-GB':'ru-RU',{hour:'2-digit',minute:'2-digit'}))}</time></div>`).join('')}${busy?`<div class="gp-insta-typing" role="status">${esc(person.name)} ${L('печатает…','is typing…')}</div>`:''}</div><form class="gp-insta-compose"><textarea data-insta-draft rows="1" placeholder="${L('Сообщение…','Message…')}" maxlength="2000">${esc(map.get(id)||'')}</textarea><button type="submit" aria-label="${L('Отправить','Send')}" ${busy?'disabled':''}>${icon('Send')}</button></form></div>`;
+    host.querySelectorAll('[data-insta-shared]').forEach(button => {
+        const share = thread.messages.find(message => message.id === button.dataset.instaShared)?.share;
+        if (share?.app !== 'msg') return;
+        const card = document.createElement('div');
+        card.innerHTML = messageForwardHtml(share, L('Пересланные сообщения', 'Forwarded messages'));
+        button.replaceWith(card.firstElementChild || card);
+    });
     const input=host.querySelector('[data-insta-draft]');input.oninput=()=>map.set(id,input.value);
     if(focused){input.focus({preventScroll:true});input.setSelectionRange(caret,caret);}
     const scroll=host.querySelector('.gp-insta-conversation'),retry=igDmRetryMessage(thread);
@@ -62,6 +71,12 @@ export function renderInstagramThread(host,id,api){
     const send=async()=>{const text=input.value.trim();if(!text||igDmBusy(thread))return;map.delete(id);const pending=sendIgDm(id,text);api.render();try{await pending;}catch(error){if(getMeta()===owner)api.toast(String(error.message||error),'fa-circle-exclamation');}finally{if(getMeta()===owner)api.render();}};
     host.querySelector('form').onsubmit=event=>{event.preventDefault();send();};input.onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send();}};
     host.querySelectorAll('[data-insta-shared]').forEach(button=>button.onclick=()=>{const share=thread.messages.find(message=>message.id===button.dataset.instaShared)?.share;if(share)api.openShare(share);});
+    bindMessageForwarding(host, {
+        view: 'igdm:' + id, header: host.querySelector('.gp-insta-subheader'), composer: host.querySelector('.gp-insta-compose'),
+        rows: host.querySelectorAll('.gp-insta-dm-message'), messages: thread.messages, key: message => message.id,
+        snapshot: message => forwardMessageSnapshot(message, { user: getUserName(), peer: thread.author }),
+        sourceApp: 'instagram', peer: person.name, forward: api.forward,
+    });
 }
 export function renderInstagramActivity(host,api){
     const activity=getInstagram().activity;markIgActivityRead();

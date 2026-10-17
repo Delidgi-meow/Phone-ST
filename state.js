@@ -9,7 +9,7 @@ import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.50.2';
+export const GP_VERSION = '2.51.1';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -18,6 +18,8 @@ const defaultSettings = () => ({
     // Язык интерфейса: 'ru' | 'en' (переводится и панель настроек, и весь телефон)
     lang: 'ru',
     injectPrompt: true,
+    quietMode: false,
+    phoneActivityVersion: 0,
     showFab: true,
     fabPos: null, // {right, bottom} — сохранённая позиция кнопки
     injectDepth: 0, // глубина инжекта (0 = последний ход)
@@ -176,7 +178,119 @@ export function getMeta() {
         repairedContactRoots.add(m);
         if (repairContactMetadata(m)) saveMeta();
     }
+    // Per-chat intervals prevent paused messages from appearing on a later scan
+    // or after reload. Existing history remains available while quiet mode is on.
+    if (getSettings().quietMode || Array.isArray(m.quietPeriods)) {
+        if (!Array.isArray(m.quietPeriods)) m.quietPeriods = [];
+        const open = m.quietPeriods.at(-1);
+        let changed = false;
+        if (getSettings().quietMode && (!open || open.to != null)) {
+            m.quietPeriods.push({ from: currentChatLength(), to: null, baseline: quietActivityBaseline() });
+            changed = true;
+        } else if (!getSettings().quietMode && open?.to === null) {
+            open.to = currentChatLength() - 1;
+            const chat = SillyTavern.getContext()?.chat || [];
+            open.messages = Object.fromEntries(chat.slice(open.from, open.to + 1)
+                .map((message, offset) => [quietMessageId(message, open.from + offset), true]));
+            delete open.baseline;
+            quietBaselineSets.delete(open);
+            changed = true;
+        } else if (open?.to === null && open.from > currentChatLength()) {
+            open.from = currentChatLength();
+            changed = true;
+        }
+        if (changed) { invalidateChatCache(); saveMetadataDebounced(); }
+    }
     return m;
+}
+
+export function phoneActivityAllowed(version = getSettings().phoneActivityVersion) {
+    const settings = getSettings();
+    return !settings.quietMode && version === settings.phoneActivityVersion;
+}
+
+export function setPhoneQuietMode(enabled) {
+    getMeta();
+    const settings = getSettings();
+    if (settings.quietMode === !!enabled) return false;
+    // Include tags appended to an already existing streaming message or swipe.
+    // They need a permanent exclusion as their message index predates the pause.
+    if (settings.quietMode) {
+        const chat = SillyTavern.getContext()?.chat || [];
+        chat.forEach((message, index) => getPhoneActivityText(message, index));
+    }
+    settings.quietMode = !!enabled;
+    settings.phoneActivityVersion = (Number(settings.phoneActivityVersion) || 0) + 1;
+    getMeta();
+    invalidateChatCache();
+    return true;
+}
+
+export function wasPhoneQuietAt(index, message = SillyTavern.getContext()?.chat?.[index]) {
+    const key = quietMessageId(message, index);
+    return (getMeta().quietPeriods || []).some(period => period.messages
+        ? !!period.messages[key] : index >= period.from && (period.to == null || index <= period.to));
+}
+
+export function getPhoneActivityText(message, index) {
+    const text = getPhoneMessageText(message);
+    if (message?.is_user) return text;
+    if (!Number.isInteger(index)) index = (SillyTavern.getContext()?.chat || []).indexOf(message);
+    if (index >= 0 && wasPhoneQuietAt(index, message)) return '';
+    const root = getMeta(), paused = !!getSettings().quietMode;
+    if (!paused && !root.quietIgnoredTags) return text;
+    const period = paused ? root.quietPeriods?.at(-1) : null;
+    let baseline = period ? quietBaselineSets.get(period) : null;
+    if (period && !baseline) { baseline = new Set(period.baseline || []); quietBaselineSets.set(period, baseline); }
+    const counts = new Map();
+    let changed = false;
+    const filtered = text.replace(QUIET_ACTIVITY_TAG, (tag, kind, body) => {
+        const base = quietActivityKey(message, index, kind, body);
+        const count = (counts.get(base) || 0) + 1;
+        counts.set(base, count);
+        const key = base + ':' + count;
+        if (root.quietIgnoredTags?.[key]) return '';
+        if (!paused || baseline?.has(key)) return tag;
+        if (!root.quietIgnoredTags) root.quietIgnoredTags = {};
+        root.quietIgnoredTags[key] = true;
+        changed = true;
+        return '';
+    });
+    if (changed) { invalidateChatCache(); saveMetadataDebounced(); }
+    return filtered;
+}
+
+const QUIET_ACTIVITY_TAG = /<!--\s*tel:(?!bank\b|plan\b|time\b|out\b|sent\b|silent\b|log\b|priv\b|mark\b)([a-z_]+):([\s\S]*?)-->/gi;
+const quietBaselineSets = new WeakMap();
+function quietMessageId(message, index) {
+    return JSON.stringify([message?.send_date || message?.extra?.gen_id || index,
+        message?.name || '', !!message?.is_user, message?.extra?.gen_id || '']);
+}
+function quietActivityKey(message, index, kind, body) {
+    let normalized = body;
+    try {
+        const data = JSON.parse(body);
+        normalized = JSON.stringify(Object.fromEntries(Object.keys(data).sort()
+            .filter(key => key !== 'img' && key !== 'react').map(key => [key, data[key]])));
+    } catch (_error) { /* A partial streaming tag is suppressed as well. */ }
+    let hash = 2166136261;
+    for (const char of kind.toLowerCase() + ':' + normalized) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+    return String(message?.send_date || message?.extra?.gen_id || index) + ':' + (hash >>> 0).toString(36);
+}
+function quietActivityBaseline() {
+    const keys = [];
+    for (const [index, message] of (SillyTavern.getContext()?.chat || []).entries()) {
+        if (!message || message.is_user) continue;
+        const counts = new Map();
+        const text = readPhoneMessage(message, getSettings().externalBlocks !== false, stripThink);
+        for (const match of text.matchAll(QUIET_ACTIVITY_TAG)) {
+            const base = quietActivityKey(message, index, match[1], match[2]);
+            const count = (counts.get(base) || 0) + 1;
+            counts.set(base, count);
+            keys.push(base + ':' + count);
+        }
+    }
+    return keys;
 }
 
 // ── Сброс к заводским ──
@@ -475,7 +589,7 @@ export function getRoleplaySmsOptions() {
 }
 
 export function captureRoleplayOutgoing() {
-    if (getSettings().captureRoleplaySms === false) return 0;
+    if (getSettings().quietMode || getSettings().captureRoleplaySms === false) return 0;
     const count = captureRoleplaySms(SillyTavern.getContext().chat || [], getPhoneMessageText, getRoleplaySmsOptions());
     if (count) invalidateChatCache();
     return count;
@@ -1145,7 +1259,7 @@ function scanChatUncached() {
 
     for (let i = 0; i < chat.length; i++) {
         const msg = chat[i];
-        const sourceText = getPhoneMessageText(msg);
+        const sourceText = getPhoneActivityText(msg, i);
         if (!msg || !sourceText) continue;
         // Системные сообщения пропускаем, НО наши SMS-ответы (is_system с tel: тегами) — парсим
         if (msg.is_system && !ANY_TEL_RE.test(sourceText)) continue;
@@ -1174,7 +1288,7 @@ function scanChatUncached() {
                 const groupName = j.group || (typeof to === 'string' && to.match(/^группа:\s*(.+)$/i)?.[1]) || null;
                 // В пузыре телефона токен «*фото...*» не показываем — там миниатюра;
                 // полное описание остаётся в mes (для модели и саммари)
-                const displayBody = body.replace(/\*(?:фото|photo):[^*]*\*\s*/i, '').replace(/\*(?:фото|photo)\*\s*/i, '').trim();
+                const displayBody = body.replace(/\*(?:фото|photo):[^*]*\*\s*/i, '').replace(/\*(?:фото|photo)\*\s*/i, '').replace(/\*(?:переслано|forwarded):[^*]*\*\s*/i, '').trim();
                 const tagStart = text.indexOf(om[0]);
                 const entry = { dir: 'out', text: displayBody, idx: i, time, tagStart, tagEnd: tagStart + om[0].length, tagText: om[0] };
                 if (isVoice) entry.voice = true;
@@ -1200,6 +1314,7 @@ function scanChatUncached() {
         // ── Сообщения бота (или юзера) ──
 
         // ГЛАВНАЯ ПРОВЕРКА: бот описывает СВОЙ телефон?
+        if (!msg.is_user && wasPhoneQuietAt(i)) continue;
         // Если да — это НЕ смс юзеру, пропускаем всё кроме contact-тегов.
         // Для сообщений юзера эта проверка всегда false, так как мы хотим парсить их тэги.
         TAG_RE.lastIndex = 0;

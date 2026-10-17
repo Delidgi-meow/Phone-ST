@@ -7,7 +7,7 @@ import { lang } from './i18n.js';
 const L=(ru,en)=>lang()==='en'?en:ru;
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export function openPhoneSharePicker(host,shot,api){
-    const owner=getMeta(),contacts=getThreadList();let mode=['ig','st'].includes(shot.app)?'dm':'sms',selected=null;
+    const owner=getMeta(),contacts=getThreadList();let mode=['ig','st'].includes(shot.app)||(shot.app==='msg'&&shot.sourceApp==='instagram')?'dm':'sms',selected=null;
     const shade=openPhoneSheet(host,L('Поделиться','Share'),`<div class="gp-share-picker"><div class="gp-share-preview">${shot.image?`<img src="${esc(shot.image)}" alt="">`:icon(shot.app==='st'?'CircleUserRound':'Image')}<span><b>${esc(shot.author)}</b><small>${esc(shot.text)}</small></span></div><div class="gp-share-tabs"><button type="button" data-share-mode="sms">${L('Сообщения','Messages')}</button><button type="button" data-share-mode="dm">Instagram Direct</button></div><input type="search" data-share-search placeholder="${L('Найти получателя','Find recipient')}"><div class="gp-share-people"></div><textarea data-share-caption rows="2" maxlength="1000" placeholder="${L('Добавить сообщение…','Add a message…')}"></textarea><button type="button" class="gp-share-submit" disabled>${icon('Send')}${L('Отправить','Send')}</button></div>`,api.view);shade.classList.add('gp-share-sheet');
     function people(){
         if(mode==='sms')return contacts;

@@ -2974,13 +2974,6 @@ body.gp-theme-minimal .gp-toast-ava {
 .gp-ctl-note { margin-left: 8px; font-size: 9px; opacity: .65; font-style: italic; }
 
 
-#gp-phone.gp-has-wall .gp-header {
-    background: rgba(10, 12, 18, 0.28);
-    border-radius: 16px;
-    padding-left: 8px;
-    padding-right: 8px;
-}
-
 /* ═══ Казино ═══ */
 .gp-app-casino { background: linear-gradient(140deg, rgba(var(--gp-accent-b-rgb), .55), rgba(var(--gp-accent-a-rgb), .35)); }
 .gp-casino-title { color: var(--gp-text); }
@@ -3943,18 +3936,9 @@ body.gp-theme-minimal .gp-toast-ava {
 }
 .gp-twch-send:disabled, .gp-twch-tool:disabled { opacity: .55; }
 
-/* ═══ Новости ═══ */
-.gp-app-news { background: linear-gradient(140deg, rgba(var(--gp-accent-a-rgb), .45), rgba(var(--gp-accent-b-rgb), .3)); }
+/* ═══ Иконки Discord и Twitch ═══ */
 .gp-app-discord { background: linear-gradient(140deg, rgba(var(--gp-accent-a-rgb), .5), rgba(var(--gp-accent-b-rgb), .28)); }
 .gp-app-twitch { background: linear-gradient(140deg, rgba(var(--gp-accent-b-rgb), .5), rgba(var(--gp-accent-a-rgb), .28)); }
-.gp-news-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 4px 2px 12px; display: flex; flex-direction: column; gap: 9px; }
-.gp-news-card { padding: 11px 13px; border-radius: var(--gp-theme-card-radius, 15px); background: var(--gp-glass); border: 1px solid var(--gp-border-soft); display: flex; flex-direction: column; gap: 5px; }
-.gp-news-meta { display: flex; align-items: center; gap: 8px; }
-.gp-news-meta .gp-bank-tx-del { margin-left: auto; opacity: .4; }
-.gp-news-tag { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px; color: var(--gp-accent-a); background: rgba(var(--gp-accent-a-rgb), .12); padding: 2px 8px; border-radius: 8px; }
-.gp-news-card b { font-size: 13.5px; line-height: 1.3; }
-.gp-news-card p { font-size: 12px; line-height: 1.45; color: var(--gp-text-dim); margin: 0; }
-.gp-news-share { align-self: flex-start; margin-top: 3px; padding: 6px 11px; border-radius: 10px; border: 1px solid var(--gp-border-soft); background: var(--gp-glass-strong); color: var(--gp-text); font-size: 10.5px; cursor: pointer; }
 
 /* ═══ Почта ═══ */
 .gp-app-mail { background: linear-gradient(140deg, rgba(var(--gp-accent-b-rgb), .5), rgba(var(--gp-accent-a-rgb), .28)); }
@@ -5595,3 +5579,33 @@ img[data-zoom] { cursor: zoom-in; }
 @keyframes gp-call-notice-pulse{50%{box-shadow:0 0 0 8px #74c59e08}}
 @media(prefers-reduced-motion:reduce){#gp-notifications .gp-call-notice-pulse{animation:none}#gp-notifications .gp-toast{transition:opacity .15s;transform:none}}
 @media(max-width:400px){#gp-phone .gp-wallet-scroll{padding-inline:15px}#gp-phone .gp-wallet-balance-card{padding:17px}#gp-phone .gp-wallet-operation>strong{font-size:11px}#gp-phone .gp-wallet-products{gap:8px}#gp-phone .gp-wallet-products button{padding:13px 11px}#gp-phone .gp-wallet-header h2{font-size:20px}}
+/* Quiet mode and the two image repeat actions use the phone's current theme. */
+.gp-quiet-hint { display:block; margin-top:3px; color:var(--gp-text-dim); font-size:11px; font-weight:400; line-height:1.35; }
+#gp-phone .gp-quiet-indicator { display:inline-flex; align-items:center; justify-content:center; padding:0; width:20px; height:24px; border:0; background:none; color:var(--gp-accent-a); cursor:pointer; font-size:12px; }
+#gp-phone .gp-quiet-indicator[hidden] { display:none; }
+.gp-image-repeat-actions { display:grid; gap:10px; padding:4px 0 12px; }
+.gp-image-repeat-actions button { display:flex; align-items:center; gap:14px; width:100%; padding:16px; border:0; border-radius:18px; background:var(--gp-glass); color:var(--gp-text); text-align:left; cursor:pointer; }
+.gp-image-repeat-actions button:hover { background:var(--gp-glass-strong); }
+.gp-image-repeat-actions button>svg { flex:0 0 24px; width:24px; height:24px; color:var(--gp-accent-a); }
+.gp-image-repeat-actions button span { display:grid; gap:5px; }
+.gp-image-repeat-actions button b { font-size:15px; }
+.gp-image-repeat-actions button small { color:var(--gp-text-dim); line-height:1.4; }
+.gp-message-forward { border-left:3px solid var(--gp-accent-a); padding:5px 0 5px 11px; margin:2px 0 8px; white-space:normal; overflow-wrap:anywhere; }
+.gp-message-forward>small { display:block; margin-bottom:8px; color:var(--gp-text-dim); font-size:10px; }
+.gp-message-forward>div+div { margin-top:10px; }
+.gp-message-forward b { display:block; color:var(--gp-accent-a); font-size:12px; }
+.gp-message-forward p { margin:4px 0 0; white-space:pre-wrap; font:inherit; }
+.gp-message-forward img { display:block; max-width:100%; max-height:220px; object-fit:contain; border-radius:12px; margin-top:6px; }
+#gp-phone .gp-forward-start { flex:0 0 32px; width:32px; height:32px; border:0; background:transparent; color:var(--gp-accent-a); padding:6px; }
+.gp-forward-start svg { width:20px; height:20px; }
+.gp-forward-toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 6px; flex:0 0 auto; }
+.gp-forward-toolbar button { display:inline-flex; align-items:center; justify-content:center; gap:6px; padding:9px 12px; background:var(--gp-glass); border:0; border-radius:16px; color:var(--gp-accent-a); cursor:pointer; font:inherit; font-size:12px; }
+.gp-forward-toolbar button:disabled { opacity:.4; cursor:default; }
+.gp-forward-toolbar svg { width:18px; height:18px; }
+#gp-phone .gp-forward-toolbar[hidden],#gp-phone .gp-forward-dot[hidden],#gp-phone .gp-inputbar[hidden],#gp-phone .gp-insta-compose[hidden] { display:none!important; }
+#gp-phone .gp-forward-selectable { position:relative; cursor:pointer; padding-right:34px; }
+#gp-phone .gp-forward-selected { box-shadow:0 0 0 2px var(--gp-accent-a); }
+#gp-phone .gp-forward-dot { position:absolute; right:8px; top:8px; box-sizing:border-box; width:14px!important; height:14px!important; min-width:14px!important; min-height:14px!important; max-width:14px; max-height:14px; border:1.25px solid var(--gp-accent-a); border-radius:50%; margin:0!important; padding:3px!important; background:transparent; box-shadow:none!important; appearance:none; color:var(--gp-accent-a); cursor:pointer; }
+#gp-phone #gp-msgs .gp-bubble.gp-forward-selectable,#gp-phone .gp-insta-dm-message.gp-forward-selectable,#gp-phone .gp-dcmsg.gp-forward-selectable { padding-right:32px!important; }
+#gp-phone .gp-forward-dot[aria-checked="true"]::after { content:""; display:block; width:100%; height:100%; border-radius:50%; background:currentColor; }
+#gp-phone .gp-dc-inputwrap[hidden] { display:none!important; }

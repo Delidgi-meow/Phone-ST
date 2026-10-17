@@ -107,8 +107,8 @@ export async function parseExternalImagePrompt(raw, parser, blockName) {
     return instruction;
 }
 
-export async function generatePhoneBlockPrompt(post, { imageContext = '', parser, onStatus, signal } = {}) {
-    const selectedKey = getSettings().imageGenBlockKey;
+export async function generatePhoneBlockPrompt(post, { imageContext = '', parser, onStatus, signal, blockKey = getSettings().imageGenBlockKey } = {}) {
+    const selectedKey = blockKey;
     if (!selectedKey) return null;
     const selected = listPhoneImageBlocks().find(entry => entry.key === selectedKey);
     if (!selected) throw new Error('Выбранный внешний блок недоступен. Выберите блок заново в настройках телефона.');

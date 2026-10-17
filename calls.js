@@ -1,5 +1,5 @@
 import { openPhoneContactEditor } from './contact-editor.js';
-import { getMeta, saveMeta, getThreadList, getRpDateTime, getPhoneMessageText, isSmsBlocked, isUserName } from './state.js';
+import { getMeta, saveMeta, getThreadList, getRpDateTime, getPhoneActivityText as getPhoneMessageText, isSmsBlocked, isUserName, getSettings } from './state.js';
 import { generatePhoneCallReply, logSocialToChat, getUserName, getContactAvatar } from './social.js';
 import { addManualContact, renameContact, keyOf, resolveContactKey, contactOriginalName } from './state.js';
 import { lang } from './i18n.js';
@@ -73,13 +73,13 @@ export function harvestPhoneCalls(){
     const chat=SillyTavern.getContext().chat||[];let consumed=false;
     for(let i=0;i<chat.length;i++){
         const m=chat[i];if(!m||m.is_user||m.is_system)continue;
-        for(const tag of getPhoneMessageText(m).matchAll(/<!--\s*tel:call:(\{[\s\S]*?\})\s*-->/gi)){
+        for(const tag of getPhoneMessageText(m,i).matchAll(/<!--\s*tel:call:(\{[\s\S]*?\})\s*-->/gi)){
             const key=hash(tag[1])+':'+(m.send_date||m.extra?.gen_id||i);
             if(seen.has(key))continue;
             let data;try{data=JSON.parse(tag[1]);}catch{continue;}
             const name=typeof data.from==='string'?data.from.trim().slice(0,100):'';
             if(!name)continue;seen.add(key);calls.tags.push(key);consumed=true;
-            if(isUserName(name)||(data.to&&!isUserName(data.to)))continue;
+            if(getSettings().quietMode||isUserName(name)||(data.to&&!isUserName(data.to)))continue;
             const contact=phoneBook().find(c=>c.key===resolveContactKey(name));
             // Unknown people and blocked callers cannot call just because a model emits a tag.
             if(!contact||!contact.number||isSmsBlocked(contact.key))continue;

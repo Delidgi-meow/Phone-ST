@@ -12,20 +12,23 @@ import { notificationHost, showIncomingCallNotice } from './phone-notifications.
 import { applyAppSurface } from './app-surface.js';
 import { bankIcon } from './bank-icons.js';
 import { instagramHeader, instagramNav, instagramProfile, bindInstagramNavigation, renderInstagramInbox, renderInstagramThread, renderInstagramActivity } from './instagram-ui.js';
-import { ensureIgThread, canonicalIgThreadId } from './instagram-state.js';
+import { ensureIgThread, canonicalIgThreadId, igThreads, igPerson, igUnread, getInstagram } from './instagram-state.js';
 import { sendIgDm, receiveIgStoryReactions } from './instagram.js';
 import { openPhoneSharePicker } from './share-sheet.js';
 import { shopImagePost } from './shop-image.js';
 import { shopPayerButton, openShopPayerPicker } from './shop-payer.js';
 import { bankEvent } from './bank-protocol.js';
+import { chooseImageRepeat } from './phone-image-actions.js';
+import { messageForward, messageForwardHtml, forwardMessageSnapshot } from './message-forward.js';
+import { bindMessageForwarding } from './message-forward-ui.js';
 
-import { sendMessageAsUser, Generate, generateQuietPrompt, saveSettingsDebounced, saveChatConditional, user_avatar } from '../../../../script.js';
+import { sendMessageAsUser, saveSettingsDebounced, saveChatConditional, user_avatar } from '../../../../script.js';
 import { saveBase64AsFile } from '../../../utils.js';
 import {
     getSettings, getThreadList, getThread, markRead, addManualContact, hideContact,
     randomNumber, getTotalUnread, fmtTime, getRpDateTime, keyOf, getHiddenMessageIndexes, resolveContactKey, contactOriginalName,
     addGroup, delGroup, updateGroupMembers, renameContact, banAccount,
-    isSmsBlocked, blockSmsContact, unblockSmsContact, saveMeta, invalidateChatCache, getMeta, getPhoneMessageText,
+    isSmsBlocked, blockSmsContact, unblockSmsContact, saveMeta, invalidateChatCache, getMeta, getPhoneMessageText, phoneActivityAllowed,
 } from './state.js';
 import { phoneMessageSources, replacePhoneMessageTag } from './message-sources.js';
 import { roleplaySmsKey } from './roleplay-sms.js';
@@ -40,8 +43,8 @@ import {
     generateTweetFeed, generateTweetComments, generateAuthorReply, generateReplyToComment, generateIgFeed, generateIgComments, regenerateIgComment,
     regenerateTweet, regenerateIgPost, refreshFeed,
     compressImage, setContactAvatar, getContactAvatar, avatarForAuthor, setUserAvatar, getUserAvatar,
-    timeAgo, makeHandle, getUserName, generatePostImage, cancelImageGen, isImageGenAvailable, resolveAuthorKey,
-    handleFor, setContactHandle, setUserHandle, getUserHandle, describePostImage, generateSmsPhotoReply, logSocialToChat, getSocialJournalEntries, logIgPost, logFeedDigest,
+    timeAgo, makeHandle, getUserName, generatePostImage as requestPostImage, cancelImageGen, isImageGenAvailable, resolveAuthorKey,
+    handleFor, setContactHandle, setUserHandle, getUserHandle, describePostImage, generatePrivateSmsReply, logSocialToChat, getSocialJournalEntries, logIgPost, logFeedDigest,
     settleSocialPost, maybeGenerateStoryEvent, resolveStoryEvent, generateAdvertisingOffers,
     getStories, activeStories, addStory, deleteStory, bumpStoryViews, toggleStoryLike, generateContactStories, generateStoryReactions,
     generateRepLabel, generateGroupChats,
@@ -62,11 +65,10 @@ import {
     chargeAnonReveal, setAnonAuthor, anonAuthorNeedsLookup,
 } from './channels.js';
 import { casinoStats, spinSlots, spinRoulette, canBet } from './casino.js';
-import { getNews, refreshNews, shareNews, deleteNews } from './news.js';
 import { renderPhoneBrowser, renderPhoneMaps } from './web-ui.js';
 import { enhancePhoneHome, homeInteractionBusy, disposePhoneHome } from './home-layout.js';
 import { renderPhoneBook, callBadge, stopPhoneCallTimer, startPhoneCall } from './calls.js';
-import { getDiscord, findDServer, findDChannel, refreshDiscordServers, createOwnDServer, refreshDChannel, postToDChannel, deleteDServer, addDMember, delDMember } from './discord.js';
+import { getDiscord, findDServer, findDChannel, refreshDiscordServers, createOwnDServer, refreshDChannel, postToDChannel, deleteDServer, addDMember, delDMember, markDChannelRead } from './discord.js';
 import { getTwitch, findStream, refreshStreams, tickStream, donateToStream, startMyStream, tickMyStream, endMyStream, getTwitchNick, setTwitchNick } from './twitch.js';
 import { getNotes, addNote, updateNote, deleteNote, toggleNoteShared } from './notes.js';
 import {
@@ -77,7 +79,7 @@ import {
 } from './tinder.js';
 import {
     getPlans, addPlan, togglePlan, deletePlan, groupedPlans, plansBadgeCount,
-    fmtPlanDate, rpToday, PLAN_WHO, monthGrid, monthOf, shiftMonth, plansByDate, daysBetween,
+    fmtPlanDate, rpToday, PLAN_WHO, monthGrid, monthOf, shiftMonth, plansByDate, daysBetween, harvestPlanTags,
 } from './plans.js';
 import { tr, trDom, lang, DAYS_I18N, MONTHS_I18N } from './i18n.js';
 import { logAct, logOk, logFail } from './debug-log.js';
@@ -102,6 +104,14 @@ let _smsDraftVoice = false;     // режим голосового: текст �
 // (генерация картинки, публикация, новое сообщение), и закрытие телефона.
 const _drafts = new Map();
 let _lastFocusKey = null;       // автофокус — только при смене экрана
+
+async function generatePostImage(post, onStatus = null, cancelKey = null) {
+    const owner = getMeta();
+    const options = await chooseImageRepeat(post, cancelKey, document.getElementById('gp-screen'),
+        currentScreen === 'thread' ? 'thread:' + currentThreadKey : currentScreen);
+    if (getMeta() !== owner) { const error = new Error('Генерация отменена'); error.name = 'ImageGenCancelled'; throw error; }
+    return requestPostImage(post, onStatus, cancelKey, options);
+}
 
 // Ключ привязан к экрану и объекту: черновик треда Вадима не подставится Алисе
 function draftScope() {
@@ -391,6 +401,7 @@ function createPhone() {
                 <span id="gp-clock">--:--</span>
                 <span class="gp-status-right">
                     <span id="gp-rpdate" class="gp-rpdate"></span>
+                    <button type="button" class="gp-quiet-indicator" id="gp-quiet-indicator" title="Без звука" aria-label="Без звука" ${getSettings().quietMode ? '' : 'hidden'}>${ic('fa-bell-slash')}</button>
                     ${ic('fa-signal')}${ic('fa-wifi')}${ic('fa-battery-three-quarters')}
                     <button class="gp-close" id="gp-close" title="Закрыть">${ic('fa-xmark')}</button>
                 </span>
@@ -404,6 +415,7 @@ function createPhone() {
     });
     // Закрытие: крестик в статус-баре и «хоумбар» (на мобильном фуллскрине фона нет)
     ov.querySelector('#gp-close')?.addEventListener('click', closePhone);
+    ov.querySelector('#gp-quiet-indicator')?.addEventListener('click', () => goto('settings'));
     ov.querySelector('.gp-homebar')?.addEventListener('click', closePhone);
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && isPhoneOpen()) closePhone();
@@ -706,6 +718,8 @@ export function render() {
     if (!screen || !isPhoneOpen()) return;
     syncPhoneViewOwner();
     document.getElementById('gp-phone')?.classList.toggle('gp-home-active',currentScreen==='home');
+    const quietIndicator = document.getElementById('gp-quiet-indicator');
+    if (quietIndicator) quietIndicator.hidden = !getSettings().quietMode;
     screen.dataset.phoneView=currentScreen;
     const modal=screen.querySelector('.gp-phone-sheet-shade');
     if(modal&&modal.ownerRoot===getMeta()&&modal.dataset.phoneView===(currentScreen==='thread'?'thread:'+currentThreadKey:currentScreen))return;
@@ -751,7 +765,6 @@ export function render() {
     else if (currentScreen === 'shoporders') renderShopOrders(screen);
     else if (currentScreen === 'ordchat') renderCourierChat(screen);
     else if (currentScreen === 'casino') renderCasino(screen);
-    else if (currentScreen === 'news') renderNews(screen);
     else if (currentScreen === 'browser') renderPhoneBrowser(screen, phoneWebApi());
     else if (currentScreen === 'maps') renderPhoneMaps(screen, phoneWebApi());
     else if (currentScreen === 'phone') renderPhoneBook(screen, phoneBookApi());
@@ -1137,6 +1150,37 @@ function feedNew(kind, count) {
 // Всё непрочитанное для локскрина: {icon, title, text, time, go}
 function lockNotifications() {
     const out = [];
+    if (getSettings().quietMode) return out;
+    try {
+        for (const thread of igThreads()) {
+            const count = igUnread(thread);
+            if (!count) continue;
+            const last = thread.messages.filter(message => message.dir === 'in' && !message.read).at(-1);
+            out.push({ icon: 'fa-instagram', title: 'Instagram · ' + igPerson(thread).name,
+                text: last?.text || (last?.share?.app === 'msg' ? 'Пересланные сообщения' : last?.share?.text || 'Публикация'), count,
+                go: () => { currentIgDmThread = canonicalIgThreadId(thread.id); goto('igdm'); } });
+        }
+        const activity = getInstagram().activity.filter(event => !event.read && event.kind !== 'dm');
+        if (activity.length) out.push({ icon: 'fa-instagram', title: 'Instagram', count: activity.length,
+            text: activity[0].author + (activity[0].text ? ': ' + activity[0].text : ''), go: () => goto('igactivity') });
+    } catch (_error) { /* Optional messenger. */ }
+    try {
+        for (const channel of allChannels()) {
+            if (channel.mine || !channel.unread) continue;
+            out.push({ icon: 'fa-paper-plane', title: channel.name, text: channel.posts?.[0]?.text || '', count: channel.unread,
+                go: () => { _chanId = channel.id; goto('chan'); } });
+        }
+    } catch (_error) { /* Optional channels. */ }
+    try {
+        for (const server of getDiscord().servers) for (const channel of server.channels || []) {
+            const unread = (channel.messages || []).filter(message => !message.user && message.read === false);
+            if (!unread.length) continue;
+            const last = unread.at(-1);
+            out.push({ icon: 'fa-discord', title: 'Discord · ' + server.name + ' / #' + channel.name,
+                text: last.author + ': ' + last.text, count: unread.length,
+                go: () => { _dServerId = server.id; _dChannelId = channel.id; goto('dchannel'); } });
+        }
+    } catch (_error) { /* Optional messenger. */ }
     try {
         for (const t of getThreadList()) {
             if (!t.unread || !t.last) continue;
@@ -1217,7 +1261,7 @@ function renderLock(screen) {
             <div class="gp-lock-notes">
                 ${notes.map((n, i) => `
                     <div class="gp-lock-note" data-lock-note="${i}" style="animation-delay:${Math.min(i * 60, 300)}ms">
-                        <span class="gp-lock-note-icon">${/^fa-(x-twitter|instagram)$/.test(n.icon) ? brand(n.icon) : ic(n.icon)}</span>
+                        <span class="gp-lock-note-icon">${/^fa-(x-twitter|instagram|discord)$/.test(n.icon) ? brand(n.icon) : ic(n.icon)}</span>
                         <span class="gp-lock-note-body">
                             <span class="gp-lock-note-title">${esc(n.title)}${n.count > 1 ? ` <b>${n.count}</b>` : ''}</span>
                             ${n.text ? `<span class="gp-lock-note-text">${esc(String(n.text).slice(0, 90))}</span>` : ''}
@@ -1330,10 +1374,6 @@ function renderHome(screen) {
                 <div class="gp-app" data-app="maps">
                     <div class="gp-app-icon gp-app-maps">${ic('fa-map-location-dot')}</div>
                     <div class="gp-app-name">Карты</div>
-                </div>
-                <div class="gp-app" data-app="news">
-                    <div class="gp-app-icon gp-app-news">${ic('fa-newspaper')}</div>
-                    <div class="gp-app-name">Новости</div>
                 </div>
                 <div class="gp-app" data-app="discord">
                     <div class="gp-app-icon gp-app-discord">${brand('fa-discord')}</div>
@@ -2038,7 +2078,7 @@ function renderThread(screen) {
         </div>
         ${_smsDraftImage ? `<div class="gp-sms-attach"><img src="${esc(_smsDraftImage)}" alt=""><span>Фото приложено</span><button class="gp-iconbtn gp-danger" id="gp-attach-clear">${ic('fa-xmark')}</button></div>` : ''}
         <div class="gp-inputbar">
-            ${t.messages.length > 0 && t.messages[t.messages.length - 1].dir === 'in'
+            ${t.messages.length > 0
                 ? `<button class="gp-iconbtn gp-regen" id="gp-regen" title="Другой ответ" ${sending ? 'disabled' : ''}>${ic('fa-rotate-right')}</button>` : ''}
             <button class="gp-iconbtn" id="gp-attach" title="Приложить фото">${ic('fa-paperclip')}</button>
             <input type="file" id="gp-attach-file" accept="image/*" style="display:none">
@@ -2048,6 +2088,13 @@ function renderThread(screen) {
         </div>`;
 
     decorateThreadHeader(screen,t,{render,toast,changed:()=>{updatePhoneInjection();applyChatHiding();},call:contact=>{const pending=startPhoneCall(contact);goto('phone');pending.finally(()=>render()).catch(e=>toast(e.message,'fa-circle-exclamation'));}});
+    bindMessageForwarding(screen, {
+        view: 'sms:' + t.key, header: screen.querySelector('.gp-thread-header'), composer: screen.querySelector('.gp-inputbar'),
+        rows: screen.querySelectorAll('[data-bmi]'), messages: t.messages,
+        key: (message, index) => message.eventId || String(message.idx) + ':' + index,
+        snapshot: message => forwardMessageSnapshot(message, { user: getUserName(), peer: t.originalName || t.name }),
+        sourceApp: 'sms', peer: t.name, forward: openShareSheet,
+    });
     applyThreadAppearance(screen,t.key);
     screen.querySelector('#gp-thread-style')?.addEventListener('click',()=>editThreadAppearance(screen,t.key,{render,toast}));
     const msgs = screen.querySelector('#gp-msgs');
@@ -2383,25 +2430,35 @@ function renderThread(screen) {
 
 // ── Перегенерация последнего ответа персонажа (замена свайпа для скрытых смс) ──
 async function doRegen(key) {
-    if (sending) return;
-    // Перегенерируем только если ПОСЛЕДНЕЕ сообщение чата — ответ бота
-    // (иначе Generate('regenerate') снесёт не то)
-    try {
-        const chat = SillyTavern.getContext()?.chat || [];
-        const last = chat[chat.length - 1];
-        if (!last || last.is_user) {
-            toast('Нечего перегенерировать', 'fa-circle-exclamation');
-            return;
-        }
-    } catch (e) { return; }
-
+    if (sending || !phoneActivityAllowed()) return;
+    const owner = getMeta(), version = getSettings().phoneActivityVersion;
+    const thread = getThread(key), last = thread?.messages.at(-1);
+    if (!last) return;
+    const ctx = SillyTavern.getContext(), source = ctx.chat?.[last.idx];
+    const batch = last.dir === 'in' ? thread.messages.filter(message => message.dir === 'in' && message.idx === last.idx) : [];
+    const messages = thread.messages.filter(message => !batch.includes(message));
     sending = true;
     typingKey = key;
     render();
     try {
+        const reply = await generatePrivateSmsReply({ threadKey:key, contactName:thread.originalName || thread.name,
+            isGroup:thread.isGroup, members:thread.members || [], messages, regenerate:batch.length > 0 });
+        if (getMeta() !== owner || !phoneActivityAllowed(version)) return;
+        const tags = privateSmsReplyTags(thread, reply);
+        if (batch.length) {
+            // Replace only this thread's SMS tags; keep story prose, other
+            // recipients, and already applied financial/calendar events intact.
+            if (ctx.chat?.[last.idx] !== source || batch.some(message => !getPhoneMessageText(source).includes(message.tagText))) return;
+            batch.forEach((message, index) => replacePhoneMessageTag(source, message.tagText, index ? '' : tags));
+            invalidateChatCache();
+            await saveChatConditional();
+            ctx.printMessages?.();
+        } else {
+            await insertGhostReply(thread.originalName || thread.name, tags);
+        }
         updatePhoneInjection();
-        await Generate('regenerate');
     } catch (e) {
+        if (e.name === 'AbortError') return;
         console.error('[GlassPhone] regen failed:', e);
         toast('Не удалось перегенерировать', 'fa-circle-exclamation');
     } finally {
@@ -2981,7 +3038,7 @@ function instagramApi(){
     return {render,toast,home:()=>goto('home'),feed:()=>{_igProfile=false;goto('ig');},profile:()=>{_igProfile=true;goto('ig');},inbox:()=>goto('igdms'),activity:()=>goto('igactivity'),
         back:()=>goto(currentScreen==='igdm'?'igdms':'ig'),thread:id=>{currentIgDmThread=canonicalIgThreadId(id);goto('igdm');},
         post:id=>{if(!getIgPosts().some(post=>post.id===id)){toast('Публикация удалена','fa-instagram');return;}currentPostId=id;goto('igview');},
-        story:id=>openShot(JSON.stringify({app:'st',id})),openShare:shot=>openShot(JSON.stringify(shot))};
+        story:id=>openShot(JSON.stringify({app:'st',id})),openShare:shot=>openShot(JSON.stringify(shot)),forward:openShareSheet};
 }
 export function openInstagram(event=null){
     openPhone();
@@ -4087,6 +4144,7 @@ export function notifyDeliveries() {
     if (!getSettings().isEnabled) return;
     try {
         for (const { order, stage } of advanceOrders()) {
+            if (getSettings().quietMode) continue;
             if (stage === 'way') {
                 toast(`Курьер в пути: ${order.item} · ${fmtEta(orderLeft(order))}`, 'fa-truck-fast');
                 // Курьера придумываем только сейчас: до выезда его нет.
@@ -4506,6 +4564,7 @@ function renderDChannel(screen) {
     const s = findDServer(_dServerId);
     const c = findDChannel(_dServerId, _dChannelId);
     if (!s || !c) { goto('discord'); return; }
+    markDChannelRead(s.id, c.id);
     const msgs = c.messages.map(mm => `
         <div class="gp-dcmsg" data-dmsg="${mm.id}">
             <span class="gp-dcmsg-ava" style="${avatarStyle(mm.user ? 'user' + mm.author : mm.author)}">${esc(String(mm.author).slice(0, 1).toUpperCase())}</span>
@@ -4537,6 +4596,12 @@ function renderDChannel(screen) {
             </div>
         </div>`);
     const scroll = screen.querySelector('#gp-dmsg-scroll');
+    bindMessageForwarding(screen, {
+        view: 'discord:' + s.id + ':' + c.id, header: screen.querySelector('.gp-dc-chathead'), composer: screen.querySelector('.gp-dc-inputwrap'),
+        rows: screen.querySelectorAll('[data-dmsg]'), messages: c.messages, key: message => message.id,
+        snapshot: message => forwardMessageSnapshot({ dir: message.user ? 'out' : 'in', from: message.author, text: message.text }, { user: getUserName(), peer: message.author }),
+        sourceApp: 'discord', peer: s.name + ' / #' + c.name, forward: openShareSheet,
+    });
     if (scroll) scroll.scrollTop = scroll.scrollHeight;
     screen.querySelector('#gp-back')?.addEventListener('click', () => { _dReplyTo = null; goto('discord'); });
     const dRun = async (fn) => {
@@ -5372,55 +5437,6 @@ function renderTinMe(screen) {
     screen.querySelector('#gp-tin-myregen')?.addEventListener('click', (e) => { e.stopPropagation(); drawMine(); });
 }
 
-// ═══ НОВОСТИ ═══
-
-let _newsBusy = false;
-function renderNews(screen) {
-    currentScreen = 'news';
-    const n = getNews();
-    setHtmlKeepScroll(screen, '.gp-news-scroll', `
-        <div class="gp-header gp-thread-header">
-            <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
-            <div class="gp-title gp-title-app gp-news-title">Новости</div>
-            <button class="gp-iconbtn" id="gp-news-refresh" ${_newsBusy ? 'disabled' : ''}>${_newsBusy ? ic('fa-spinner fa-spin') : ic('fa-rotate')}</button>
-        </div>
-        <div class="gp-news-scroll">
-            ${n.items.length === 0
-                ? `<div class="gp-empty"><div class="gp-empty-icon">${ic('fa-newspaper')}</div><div class="gp-empty-title">Лента пуста</div><div class="gp-empty-text">Нажми ${ic('fa-rotate')} — новости города и мира<br>сгенерируются под твою ролевую</div></div>`
-                : n.items.map(it => `
-                <article class="gp-news-card">
-                    <div class="gp-news-meta"><span class="gp-news-tag">${esc(it.tag)}</span><span class="gp-tw-time">${esc(timeAgo(it.time))}</span>
-                        <button class="gp-bank-tx-del" data-del-news="${esc(it.id)}" title="Удалить">${ic('fa-xmark')}</button></div>
-                    <b>${esc(it.title)}</b>
-                    <p>${esc(it.text)}</p>
-                    <button class="gp-news-share" data-share-news="${esc(it.id)}" title="Ролевая узнает, что ты это прочитала">${ic('fa-share')} Обсудить в ролевой</button>
-                </article>`).join('')}
-        </div>`);
-    screen.querySelector('#gp-back')?.addEventListener('click', () => goto('home'));
-    screen.querySelector('#gp-news-refresh')?.addEventListener('click', async () => {
-        if (_newsBusy) return;
-        _newsBusy = true; render();
-        try {
-            const added = await refreshNews();
-            toast(`Новостей: +${added}`, 'fa-newspaper');
-        } catch (e) {
-            toast(String(e?.message || e).slice(0, 70), 'fa-circle-exclamation');
-        } finally {
-            _newsBusy = false;
-            if (currentScreen === 'news') render();
-        }
-    });
-    screen.querySelectorAll('[data-share-news]').forEach(btn => btn.addEventListener('click', () => {
-        if (shareNews(btn.getAttribute('data-share-news'))) {
-            applyChatHiding();
-            toast('Ушло в ролевую — персонажи могут отреагировать', 'fa-share');
-        }
-    }));
-    screen.querySelectorAll('[data-del-news]').forEach(btn => btn.addEventListener('click', () => {
-        deleteNews(btn.getAttribute('data-del-news')); render();
-    }));
-}
-
 // ═══ ЗАМЕТКИ ═══
 
 let _noteEditId = null;
@@ -5606,7 +5622,7 @@ function renderNotes(screen) {
 // ═══ СКАМ-СМС: доставка призраком ═══
 
 export function deliverScamSms(sms) {
-    if (!sms || !sms.from || !sms.text) return;
+    if (getSettings().quietMode || !sms || !sms.from || !sms.text) return;
     const tag = { from: sms.from, text: sms.text };
     if (sms.shot) tag.shot = sms.shot;
     const mesText = `<!--tel:sms:${JSON.stringify(tag)}-->`;
@@ -6456,6 +6472,8 @@ const SHOT_APPS = {
 
 // Короткая подпись скрина для видимой строки и для промпта
 function shotLabel(shot) {
+    const forward = messageForward(shot);
+    if (forward) return `${lang() === 'en' ? 'forwarded messages' : 'пересланные сообщения'}: ${forward.messages.length} · ${forward.author}`;
     const meta = SHOT_APPS[String(shot?.app || '').toLowerCase()];
     const who = shot?.author ? ` ${shot.author}` : '';
     const txt = shot?.text ? `: «${String(shot.text).slice(0, 100)}»` : '';
@@ -6496,6 +6514,7 @@ function resolveShot(shot) {
 function shotHtml(m) {
     const shot = m.shot;
     if (!shot || !shot.app) return '';
+    if (shot.app === 'msg') return messageForwardHtml(shot, lang() === 'en' ? 'Forwarded messages' : 'Пересланные сообщения');
     const meta = SHOT_APPS[String(shot.app).toLowerCase()] || { icon: 'fa-image', label: 'пост' };
     const found = resolveShot(shot);
     const author = shot.author || found?.author || '';
@@ -6675,7 +6694,11 @@ async function insertGhostReply(name, mesText) {
         extra: { isSmsSilent: true },
     };
     chat.push(replyMsg);
-    try { if (harvestBankTags()) updatePhoneInjection(); }
+    invalidateChatCache();
+    try {
+        const bankChanged = harvestBankTags(), plansChanged = harvestPlanTags();
+        if (bankChanged || plansChanged) updatePhoneInjection();
+    }
     catch (error) { console.warn('[GlassPhone] SMS payment sync:', error); }
     if (typeof ctx.saveChat === 'function') await ctx.saveChat();
     if (typeof ctx.printMessages === 'function') ctx.printMessages();
@@ -6690,11 +6713,32 @@ async function insertGhostReply(name, mesText) {
     }, 1500);
 }
 
+function privateSmsReplyTags(thread, result) {
+    const name = thread.originalName || thread.name || thread.key;
+    return result.replies.map(reply => {
+        const sender = thread.isGroup ? reply.from : name;
+        const sms = { from:sender, text:reply.text,
+            ...(thread.isGroup ? {chat:name} : {}), ...(reply.forward ? {shot:reply.forward} : {}),
+            ...(reply.voice ? {voice:true} : {}), ...(reply.photo ? {photo:reply.photo} : {}) };
+        const payer = contactOriginalName(resolveContactKey(sender), sender);
+        const payments = (reply.bank || []).map(value => bankEvent({...value, payer}, getUserName())).filter(event => event && event.payer !== 'user');
+        const plans = (reply.plans || []).filter(value => value && typeof value.text === 'string').map(value => ({
+            text:value.text.slice(0,200), ...(value.date ? {date:String(value.date).slice(0,30)} : {}),
+            ...(typeof value.time === 'string' ? {time:value.time.slice(0,5)} : {}),
+            ...(['user','char','both'].includes(value.who) ? {who:value.who} : {}),
+            ...(['open','done','cancelled'].includes(value.status) ? {status:value.status} : {}),
+        }));
+        return [`<!--tel:sms:${JSON.stringify(sms)}-->`, ...payments.map(event => `<!--tel:bank:${JSON.stringify(event)}-->`),
+            ...plans.map(event => `<!--tel:plan:${JSON.stringify(event)}-->`)].join('\n');
+    }).join('\n') || '<!--tel:silent-->';
+}
+
 // opts: {text, shot} — так уходит пересланный скрин поста (адресата и подпись
 // выбирают в шторке, поле ввода треда при этом не участвует)
 async function doSend(key, opts = {}) {
     if (sending) return;
     const owner = getMeta();
+    const activityVersion = getSettings().phoneActivityVersion;
     const input = document.getElementById('gp-input');
     const fromInput = opts.text === undefined;
     const text = (fromInput ? (input?.value || '') : opts.text).trim();
@@ -6703,10 +6747,10 @@ async function doSend(key, opts = {}) {
     const t = getThread(key);
     const name = t ? (t.originalName||t.name||t.key) : key;
     const isGroup = !!t?.isGroup;
-    const draftImg = _smsDraftImage;
-    _smsDraftImage = null;
-    const asVoice = _smsDraftVoice && !!text; // голосовое без расшифровки не бывает
-    _smsDraftVoice = false;
+    const draftImg = fromInput ? _smsDraftImage : null;
+    if (fromInput) _smsDraftImage = null;
+    const asVoice = fromInput && _smsDraftVoice && !!text; // голосовое без расшифровки не бывает
+    if (fromInput) _smsDraftVoice = false;
 
     sending = true;
     if (input && fromInput) input.value = '';
@@ -6724,95 +6768,52 @@ async function doSend(key, opts = {}) {
         : `[${kindTok} → ${name}]`;
     const photoTok = en ? '*photo*' : '*фото*';
     // Скрин виден и модели: она должна понимать, ЧТО именно переслали
-    const shotTok = shot ? `*${en ? 'screenshot' : 'скрин'}: ${shotLabel(shot)}*` : '';
+    const shotTok = shot ? `*${shot.app === 'msg' ? (en ? 'forwarded' : 'переслано') : (en ? 'screenshot' : 'скрин')}: ${shotLabel(shot)}*` : '';
     const mes = `${marker}\n${visible} ${draftImg ? photoTok + ' ' : ''}${shotTok ? shotTok + ' ' : ''}${text}`;
 
     try {
         await sendMessageAsUser(mes);
-
-        // Приложенное фото. Порядок:
-        //  1) файл + img в маркер → рендер: МИНИАТЮРА СРАЗУ
-        //  2) ОДИН vision-запрос: описание + ответ собеседника (экономия: картинка
-        //     в API один раз; описание → в mes «*фото: ...*», ответ → призраком)
-        // Сам файл к сообщению чата НЕ приклеивается: в телефоне миниатюра
-        // берётся из маркера, а в истории остаётся описание — без второй копии снимка.
-        let photoHandled = false;
-        if (draftImg) {
-            try {
-                const ctx0 = SillyTavern.getContext();
-                const lastMsg = ctx0?.chat?.[ctx0.chat.length - 1];
-                if (lastMsg && lastMsg.is_user) {
-                    let src = draftImg;
-                    try {
-                        const base64 = draftImg.replace(/^data:image\/[a-z]+;base64,/i, '');
-                        src = await saveBase64AsFile(base64, 'glassphone', `sms_${Date.now()}`, 'jpeg');
-                    } catch (e) {
-                        console.warn('[GlassPhone] saveBase64AsFile failed, keeping dataURL:', e);
-                    }
-                    // Миниатюра телефона: img в маркере tel:out (mes переживает всё)
-                    const markerJson = JSON.stringify({ ...markerBase, img: src });
-                    lastMsg.mes = lastMsg.mes.replace(/<!--\s*tel:out:\{[\s\S]*?\}\s*-->/, `<!--tel:out:${markerJson}-->`);
-                    invalidateChatCache();
-                    await saveChatConditional();
-
-                    // Миниатюра на экране НЕМЕДЛЕННО, до вижна
-                    applyChatHiding();
-                    typingKey = key;
-                    render();
-
-                    // Комбо: описание + ответ одним запросом
-                    const combo = await generateSmsPhotoReply({
-                        contactName: name, isGroup, members: t?.members || [],
-                        userText: text, image: draftImg,
-                    });
-                    if (getMeta() !== owner) return;
-                    if (combo) {
-                        if (combo.desc) {
-                            lastMsg.mes = lastMsg.mes.replace(photoTok, `${photoTok.slice(0, -1)}: ${combo.desc}*`);
-                            invalidateChatCache();
-                            await saveChatConditional();
-                        }
-                        const botMes = combo.replies.length
-                            ? combo.replies.map(r => {
-                                const sender = isGroup ? r.from : name;
-                                const sms = `<!--tel:sms:${JSON.stringify(isGroup ? {from:sender, chat:name, text:r.text} : {from:sender, text:r.text})}-->`;
-                                const member = !isGroup || (t.members || []).some(value => resolveContactKey(value) === resolveContactKey(sender));
-                                const payer = contactOriginalName(resolveContactKey(sender), sender);
-                                const payments = member ? (r.bank || []).map(value => bankEvent({...value, payer}, getUserName())).filter(event => event && event.payer !== 'user') : [];
-                                return [sms, ...payments.map(event => `<!--tel:bank:${JSON.stringify(event)}-->`)].join('\n');
-                            }).join('\n')
-                            : '<!--tel:silent-->';
-                        await insertGhostReply(name, botMes);
-                        photoHandled = true;
-                    } else {
-                        console.warn('[GlassPhone] комбо-запрос не удался — ответ пойдёт через тихий путь без описания');
-                    }
-                }
-            } catch (e) {
-                console.warn('[GlassPhone] attach image failed:', e);
-            }
-        }
-        if (photoHandled) return; // finally всё приберёт
-
-        applyChatHiding(); // спрятать свою смс из ленты сразу
-        typingKey = key;
-        render(); // своя смс уже видна (она в чате), плюс «печатает…»
-
-        updatePhoneInjection();
-
-        // Генерируем ответ «тихо» — generateQuietPrompt не триггерит JS Runner,
-        // Extra блоки и другие скрипты. Результат вставляем призраком.
-        const ctx = SillyTavern.getContext();
-        const msgKind = asVoice ? 'VOICE message (they hear their voice; this is the transcript)' : 'message';
-        const quietPrompt = `The latest user entry is an app ${msgKind} addressed to ${isGroup ? 'group «' + name + '», members: ' + (t.members || []).join(', ') : name}. Use that entry’s message and attachments; do not repeat or rewrite the user’s words. Reply in the recipient’s voice with 1–5 hidden comments only: <!--tel:sms:{"from":"canonical sender","to":"{{user}}","text":"reply"${isGroup ? ',"chat":' + JSON.stringify(name) : ''}}-->. If unavailable/unwilling, use <!--tel:silent-->. Include newly applicable calendar/bank/clock tags. No visible narration, user actions or unrelated senders.`;
-        const rawReply = await generateQuietPrompt(quietPrompt, false, false);
         if (getMeta() !== owner) return;
-        if (rawReply && rawReply.trim()) {
-            await insertGhostReply(name, rawReply.trim());
+
+        const ctx = SillyTavern.getContext();
+        const outgoing = ctx.chat?.findLast(message => message.is_user && message.mes === mes);
+        if (draftImg && outgoing) {
+            let src = draftImg;
+            try {
+                const base64 = draftImg.replace(/^data:image\/[a-z]+;base64,/i, '');
+                src = await saveBase64AsFile(base64, 'glassphone', `sms_${Date.now()}`, 'jpeg');
+            } catch (error) {
+                console.warn('[GlassPhone] keeping attached image dataURL:', error);
+            }
+            if (getMeta() !== owner) return;
+            outgoing.mes = outgoing.mes.replace(marker, `<!--tel:out:${JSON.stringify({...markerBase,img:src})}-->`);
+            invalidateChatCache();
+            await saveChatConditional();
         }
+        applyChatHiding();
+        if (!phoneActivityAllowed(activityVersion)) return;
+        typingKey = key;
+        render();
+        updatePhoneInjection();
+        const thread = getThread(key) || t || {key,name,originalName:name,isGroup,members:[]};
+        const reply = await generatePrivateSmsReply({threadKey:key, contactName:name, isGroup,
+            members:thread.members || [], image:draftImg});
+        if (getMeta() !== owner || !phoneActivityAllowed(activityVersion)) return;
+        if (draftImg && reply.desc && outgoing) {
+            outgoing.mes = outgoing.mes.replace(photoTok, `${photoTok.slice(0,-1)}: ${reply.desc}*`);
+            const tag = outgoing.mes.match(/<!--\s*tel:out:(\{[\s\S]*?\})\s*-->/)?.[0];
+            if (tag) {
+                const data = JSON.parse(tag.match(/\{[\s\S]*\}/)[0]);
+                replacePhoneMessageTag(outgoing,tag,`<!--tel:out:${JSON.stringify({...data,photo:reply.desc})}-->`);
+            }
+            invalidateChatCache();
+            await saveChatConditional();
+        }
+        await insertGhostReply(name,privateSmsReplyTags(thread,reply));
     } catch (e) {
+        if (e.name === 'AbortError') return;
         console.error('[GlassPhone] send failed:', e);
-        toast('Не удалось отправить', 'fa-circle-exclamation');
+        toast('Не удалось получить ответ — нажми перегенерацию', 'fa-circle-exclamation');
     } finally {
         sending = false;
         typingKey = null;
@@ -6872,6 +6873,7 @@ function toastStyleId() {
 }
 
 export function toast(text, icon = 'fa-comment-dots', threadKey = null, onOpen = null) {
+    if (getSettings().quietMode) return;
     text = tr(text); // перевод тостов (точный словарь + regex-правила)
     const style = toastStyleId();
     const el = document.createElement('div');

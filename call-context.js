@@ -1,5 +1,6 @@
 import { getMeta, getThread, getPhoneMessageText, stripThink, resolveContactKey, contactOriginalName, getRpDateTime, keyOf } from './state.js';
 import { logReq } from './debug-log.js';
+import { publicRoleplayMessage, privateThreadTurns } from './private-context.js';
 
 function clip(value,limit){
     const text=String(value||'').trim();if(text.length<=limit)return text;
@@ -46,7 +47,7 @@ function formatCard(fields,recipient){
 function recentHistory(ctx){
     const rows=[];
     for(const message of ctx.chat||[]){
-        if(!message||message.is_system)continue;
+        if(!message||message.is_system||!publicRoleplayMessage(message))continue;
         const text=plain(getPhoneMessageText(message));if(!text)continue;
         rows.push({speaker:message.is_user?(ctx.name1||'User'):(message.name||ctx.name2||'Character'),text});
     }
@@ -62,8 +63,14 @@ function recentHistory(ctx){
 function memory(ctx){
     for(let i=(ctx.chat||[]).length-1;i>=0;i--){
         const summary=ctx.chat[i]?.extra?.memory;
-        if(typeof summary==='string'&&summary.trim())return clip(plain(summary),6000);
+        if(typeof summary==='string'&&summary.trim()){
+            // A global summary can repeat other people's private app messages.
+            // Use it only when the summarized prefix has no such records.
+            if((ctx.chat||[]).slice(0,i+1).some(message=>message&&!publicRoleplayMessage(message)))return '';
+            return clip(plain(summary),6000);
+        }
     }
+    if((ctx.chat||[]).some(message=>message&&!publicRoleplayMessage(message)))return '';
     const summary=ctx.extensionPrompts?.['1_memory']?.value;
     return typeof summary==='string'?clip(plain(summary),6000):'';
 }
@@ -87,7 +94,7 @@ export async function buildPhoneCallContext(contact,transcript=[],utterance=''){
     let persona='';
     try{persona=ctx.getCharacterCardFields?.()?.persona||sub('{{persona}}');}catch{/* No card API on older hosts. */}
     if(persona==='{{persona}}')persona='';
-    const sms=(thread?.messages||[]).slice(-12).map(m=>(m.dir==='out'?(ctx.name1||'User'):original)+': '+plain(m.text)).join('\n');
+    const sms=JSON.stringify(privateThreadTurns(thread?.messages,{user:ctx.name1||'User',peer:original,limit:12}));
     const blocks=[
         'You are continuing a private roleplay PHONE CALL as '+JSON.stringify(original)+'. Use the character definition and established events below as canon. Speak only for that person in the requested JSON format.',
         'CONTACT IDENTITY: canonical character '+JSON.stringify(original)+'; permanent key '+JSON.stringify(key)+'; saved by the user as '+JSON.stringify(label)+'. The saved name is their personal label for the same person, not a new identity. Know how the user named this contact.',
@@ -96,7 +103,7 @@ export async function buildPhoneCallContext(contact,transcript=[],utterance=''){
     if(persona)blocks.push('=== USER PERSONA ===\n'+clip(persona,4000));
     if(summary)blocks.push('=== EXISTING STORY SUMMARY / MEMORY ===\n'+summary);
     if(history.text)blocks.push('=== RECENT ROLEPLAY HISTORY — chronological, up to 40 messages ===\n'+history.text);
-    if(sms)blocks.push('=== PRIVATE MESSAGES WITH THIS CONTACT ===\n'+clip(sms,6000));
+    if(thread?.messages.length)blocks.push('=== PRIVATE MESSAGES WITH THIS CONTACT — forwarded excerpts do not grant access to the source chat ===\n'+sms);
     let lore='';
     try{
         const {getWorldInfoPrompt}=await import('../../../world-info.js');
@@ -104,7 +111,7 @@ export async function buildPhoneCallContext(contact,transcript=[],utterance=''){
             const focus='Phone conversation with '+original+'. '+transcript.slice(-6).map(t=>plain(t.text)).join('\n')+'\n'+plain(utterance);
             const scanData={personaDescription:persona,characterDescription:cards.map(c=>c.fields.description).join('\n'),characterPersonality:cards.map(c=>c.fields.personality).join('\n'),
                 characterDepthPrompt:cards.map(c=>c.fields.notes).join('\n'),scenario:cards.map(c=>c.fields.scenario).join('\n'),creatorNotes:'',trigger:'normal'};
-            const messages=[focus,...(ctx.chat||[]).filter(m=>m&&!m.is_system).slice(-40).map(m=>plain(getPhoneMessageText(m))).filter(Boolean).reverse()];
+            const messages=[focus,...(ctx.chat||[]).filter(m=>m&&!m.is_system&&publicRoleplayMessage(m)).slice(-40).map(m=>plain(getPhoneMessageText(m))).filter(Boolean).reverse()];
             const result=await getWorldInfoPrompt(messages,Math.max(2048,Math.min(32768,Number(ctx.maxContext)||8192)),true,scanData);
             lore=clip(sub(loreText(result)),8000);
         }
