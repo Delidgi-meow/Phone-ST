@@ -1,3 +1,4 @@
+import { isPhoneAppInstalled } from './state.js';
 import { parsePhoneJson } from './phone-text.js';
 import { getMeta, saveMeta, getPhoneActivityText as getPhoneMessageText, stripThink, isUserName, isBanned, getSettings, phoneActivityAllowed } from './state.js';
 import { generateInstagramDmReply, logSocialToChat, getUserName, getStories, addIgComment, resolveAuthorKey } from './social.js';
@@ -14,12 +15,12 @@ export function igDmRetryMessage(thread){
 }
 async function requestIgReply(owner,thread,sent){
     const activityVersion = getSettings().phoneActivityVersion;
-    if (!phoneActivityAllowed(activityVersion)) { sent.message.replyState='complete'; saveMeta(); return sent; }
+    if (!(isPhoneAppInstalled('ig') && phoneActivityAllowed(activityVersion))) { sent.message.replyState='complete'; saveMeta(); return sent; }
     const pending=pendingFor(owner),pendingId=sent.message.id;pending.add(pendingId);sent.message.replyState='pending';saveMeta();
     try{
         const reply=await generateInstagramDmReply(thread);
         if(getMeta()!==owner)return sent;
-        if (!phoneActivityAllowed(activityVersion)) { sent.message.replyState='complete'; saveMeta(); return sent; }
+        if (!(isPhoneAppInstalled('ig') && phoneActivityAllowed(activityVersion))) { sent.message.replyState='complete'; saveMeta(); return sent; }
         thread=igThread(thread.id)||thread;
         sent.thread=thread;sent.message=thread.messages.find(message=>message.id===sent.message.id)||sent.message;
         if(reply?.text || reply?.share){
@@ -28,7 +29,7 @@ async function requestIgReply(owner,thread,sent){
         }
         sent.message.replyState='complete';saveMeta();return sent;
     }catch(error){
-        if (getMeta()===owner && !phoneActivityAllowed(activityVersion)) { sent.message.replyState='complete'; saveMeta(); return sent; }
+        if (getMeta()===owner && !(isPhoneAppInstalled('ig') && phoneActivityAllowed(activityVersion))) { sent.message.replyState='complete'; saveMeta(); return sent; }
         if(getMeta()===owner){sent.message.replyState='failed';saveMeta();}
         throw error;
     }finally{pending.delete(pendingId);}
@@ -54,7 +55,7 @@ export function receiveIgStoryReactions(story,result){
 export async function flushInstagramJournal(){
     const owner=getMeta();
     const pending=getInstagram().activity.filter(event=>!event.journaled).reverse();if(!pending.length)return;
-    if (getSettings().quietMode) { for (const event of pending) event.journaled=true; saveMeta(); return; }
+    if (!isPhoneAppInstalled('ig') || getSettings().quietMode) { for (const event of pending) event.journaled=true; saveMeta(); return; }
     // One compact journal entry for a burst of comments/reactions.
     for(let i=0;i<pending.length;i+=6){
         if(getMeta()!==owner)return;
@@ -80,6 +81,7 @@ function incomingShare(value){
     return {app:value.app,id:found.id,author:found.author,text:found.caption||found.imgDesc||'',image:found.image};
 }
 export function harvestInstagramTags(){
+    if (!isPhoneAppInstalled('ig')) return 0;
     const data=getInstagram(),seen=new Set(data.seenTags);let added=0,changed=false;
     const chat=SillyTavern.getContext()?.chat||[];
     for(let i=0;i<chat.length;i++){
@@ -89,7 +91,7 @@ export function harvestInstagramTags(){
         for(const match of source.matchAll(/<!--\s*tel:(igdm|ignotify):(\{[\s\S]*?\})\s*-->/gi)){
             const base=match[1]+':'+hash(match[2])+':'+(message.send_date||message.extra?.gen_id||i),key=base+':'+(occurrences[base]=(occurrences[base]||0)+1);
             if(seen.has(key))continue;
-            if (getSettings().quietMode) { seen.add(key); data.seenTags.push(key); changed=true; continue; }
+            if (!isPhoneAppInstalled('ig') || getSettings().quietMode) { seen.add(key); data.seenTags.push(key); changed=true; continue; }
             let event;try{event=parsePhoneJson(match[2]);}catch{continue;}
             if(typeof event.from!=='string'||!event.from.trim()||isUserName(event.from)||isBanned(event.from)||(event.to&&!isUserName(event.to)))continue;
             const existingActivity=new Set(data.activity.map(item=>item.id));
@@ -127,10 +129,11 @@ export function harvestInstagramTags(){
     if(data.seenTags.length>600)data.seenTags=data.seenTags.slice(-600);if(changed)saveMeta();return added;
 }
 export function instagramInjectLine(){
+    if (!isPhoneAppInstalled('ig')) return '';
     const root=getMeta(),data=getInstagram(),social=root.social;
     if(!social?.igPosts?.length&&!social?.stories?.length&&!social?.instagram?.threads?.length)return '';
     const posts=social.igPosts||[],own=posts.filter(item=>item.ak==='user').slice(0,3),others=posts.filter(item=>item.ak!=='user').slice(0,2);
     const ids=[...[...own,...others].map(item=>'ig '+item.id+' by '+item.author+': '+String(item.caption||item.imgDesc||'photo').slice(0,85)),...(social.stories||[]).filter(item=>Date.now()-item.time<86400000).slice(0,4).map(item=>'st '+item.id+' by '+item.author+': '+String(item.caption||item.imgDesc||'photo').slice(0,85))];
     const recent=data.threads.filter(thread=>thread.messages?.length).sort((a,b)=>b.messages.at(-1).at-a.messages.at(-1).at).slice(0,3).map(thread=>thread.author+' (saved as '+igPerson(thread).name+'): '+thread.messages.slice(-2).map(message=>(message.dir==='out'?'user':'contact')+': '+message.text.slice(0,180)).join(' | '));
-    return 'INSTAGRAM: story replies and Direct messages belong here, not SMS unless a separate phone text is sent. Incoming DM: <!--tel:igdm:{"from":"canonical name","text":"message"}-->, optional "storyId" for a reply to a listed story. Characters may SEND existing Instagram posts and stories (including the user’s) to the user with an in-character comment: put "shot":{"app":"ig|st","id":"listed ID","author":"post author","text":"post/story content"} in tel:igdm or tel:sms, choosing the actual delivery app. This creates a forwarded card, not a new post. Do not only narrate the share or copy it as plain text. For an established notification: <!--tel:ignotify:{"from":"canonical name","kind":"like|comment|follow|story_like","postId":"listed ID","text":"optional comment"}-->; story reactions use "storyId". Notify only on the user’s content. Do not repeat events, invent user actions, or expose private DMs to outsiders. AVAILABLE POSTS/STORIES:\n'+ids.join('\n')+(recent.length?'\nPRIVATE DIRECT — only participants know:\n'+recent.join('\n'):'');
+    return 'INSTAGRAM: story replies and Direct messages belong here, not SMS unless a separate phone text is sent. Incoming DM: <!--tel:igdm:{"from":"canonical name","text":"message"}-->, optional "storyId" for a reply to a listed story. Characters may SEND existing Instagram posts and stories (including the user’s) to the user with an in-character comment: put "shot":{"app":"ig|st","id":"listed ID","author":"post author","text":"post/story content"} in '+(isPhoneAppInstalled('list')?'tel:igdm or tel:sms, choosing the actual delivery app':'tel:igdm')+'. This creates a forwarded card, not a new post. Do not only narrate the share or copy it as plain text. For an established notification: <!--tel:ignotify:{"from":"canonical name","kind":"like|comment|follow|story_like","postId":"listed ID","text":"optional comment"}-->; story reactions use "storyId". Notify only on the user’s content. Do not repeat events, invent user actions, or expose private DMs to outsiders. AVAILABLE POSTS/STORIES:\n'+ids.join('\n')+(recent.length?'\nPRIVATE DIRECT — only participants know:\n'+recent.join('\n'):'');
 }

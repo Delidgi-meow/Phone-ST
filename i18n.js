@@ -16,6 +16,10 @@ export const MONTHS_I18N = {
 
 // ── Точный словарь (ключ = русская строка после trim) ──
 const DICT = {
+    'Положение на экране': 'Screen position', 'Положение уведомлений': 'Notification position',
+    'Сверху': 'Top', 'По центру': 'Center', 'Снизу': 'Bottom',
+    'Сверху — чуть ниже стандартных уведомлений': 'Top — just below standard notifications',
+
     'Без звука':'Quiet mode',
     'Пауза входящих · банк и календарь работают':'Incoming activity paused · bank and calendar remain active',
     'Полное погашение':'Full repayment',

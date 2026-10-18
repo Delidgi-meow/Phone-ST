@@ -1,3 +1,4 @@
+import { isPhoneAppInstalled } from './state.js';
 import { parsePhoneJson } from './phone-text.js';
 import { openPhoneContactEditor } from './contact-editor.js';
 import { getMeta, saveMeta, getThreadList, getRpDateTime, getPhoneActivityText as getPhoneMessageText, isSmsBlocked, isUserName, getSettings } from './state.js';
@@ -20,7 +21,8 @@ export function getCalls(){
     for(const call of c.history)if(call.status==='ringing'&&Date.now()-call.at>90000){call.status='missed';call.ended=Date.now();saveMeta();}
     return c;
 }
-export function callBadge(){return getCalls().history.filter(c=>c.status==='ringing'||(c.unread&&['missed','declined'].includes(c.status))).length;}
+export function callBadge(){
+    if (!isPhoneAppInstalled('phone')) return 0;return getCalls().history.filter(c=>c.status==='ringing'||(c.unread&&['missed','declined'].includes(c.status))).length;}
 function active(){return getCalls().history.find(c=>['connecting','active'].includes(c.status));}
 function findCall(id){return getCalls().history.find(c=>c.id===id);}
 function duration(call){return call.started?Math.max(0,Math.floor(((call.ended||Date.now())-call.started)/1000)):0;}
@@ -50,12 +52,14 @@ async function connect(call,forceIncoming=false){
     finally{busy.delete(call);}
 }
 export function startPhoneCall(contact){
+    if (!isPhoneAppInstalled('phone')) return Promise.resolve();
     if(!String(contact?.number||'').trim())throw new Error(L('Сначала сохрани номер контакта','Save this contact’s phone number first'));
     if(active())throw new Error(L('Сначала заверши текущий звонок','End your current call first'));
     const call={id:'call:'+uid(),key:contact.key||keyOf(contact.name),name:contact.name,originalName:contact.originalName,number:contact.number||'',direction:'out',status:'connecting',at:Date.now(),when:getRpDateTime()?.label||'',transcript:[],unread:false};
     const calls=getCalls();calls.history.unshift(call);calls.history=calls.history.slice(0,80);saveMeta();return connect(call);
 }
-export function acceptPhoneCall(id){if(active())throw new Error(L('Сначала заверши текущий звонок','End your current call first'));const call=findCall(id);if(!call||call.status!=='ringing')return Promise.resolve();call.unread=false;return connect(call,true);}
+export function acceptPhoneCall(id){
+    if (!isPhoneAppInstalled('phone')) return Promise.resolve();if(active())throw new Error(L('Сначала заверши текущий звонок','End your current call first'));const call=findCall(id);if(!call||call.status!=='ringing')return Promise.resolve();call.unread=false;return connect(call,true);}
 export async function speakOnPhone(id,text){
     const root=getMeta(),call=findCall(id);text=String(text||'').trim().slice(0,1500);
     if(!call||call.status!=='active'||!text||busy.has(call))return;
@@ -70,6 +74,7 @@ export async function speakOnPhone(id,text){
 }
 function hash(s){let h=0;for(const c of s)h=(Math.imul(h,31)+c.charCodeAt(0))|0;return h.toString(36);}
 export function harvestPhoneCalls(){
+    if (!isPhoneAppInstalled('phone')) return [];
     const root=getMeta(),calls=getCalls(),seen=new Set(calls.tags),incoming=[];
     const chat=SillyTavern.getContext().chat||[];let consumed=false;
     for(let i=0;i<chat.length;i++){
@@ -94,10 +99,12 @@ export function harvestPhoneCalls(){
     calls.history=calls.history.slice(0,80);calls.tags=calls.tags.slice(-600);if(consumed&&getMeta()===root)saveMeta();return incoming;
 }
 export function callsInjectLine(){
+    if (!isPhoneAppInstalled('phone')) return '';
     const c=active();if(!c)return '';
     return '[PHONE CALL IN PROGRESS] '+getUserName()+(c.status==='active'?' is speaking by phone to ':' is waiting for a phone connection with ')+c.name+'. They are not necessarily together. Latest spoken lines: '+c.transcript.slice(-6).map(t=>(t.role==='user'?getUserName():c.name)+': '+t.text).join(' | ').slice(0,2200);
 }
 export function callsInjectRule() {
+    if (!isPhoneAppInstalled('phone')) return '';
     return '[CALLS] A contact with the user’s number may call when the scene gives a reason, usually while apart: <!--tel:call:{"from":"canonical contact name","to":"{{user}}","reason":"why"}-->. One call event; no SMS substitute or second call during an active call. The app handles acceptance and dialogue. Saving a venue listing does not give it the user’s number.';
 }
 function contactEditor(screen,contact,api){return openPhoneContactEditor(screen,api,{contact,number:view().digits});}

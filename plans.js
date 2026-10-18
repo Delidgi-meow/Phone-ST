@@ -1,10 +1,11 @@
+import { isPhoneAppInstalled } from './state.js';
 import { parsePhoneJson } from './phone-text.js';
 // Планы и важные даты: календарь телефона. Живёт по ролевому времени —
 // «сегодня» это сегодня В ИСТОРИИ, а не по часам компьютера.
 // Записи приходят двумя путями: она добавляет их сама или ролевая ставит тег
 // <!--tel:plan:{...}--> , когда о чём-то договорились.
 
-import { getMeta, saveMeta, getRpDateTime, stripThink, getPhoneMessageText } from './state.js';
+import { getMeta, saveMeta, getRpDateTime, stripThink, getPhoneAppText as getPhoneMessageText } from './state.js';
 import { logSocialToChat, getUserName } from './social.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
@@ -155,6 +156,7 @@ export function groupedPlans() {
 }
 
 export function plansBadgeCount() {
+    if (!isPhoneAppInstalled('calendar')) return 0;
     const g = groupedPlans();
     return g.overdue.length + g.today.length;
 }
@@ -208,6 +210,7 @@ export function monthGrid(ym) {
 // Короткий список ближайшего: модель должна помнить, о чём договорились,
 // и иметь право напомнить, сорвать или перенести.
 export function plansInjectLine() {
+    if (!isPhoneAppInstalled('calendar')) return '';
     const g = groupedPlans();
     const today = rpToday();
     const near = [...g.overdue, ...g.today, ...g.tomorrow, ...g.week].slice(0, 8);
@@ -236,6 +239,7 @@ export function plansInjectLine() {
 }
 
 export function plansInjectRule() {
+    if (!isPhoneAppInstalled('calendar')) return '';
     const creation='[CALENDAR] Record each new confirmed plan agreed in the latest user message or this reply, even if the calendar is empty: <!--tel:plan:{"date":"DD.MM.YYYY","time":"19:00","text":"specific plan","who":"user|char|both"}-->. "who" selects the owner; time may be "". Resolve dates from the RP clock. Never duplicate listed plans or record suggestions, refusals or hypothetical events.';
     return creation+(getPlans().length ? ' When established events complete or explicitly cancel an existing plan, append <!--tel:plan:{"id":"exact listed ID","status":"done|cancelled"}-->. Mere passage of time is not completion. Never invent user actions. A confirmed reschedule updates the same ID with "status":"open","date":"DD.MM.YYYY","time":"HH:MM"; do not create a second entry. Only an explicit renewed agreement reopens a closed plan.' : '');
 }
@@ -248,6 +252,7 @@ function safeJson(raw) {
 }
 
 export function harvestPlanTags() {
+    if (!isPhoneAppInstalled('calendar')) return 0;
     const m = getMeta();
     getPlans();
     let chat = [];
@@ -257,7 +262,7 @@ export function harvestPlanTags() {
     let consumed = false;
     for (let i = 0; i < chat.length; i++) {
         const msg = chat[i];
-        const sourceText = getPhoneMessageText(msg);
+        const sourceText = getPhoneMessageText(msg, i);
         if (!msg || msg.is_user || !/tel:plan/i.test(sourceText)) continue;
         const text = stripThink(sourceText);
         const occ = {};

@@ -1,4 +1,5 @@
 import { normalizePhoneSpaces, parsePhoneJson } from './phone-text.js';
+import { PHONE_APPS, phoneAppId, phoneAppInstalled, phoneTagApp } from './phone-apps.js';
 
 import { chat_metadata } from '../../../../script.js';
 import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
@@ -10,7 +11,7 @@ import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.51.3';
+export const GP_VERSION = '2.53.0';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -21,6 +22,9 @@ const defaultSettings = () => ({
     injectPrompt: true,
     quietMode: false,
     phoneActivityVersion: 0,
+    removedPhoneApps: {},
+    phoneAppVersions: {},
+    toastPosition: 'center',
     showFab: true,
     fabPos: null, // {right, bottom} — сохранённая позиция кнопки
     injectDepth: 0, // глубина инжекта (0 = последний ход)
@@ -202,7 +206,100 @@ export function getMeta() {
         }
         if (changed) { invalidateChatCache(); saveMetadataDebounced(); }
     }
+    syncPhoneApps(m);
     return m;
+}
+
+export function isPhoneAppInstalled(id) { return phoneAppInstalled(getSettings(), id); }
+
+// Keep a per-chat snapshot so events emitted while an app was removed cannot
+// replay after reinstall, including tags appended to an older streaming reply.
+const APP_TAGS = /<!--\s*tel:([a-z_]+):([\s\S]*?)-->/gi;
+const appTagSets = new WeakMap();
+const syncedAppVersions = new WeakMap();
+function appSets(entry) {
+    let sets = appTagSets.get(entry);
+    if (!sets) { sets = { accepted: new Set(entry.accepted || []), ignored: new Set(entry.ignored || []) }; appTagSets.set(entry, sets); }
+    return sets;
+}
+function appForEvent(root, kind, body) {
+    if (kind.toLowerCase() === 'sms' || kind.toLowerCase() === 'out') {
+        try {
+            const data = parsePhoneJson(body), name = data.from || data.to || '';
+            if (!data.chat && root.tinder?.matches?.some(match => match.inApp && keyOf(match.name) === keyOf(name))) return 'tinder';
+        } catch (_) { /* Partial tag. */ }
+    }
+    return phoneTagApp(kind);
+}
+function visitAppTags(root, message, index, visit) {
+    const counts = new Map();
+    return getPhoneMessageText(message).replace(APP_TAGS, (tag, kind, body) => {
+        const app = appForEvent(root, kind, body);
+        if (!app) return tag;
+        const base = quietActivityKey(message, index, kind, body);
+        const count = (counts.get(base) || 0) + 1; counts.set(base, count);
+        return visit(app, base + ':' + count, tag);
+    });
+}
+function currentAppTags(root) {
+    const result = new Map();
+    for (const [index, message] of (SillyTavern.getContext()?.chat || []).entries()) {
+        visitAppTags(root, message, index, (app, key, tag) => {
+            if (!result.has(app)) result.set(app, new Set());
+            result.get(app).add(key); return tag;
+        });
+    }
+    return result;
+}
+function syncPhoneApps(root) {
+    const settings = getSettings(), signature = JSON.stringify(settings.phoneAppVersions || {});
+    if (syncedAppVersions.get(root) === signature) return;
+    if (!root.appLifecycle || typeof root.appLifecycle !== 'object') root.appLifecycle = {};
+    const tags = currentAppTags(root);
+    for (const app of PHONE_APPS) {
+        const version = Number(settings.phoneAppVersions?.[app.id]) || 0;
+        let entry = root.appLifecycle[app.id];
+        if (!entry) entry = root.appLifecycle[app.id] = { version, accepted: [...(tags.get(app.id) || [])], ignored: [] };
+        else if (entry.version !== version) {
+            const sets = appSets(entry);
+            for (const key of tags.get(app.id) || []) if (!sets.accepted.has(key)) sets.ignored.add(key);
+            entry.ignored = [...sets.ignored]; entry.version = version;
+        }
+    }
+    syncedAppVersions.set(root, signature);
+    saveMetadataDebounced();
+}
+export function setPhoneAppInstalled(id, installed) {
+    id = phoneAppId(id);
+    const app = PHONE_APPS.find(item => item.id === id);
+    if (!app || app.essential || isPhoneAppInstalled(id) === !!installed) return false;
+    const root = getMeta(), settings = getSettings();
+    // Record the current history before disabling; record exclusions before enabling.
+    (SillyTavern.getContext()?.chat || []).forEach((message, index) => getPhoneAppText(message, index));
+    if (!settings.removedPhoneApps || typeof settings.removedPhoneApps !== 'object') settings.removedPhoneApps = {};
+    if (!settings.phoneAppVersions || typeof settings.phoneAppVersions !== 'object') settings.phoneAppVersions = {};
+    if (installed) delete settings.removedPhoneApps[id]; else settings.removedPhoneApps[id] = true;
+    settings.phoneAppVersions[id] = (Number(settings.phoneAppVersions[id]) || 0) + 1;
+    settings.phoneActivityVersion = (Number(settings.phoneActivityVersion) || 0) + 1;
+    syncedAppVersions.delete(root); syncPhoneApps(root); invalidateChatCache();
+    return true;
+}
+export function getPhoneAppText(message, index) {
+    const root = getMeta();
+    if (!Number.isInteger(index)) index = (SillyTavern.getContext()?.chat || []).indexOf(message);
+    let changed = false;
+    const text = visitAppTags(root, message, index, (app, key, tag) => {
+        const entry = root.appLifecycle[app], sets = appSets(entry);
+        if (sets.ignored.has(key)) return tag.replace(/[^\r\n]/g, ' ');
+        if (!isPhoneAppInstalled(app)) {
+            if (!sets.accepted.has(key)) { sets.ignored.add(key); entry.ignored.push(key); changed = true; }
+            return tag.replace(/[^\r\n]/g, ' ');
+        }
+        if (!sets.accepted.has(key)) { sets.accepted.add(key); entry.accepted.push(key); changed = true; }
+        return tag;
+    });
+    if (changed) saveMetadataDebounced();
+    return text;
 }
 
 export function phoneActivityAllowed(version = getSettings().phoneActivityVersion) {
@@ -234,7 +331,7 @@ export function wasPhoneQuietAt(index, message = SillyTavern.getContext()?.chat?
 }
 
 export function getPhoneActivityText(message, index) {
-    const text = getPhoneMessageText(message);
+    const text = getPhoneAppText(message, index);
     if (message?.is_user) return text;
     if (!Number.isInteger(index)) index = (SillyTavern.getContext()?.chat || []).indexOf(message);
     if (index >= 0 && wasPhoneQuietAt(index, message)) return '';
@@ -590,7 +687,7 @@ export function getRoleplaySmsOptions() {
 }
 
 export function captureRoleplayOutgoing() {
-    if (getSettings().quietMode || getSettings().captureRoleplaySms === false) return 0;
+    if (!isPhoneAppInstalled('list') || getSettings().quietMode || getSettings().captureRoleplaySms === false) return 0;
     const count = captureRoleplaySms(SillyTavern.getContext().chat || [], getPhoneMessageText, getRoleplaySmsOptions());
     if (count) invalidateChatCache();
     return count;
@@ -1477,8 +1574,13 @@ export function getThread(key) {
     return getThreadList().find(t => t.key === resolved) || null;
 }
 
+export function phoneAppForThread(key) {
+    const root = getMeta();
+    return root.tinder?.matches?.some(match => match.inApp && resolveIdentity(root, match.name) === resolveIdentity(root, key)) ? 'tinder' : 'list';
+}
+
 export function getTotalUnread() {
-    return getThreadList().reduce((sum, t) => sum + t.unread, 0);
+    return getThreadList().filter(t => isPhoneAppInstalled(phoneAppForThread(t.key))).reduce((sum, t) => sum + t.unread, 0);
 }
 
 export function markRead(key) {

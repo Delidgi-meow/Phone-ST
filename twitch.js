@@ -1,3 +1,4 @@
+import { isPhoneAppInstalled } from './state.js';
 // Твич: чужие стримы (визуальная новелла — кадр перерисовывается от событий
 // и комментов) и свой эфир (зрительский чат реагирует на действия юзера).
 // Всё лениво, per-chat. В журнал: комменты в чужой чат, старт/итог своего эфира.
@@ -199,6 +200,7 @@ export async function tickMyStream(userLine = null) {
 // Пока эфир идёт — это часть текущей сцены: она физически перед камерой, и
 // персонажи, знающие её канал, могут смотреть и написать ей об этом.
 export function twitchInjectLine() {
+    if (!isPhoneAppInstalled('twitch')) return '';
     const my = getTwitch().myStream;
     if (!my) return '';
     const mins = Math.max(1, Math.round((Date.now() - (my.startedAt || Date.now())) / 60000));

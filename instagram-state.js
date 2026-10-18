@@ -1,3 +1,4 @@
+import { isPhoneAppInstalled } from './state.js';
 import { normalizePhoneSpaces } from './phone-text.js';
 import { getMeta, saveMeta, getThreadList, displayName, getSettings } from './state.js';
 import { instagramIdentity, instagramIdentitySignature, repairInstagramIdentity, redirectedIgThreadId, canonicalIgSource } from './instagram-identity.js';
@@ -53,7 +54,7 @@ export function safeIgShare(value){
     return {app:value.app,id:clean(value.id,100),author:clean(value.author,100),text:clean(value.text,600),...(value.replyTo?{replyTo:true}:{}),...(typeof value.image==='string'&&value.image.length<2048?{image:value.image}:{}),...(value.chan?{chan:clean(value.chan,100)}:{})};
 }
 export function addIgDm(value,{dir='in',text='',share=null,source='' }={}){
-    if (dir !== 'out' && getSettings().quietMode) return null;
+    if (!isPhoneAppInstalled('ig') || (dir !== 'out' && getSettings().quietMode)) return null;
     text=clean(text,2000);share=safeIgShare(share);if(!text&&!share)return null;
     const thread=ensureIgThread(value);if(!thread)return null;
     const data=getInstagram(),sourceKey=canonicalIgSource(source,data);
@@ -64,7 +65,7 @@ export function addIgDm(value,{dir='in',text='',share=null,source='' }={}){
     return {thread,message};
 }
 export function addIgActivity({kind='comment',author='',ak='random',target='post',targetId='',text='',dedupe=''}={}){
-    if (getSettings().quietMode) return null;
+    if (!isPhoneAppInstalled('ig') || getSettings().quietMode) return null;
     const data=getInstagram();if(dedupe&&data.activity.some(item=>item.kind===kind&&canonicalIgSource(item.dedupe,data)===canonicalIgSource(dedupe,data)))return null;
     if(kind!=='likes'){const person=igParty({author,ak});if(person.contactKey){author=person.author;ak=person.ak;}}
     if(target==='dm')targetId=redirectedIgThreadId(data,targetId);

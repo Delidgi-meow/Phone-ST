@@ -1,6 +1,7 @@
+import { isPhoneAppInstalled } from './state.js';
 import { parsePhoneJson } from './phone-text.js';
 
-import { getMeta, saveMeta, getRpDateTime, stripThink, getPhoneMessageText } from './state.js';
+import { getMeta, saveMeta, getRpDateTime, stripThink, getPhoneAppText as getPhoneMessageText } from './state.js';
 import { normalizeCurrency, currencyInfo, roundCurrency, formatCurrency, currencyStep } from './currencies.js';
 import { bankEvent, paymentPayer, smsPaymentPayer } from './bank-protocol.js';
 
@@ -48,6 +49,7 @@ export function getBank() {
 
 // «Активен» ли банк — используется, чтобы не инжектить его правила зря
 export function bankActive() {
+    if (!isPhoneAppInstalled('bank')) return false;
     const b = getBank();
     return b.balance !== 0 || b.transactions.length > 0 || b.loans.length > 0 || b.recurring.length > 0;
 }
@@ -351,6 +353,7 @@ export function monthlyObligations() {
 // наступил и ещё не оплачены. Нормализованный вид:
 // { kind:'bill'|'loan', id, name, amount, day, overdue }
 export function getBankReminders() {
+    if (!isPhoneAppInstalled('bank')) return [];
     const b = getBank();
     const day = currentDay();
     const ym = currentYearMonth();
@@ -428,6 +431,7 @@ export function privateBankPrompt(actor) {
 }
 
 export function applyPrivateBankEvents(values, source, actor) {
+    if (!isPhoneAppInstalled('bank')) return 0;
     if (!Array.isArray(values) || !source) return 0;
     let userName = '';
     try { userName = SillyTavern.getContext()?.name1 || ''; } catch { /* Optional context. */ }
@@ -684,6 +688,7 @@ function applyBankEvent(event, msgIndex) {
 }
 
 export function harvestBankTags() {
+    if (!isPhoneAppInstalled('bank')) return 0;
     const b = getBank();
     let chat = [];
     let userName = '';
@@ -709,7 +714,7 @@ export function harvestBankTags() {
     const bankAmts = [];
     for (let i = 0; i < chat.length; i++) {
         const mm = chat[i];
-        const sourceText = getPhoneMessageText(mm);
+        const sourceText = getPhoneMessageText(mm, i);
         if (!mm || !/tel:bank/i.test(sourceText)) continue;
         const tt = stripThink(sourceText);
         BANK_TAG_RE.lastIndex = 0;
@@ -734,7 +739,7 @@ export function harvestBankTags() {
         // История до смены единицы уже учтена; её числа нельзя прочесть в новой валюте.
         if (currencyHistory.has(currencyMessageKey(chat[msgIndex], msgIndex))) continue;
         const msg = chat[msgIndex];
-        const sourceText = getPhoneMessageText(msg);
+        const sourceText = getPhoneMessageText(msg, msgIndex);
         if (!msg || !sourceText) continue;
         // is_system пропускаем, НО наши смс-призраки (is_system на 1.5с) содержат
         // tel:sms банка — их тоже сканируем
@@ -922,5 +927,6 @@ export function harvestBankTags() {
 
 // Кол-во напоминаний (для бейджа приложения)
 export function bankBadgeCount() {
+    if (!isPhoneAppInstalled('bank')) return 0;
     return getBankReminders().length;
 }

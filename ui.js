@@ -1,3 +1,9 @@
+import { cancelPhoneImageGenerations } from './social.js';
+import { renderAppStore } from './app-store.js';
+import { isPhoneAppInstalled, phoneAppForThread } from './state.js';
+import { phoneAppId } from './phone-apps.js';
+import { getCalls, endPhoneCall } from './calls.js';
+import { clearPhoneNotifications } from './phone-notifications.js';
 import { parsePhoneJson, normalizePhoneSpaces, normalizePhoneTextNodes } from './phone-text.js';
 import { renderPhoneSettings, parkPhoneSettings } from './phone-settings.js';
 import { applyLockAppearance, clearLockAppearance, editLockAppearance } from './lock-appearance.js';
@@ -9,7 +15,7 @@ import { openPhoneSheet, closePhoneSheet } from './phone-modal.js';
 import { renderBankApp } from './bank-ui.js';
 import { renderChannelList } from './channel-list.js';
 import { renderShopHome, shopCategoryIcon } from './shop-home.js';
-import { notificationHost, showIncomingCallNotice } from './phone-notifications.js';
+import { notificationHost, showIncomingCallNotice, phoneNotificationPosition, refreshPhoneNotificationPosition } from './phone-notifications.js';
 import { applyAppSurface } from './app-surface.js';
 import { bankIcon } from './bank-icons.js';
 import { instagramHeader, instagramNav, instagramProfile, bindInstagramNavigation, renderInstagramInbox, renderInstagramThread, renderInstagramActivity } from './instagram-ui.js';
@@ -108,6 +114,7 @@ let _lastFocusKey = null;       // автофокус — только при с
 
 async function generatePostImage(post, onStatus = null, cancelKey = null) {
     const owner = getMeta();
+    post = {...post, phoneApp:currentScreen==='thread'?phoneAppForThread(currentThreadKey):phoneAppId(currentScreen)};
     const options = await chooseImageRepeat(post, cancelKey, document.getElementById('gp-screen'),
         currentScreen === 'thread' ? 'thread:' + currentThreadKey : currentScreen);
     if (getMeta() !== owner) { const error = new Error('Генерация отменена'); error.name = 'ImageGenCancelled'; throw error; }
@@ -334,7 +341,7 @@ function createWandButton() {
 // (один раз на платёж в RP-месяц, чтобы не спамить)
 let _bankReminded = new Set();
 export function notifyBankReminders() {
-    if (!getSettings().isEnabled) return;
+    if (!isPhoneAppInstalled('bank') || !getSettings().isEnabled) return;
     try {
         const ym = (getRpDateTime() ? `${getRpDateTime().year}-${getRpDateTime().month}` : new Date().toISOString().slice(0, 7));
         for (const r of getBankReminders()) {
@@ -712,12 +719,14 @@ function tickClock() {
 // Приложения со своим оформлением (дискорд, твич, сторис, экран блокировки)
 // рисуют фон сами и должны доходить до краёв корпуса — общие поля экрана им
 // только мешают.
-const BLEED_SCREENS = new Set(['discord', 'dchannel', 'twitch', 'stream', 'mystream', 'igstory', 'ig', 'igview', 'ignew', 'ignewstory', 'igdms', 'igdm', 'igactivity', 'lock', 'browser', 'maps', 'phone', 'contacts', 'thread', 'bank', 'banktx', 'bankloan', 'bankmortgage', 'bankrec', 'chans', 'shop', 'shopcat']);
+const BLEED_SCREENS = new Set(['appstore','discord', 'dchannel', 'twitch', 'stream', 'mystream', 'igstory', 'ig', 'igview', 'ignew', 'ignewstory', 'igdms', 'igdm', 'igactivity', 'lock', 'browser', 'maps', 'phone', 'contacts', 'thread', 'bank', 'banktx', 'bankloan', 'bankmortgage', 'bankrec', 'chans', 'shop', 'shopcat']);
 
 export function render() {
     const screen = document.getElementById('gp-screen');
     if (!screen || !isPhoneOpen()) return;
     syncPhoneViewOwner();
+    const app = currentScreen === 'thread' ? phoneAppForThread(currentThreadKey) : phoneAppId(currentScreen);
+    if (!isPhoneAppInstalled(app)) currentScreen = 'appstore';
     document.getElementById('gp-phone')?.classList.toggle('gp-home-active',currentScreen==='home');
     const quietIndicator = document.getElementById('gp-quiet-indicator');
     if (quietIndicator) quietIndicator.hidden = !getSettings().quietMode;
@@ -739,7 +748,11 @@ export function render() {
     // и ползунков. Свои изменения он рисует сам, вызывая renderAppearance.
     if (currentScreen === 'appearance' && screen.querySelector('.gp-appearance-scroll')) return;
     captureDrafts(screen);
-    if (currentScreen === 'lock') renderLock(screen);
+    if (currentScreen === 'appstore') renderAppStore(screen,{home:()=>goto('home'),open:goto,changed:(id,installed)=>{
+        if (!installed && id === 'phone') { for (const call of getCalls().history) if (['ringing','active','connecting'].includes(call.status)) endPhoneCall(call.id); stopPhoneCallTimer(); }
+        cancelPhoneImageGenerations(); clearPhoneNotifications(); resetIncomingCounters(); updatePhoneInjection(); updateFabBadge();
+    }});
+    else if (currentScreen === 'lock') renderLock(screen);
     else if (currentScreen === 'thread' && currentThreadKey) renderThread(screen);
     else if (currentScreen === 'add') renderAdd(screen);
     else if (currentScreen === 'list') renderList(screen);
@@ -785,7 +798,7 @@ export function render() {
     else if (currentScreen === 'mystream') renderMyStream(screen);
     else if (currentScreen === 'notes') renderNotes(screen);
     else if (currentScreen === 'calendar') renderPlans(screen);
-    else if (currentScreen === 'settings') renderPhoneSettings(screen,{home:()=>goto('home'),appearance:()=>goto('appearance'),lock:()=>editLockAppearance(screen,{render,toast}),chats:()=>editThreadAppearance(screen,null,{render,toast},{scope:'all'})});
+    else if (currentScreen === 'settings') renderPhoneSettings(screen,{home:()=>goto('home'),appstore:()=>goto('appstore'),appearance:()=>goto('appearance'),lock:()=>editLockAppearance(screen,{render,toast}),chats:()=>editThreadAppearance(screen,null,{render,toast},{scope:'all'})});
     else if (currentScreen === 'appearance') renderAppearance(screen);
     else renderHome(screen);
     // Возвращаем набранный текст: перерисовка (генерация картинки, публикация,
@@ -1154,7 +1167,7 @@ function lockNotifications() {
     const out = [];
     if (getSettings().quietMode) return out;
     try {
-        for (const thread of igThreads()) {
+        for (const thread of isPhoneAppInstalled('ig') ? igThreads() : []) {
             const count = igUnread(thread);
             if (!count) continue;
             const last = thread.messages.filter(message => message.dir === 'in' && !message.read).at(-1);
@@ -1162,19 +1175,19 @@ function lockNotifications() {
                 text: last?.text || (last?.share?.app === 'msg' ? 'Пересланные сообщения' : last?.share?.text || 'Публикация'), count,
                 go: () => { currentIgDmThread = canonicalIgThreadId(thread.id); goto('igdm'); } });
         }
-        const activity = getInstagram().activity.filter(event => !event.read && event.kind !== 'dm');
+        const activity = (isPhoneAppInstalled('ig') ? getInstagram().activity : []).filter(event => !event.read && event.kind !== 'dm');
         if (activity.length) out.push({ icon: 'fa-instagram', title: 'Instagram', count: activity.length,
             text: activity[0].author + (activity[0].text ? ': ' + activity[0].text : ''), go: () => goto('igactivity') });
     } catch (_error) { /* Optional messenger. */ }
     try {
-        for (const channel of allChannels()) {
+        for (const channel of isPhoneAppInstalled('chans') ? allChannels() : []) {
             if (channel.mine || !channel.unread) continue;
             out.push({ icon: 'fa-paper-plane', title: channel.name, text: channel.posts?.[0]?.text || '', count: channel.unread,
                 go: () => { _chanId = channel.id; goto('chan'); } });
         }
     } catch (_error) { /* Optional channels. */ }
     try {
-        for (const server of getDiscord().servers) for (const channel of server.channels || []) {
+        for (const server of isPhoneAppInstalled('discord') ? getDiscord().servers : []) for (const channel of server.channels || []) {
             const unread = (channel.messages || []).filter(message => !message.user && message.read === false);
             if (!unread.length) continue;
             const last = unread.at(-1);
@@ -1185,7 +1198,7 @@ function lockNotifications() {
     } catch (_error) { /* Optional messenger. */ }
     try {
         for (const t of getThreadList()) {
-            if (!t.unread || !t.last) continue;
+            if (!isPhoneAppInstalled(phoneAppForThread(t.key)) || !t.unread || !t.last) continue;
             out.push({
                 icon: t.isGroup ? 'fa-user-group' : 'fa-comment-dots',
                 title: t.name,
@@ -1196,7 +1209,7 @@ function lockNotifications() {
         }
     } catch (e) { /* ignore */ }
     try {
-        for (const o of getOrders()) {
+        for (const o of isPhoneAppInstalled('shop') ? getOrders() : []) {
             const n = courierUnread(o);
             if (!n) continue;
             const last = orderChat(o).filter(m => !m.user).slice(-1)[0];
@@ -1226,11 +1239,11 @@ function lockNotifications() {
             { kind: 'of', n: feedNew('of', getOfPosts().length), icon: 'fa-heart', title: 'OnlyFans', text: 'Новое в ленте' },
         ];
         for (const f of feeds) {
-            if (f.n > 0) out.push({ icon: f.icon, title: f.title, text: f.text, count: f.n, go: () => goto(f.kind) });
+            if (isPhoneAppInstalled(f.kind) && f.n > 0) out.push({ icon: f.icon, title: f.title, text: f.text, count: f.n, go: () => goto(f.kind) });
         }
     } catch (e) { /* ignore */ }
     try {
-        if (getSystemsView().storyEvents.active) {
+        if (isPhoneAppInstalled('events') && getSystemsView().storyEvents.active) {
             out.push({ icon: 'fa-wand-sparkles', title: 'Ивент', text: 'Ждёт твоего решения', go: () => goto('storyevent') });
         }
     } catch (e) { /* ignore */ }
@@ -1392,6 +1405,7 @@ function renderHome(screen) {
                     <div class="gp-app-icon gp-app-tinder">${ic('fa-fire')}${matchBadge() > 0 ? `<span class="gp-app-badge">${matchBadge()}</span>` : ''}</div>
                     <div class="gp-app-name">Tinder</div>
                 </div>` : ''}
+                <div class="gp-app" data-app="appstore"><div class="gp-app-icon gp-app-appstore"><i class="fa-solid fa-store"></i></div><div class="gp-app-name">App Store</div></div>
                 <div class="gp-app" data-app="settings"><div class="gp-app-icon gp-app-settings">${ic('fa-gear')}</div><div class="gp-app-name">Настройки</div></div>
                 <div class="gp-app" data-app="appearance">
                     <div class="gp-app-icon gp-app-appearance">${ic('fa-palette')}</div>
@@ -1400,6 +1414,7 @@ function renderHome(screen) {
             </div>
         </div>`;
 
+    screen.querySelectorAll('.gp-app[data-app]').forEach(node=>{if(!isPhoneAppInstalled(phoneAppId(node.dataset.app)))node.remove();});
     enhancePhoneHome(screen, { open: goto, render, toast, refreshAfterGesture: render });
 }
 
@@ -1533,6 +1548,13 @@ function renderAppearance(screen) {
 
             <section class="gp-theme-section">
                 <h3>Уведомления</h3>
+                <div class="gp-toast-placement">
+                    <span>Положение на экране</span>
+                    <div class="gp-toast-position-options" role="group" aria-label="Положение уведомлений">
+                        ${[['top','Сверху'],['center','По центру'],['bottom','Снизу']].map(([id,label])=>`<button type="button" data-toast-position="${id}" aria-pressed="${phoneNotificationPosition()===id}"><i aria-hidden="true"></i>${label}</button>`).join('')}
+                    </div>
+                    <small>Сверху — чуть ниже стандартных уведомлений</small>
+                </div>
                 <div class="gp-toast-styles">
                     ${TOAST_STYLES.map(t => `
                         <button class="gp-toast-style${toastStyleId() === t.id ? ' gp-active' : ''}" data-toaststyle="${t.id}" type="button">
@@ -1649,10 +1671,14 @@ function renderAppearance(screen) {
         getSettings().toastStyle = b.getAttribute('data-toaststyle');
         saveSettingsDebounced();
         renderAppearance(screen);
-        // Демо на живом контакте: у стилей с аватаром иначе нечего показать
-        const demo = getThreadList().find(x => !x.isGroup && x.name);
-        if (demo) toast(`${demo.name}: так выглядят уведомления`, 'fa-comment-dots', demo.key);
-        else toast('Курьер в пути · Артём К., ~15 мин', 'fa-truck-fast');
+        showPhoneNotificationPreview();
+    }));
+    screen.querySelectorAll('[data-toast-position]').forEach(button=>button.addEventListener('click',()=>{
+        getSettings().toastPosition=button.dataset.toastPosition;
+        saveSettingsDebounced();
+        screen.querySelectorAll('[data-toast-position]').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));
+        refreshPhoneNotificationPosition();
+        showPhoneNotificationPreview();
     }));
     screen.querySelector('#gp-set-lock')?.addEventListener('change', function () {
         getSettings().lockScreen = this.checked;
@@ -4143,7 +4169,7 @@ function orderStatusHtml(o) {
 
 // Уведомления о доставке — по событию ролевой (как напоминания банка)
 export function notifyDeliveries() {
-    if (!getSettings().isEnabled) return;
+    if (!isPhoneAppInstalled('shop') || !getSettings().isEnabled) return;
     try {
         for (const { order, stage } of advanceOrders()) {
             if (getSettings().quietMode) continue;
@@ -5624,6 +5650,7 @@ function renderNotes(screen) {
 // ═══ СКАМ-СМС: доставка призраком ═══
 
 export function deliverScamSms(sms) {
+    if (!isPhoneAppInstalled('list')) return;
     if (getSettings().quietMode || !sms || !sms.from || !sms.text) return;
     const tag = { from: sms.from, text: sms.text };
     if (sms.shot) tag.shot = sms.shot;
@@ -6874,9 +6901,18 @@ function toastStyleId() {
     return TOAST_STYLES.some(t => t.id === id) ? id : 'aurora';
 }
 
+function showPhoneNotificationPreview(){
+    notificationHost().querySelectorAll('[data-toast-preview]').forEach(element=>element.remove());
+    const demo=getThreadList().find(item=>!item.isGroup&&item.name);
+    const element=demo?toast(`${demo.name}: так выглядят уведомления`,'fa-comment-dots',demo.key):toast('Курьер в пути · Артём К., ~15 мин','fa-truck-fast');
+    if(element)element.dataset.toastPreview='true';
+}
+
 export function toast(text, icon = 'fa-comment-dots', threadKey = null, onOpen = null) {
     text = normalizePhoneSpaces(text);
     if (getSettings().quietMode) return;
+    const app = threadKey ? phoneAppForThread(threadKey) : ({'fa-instagram':'ig','fa-x-twitter':'tw','fa-twitter':'tw','fa-paper-plane':'chans','fa-discord':'discord','fa-twitch':'twitch','fa-truck-fast':'shop','fa-box-open':'shop','fa-landmark':'bank','fa-file-invoice-dollar':'bank','fa-wand-sparkles':'events'})[icon];
+    if (app && !isPhoneAppInstalled(app)) return;
     text = tr(text); // перевод тостов (точный словарь + regex-правила)
     const style = toastStyleId();
     const el = document.createElement('div');
@@ -6916,9 +6952,11 @@ export function toast(text, icon = 'fa-comment-dots', threadKey = null, onOpen =
         el.classList.remove('gp-toast-show');
         setTimeout(() => el.remove(), 400);
     }, threadKey ? 6500 : 5000);
+    return el;
 }
 
 export function notifyIncomingCall(call){
+    if (!isPhoneAppInstalled('phone')) return;
     showIncomingCallNotice(call,{
         open:openPhone,
         changed:()=>{updatePhoneInjection();updateFabBadge();if(isPhoneOpen())render();},
@@ -6931,6 +6969,7 @@ export function checkNewIncoming({ silent = false } = {}) {
     const list = getThreadList();
     const fresh = new Map();
     for (const t of list) {
+        if (!isPhoneAppInstalled(phoneAppForThread(t.key))) continue;
         fresh.set(t.key, t.messages.filter(m => m.dir === 'in').length);
     }
     if (!silent) {

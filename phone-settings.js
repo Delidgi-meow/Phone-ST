@@ -20,9 +20,10 @@ export function renderPhoneSettings(screen,api){
     parkPhoneSettings();
     screen.innerHTML='<header class="gp-header"><button type="button" class="gp-iconbtn" id="gp-settings-back" aria-label="'+L('На главный экран','Home')+'">'+I('fa-chevron-left')+'</button><h2>'+L('Настройки','Settings')+'</h2><span class="gp-settings-header-space"></span></header>'+
         '<div class="gp-phone-settings"><div class="gp-phone-settings-links">'+
-        [['appearance','fa-palette',L('Оформление телефона','Phone appearance'),L('Тема, иконки и главный экран','Theme, icons and home screen')],['lock','fa-lock',L('Экран блокировки','Lock screen'),L('Часы, дата и отдельные обои','Clock, date and wallpaper')],['chats','fa-comments',L('Оформление переписок','Chat appearance'),L('Общий стандарт обоев и пузырей','Default wallpaper and bubbles')]].map(([id,icon,title,subtitle])=>'<button type="button" data-settings-open="'+id+'"><i class="fa-solid '+icon+'" aria-hidden="true"></i><span><b>'+title+'</b><small>'+subtitle+'</small></span>'+I('fa-chevron-right')+'</button>').join('')+
+        [['appstore','fa-store',L('App Store','App Store'),L('Установить и удалить приложения','Install and remove apps')],['appearance','fa-palette',L('Оформление телефона','Phone appearance'),L('Тема, иконки и главный экран','Theme, icons and home screen')],['lock','fa-lock',L('Экран блокировки','Lock screen'),L('Часы, дата и отдельные обои','Clock, date and wallpaper')],['chats','fa-comments',L('Оформление переписок','Chat appearance'),L('Общий стандарт обоев и пузырей','Default wallpaper and bubbles')]].map(([id,icon,title,subtitle])=>'<button type="button" data-settings-open="'+id+'"><i class="fa-solid '+icon+'" aria-hidden="true"></i><span><b>'+title+'</b><small>'+subtitle+'</small></span>'+I('fa-chevron-right')+'</button>').join('')+
         '</div><div class="gp-phone-settings-mount"></div></div>';
     screen.querySelector('#gp-settings-back').onclick=api.home;
+    screen.querySelector('[data-settings-open="appstore"]').onclick=api.appstore;
     screen.querySelector('[data-settings-open="appearance"]').onclick=api.appearance;
     screen.querySelector('[data-settings-open="lock"]').onclick=api.lock;
     screen.querySelector('[data-settings-open="chats"]').onclick=api.chats;

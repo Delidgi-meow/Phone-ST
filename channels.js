@@ -1,3 +1,4 @@
+import { isPhoneAppInstalled } from './state.js';
 import { parsePhoneJson } from './phone-text.js';
 // Каналы: свой и чужие, посты с реакциями, просмотрами и обсуждением.
 // Данные лежат per-chat в meta; генерация — по кнопкам и после своих постов.
@@ -634,6 +635,7 @@ function applyChannelTag(j) {
 }
 
 export function harvestChannelTags() {
+    if (!isPhoneAppInstalled('chans')) return 0;
     const c = getChannels();
     if (!Array.isArray(c.seenTags)) c.seenTags = [];
     let chat = [];
@@ -674,6 +676,7 @@ const ANON_BUST_RE = /<!--\s*tel:anonbust:(\{[\s\S]*?\})\s*-->/gi;
 
 // Пробили её саму. Возвращает список {who, text} — для уведомлений.
 export function harvestAnonBust() {
+    if (!isPhoneAppInstalled('chans')) return 0;
     if (!anonEnabled()) return [];
     const c = getChannels();
     // Нет канала — нет и её анонимок, пробивать нечего. Не заводим его зря
@@ -724,6 +727,7 @@ export function harvestAnonBust() {
 }
 
 export function harvestAnonTags() {
+    if (!isPhoneAppInstalled('chans')) return 0;
     if (!anonEnabled()) return 0;
     const c = getChannels();
     if (!Array.isArray(c.anonSeen)) c.anonSeen = [];
@@ -761,6 +765,7 @@ export function harvestAnonTags() {
 // Одна строка: где она ведёт канал и на что подписана. Без постов — их и так
 // видно по журналу.
 export function channelInjectLine() {
+    if (!isPhoneAppInstalled('chans')) return '';
     const c = getChannels();
     const parts = [];
     if (c.mine) {
@@ -776,6 +781,7 @@ export function channelInjectLine() {
 // Анонимка — отдельной строкой: в ней и правило про тег, и то, что ролевая
 // обязана знать про её собственные анонимки и про уже пробитых авторов.
 export function anonInjectLine() {
+    if (!isPhoneAppInstalled('chans')) return '';
     if (!anonEnabled() || !anonInUse()) return '';
     const channel = getAnonChannel(), handle = getUserHandle();
     const mine = channel.posts.filter(post => post.byUser).slice(0, 3);

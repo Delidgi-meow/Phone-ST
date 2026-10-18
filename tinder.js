@@ -1,3 +1,4 @@
+import { isPhoneAppInstalled } from './state.js';
 // Тиндер: своя анкета, колода чужих и мэтчи. Анкета здесь — не пара строчек,
 // а полноценная карточка персонажа: ей же потом модель играет человека в
 // переписке. Данные per-chat в meta; переписка после мэтча уходит в обычные
@@ -8,7 +9,7 @@ import { logSocialToChat, getUserName, getUserHandle, setContactAvatar } from '.
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
-export function tinderEnabled() { return getSettings().tinder !== false; }
+export function tinderEnabled() { return isPhoneAppInstalled('tinder') && getSettings().tinder !== false; }
 
 export function getTinder() {
     const m = getMeta();

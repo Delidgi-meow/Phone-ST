@@ -1,3 +1,4 @@
+import { isPhoneAppInstalled } from './state.js';
 // Заметки: личные записи в телефоне. По умолчанию СЕКРЕТНЫ (модель не видит);
 // тумблер «видна модели» отправляет заметку в инжект как фоновое знание
 // нарратора (персонажи всё равно не знают, пока она не покажет).
@@ -75,6 +76,7 @@ export function getSharedNotes() {
 // как «не используй», и модель заметки честно игнорировала. Открытую заметку
 // она открывает специально — значит хочет, чтобы та работала в сцене.
 export function notesInjectBlock() {
+    if (!isPhoneAppInstalled('notes')) return '';
     const shared = getSharedNotes();
     if (!shared.length) return '';
     const lines = shared.slice(0, 6).map(note => '- ' + note.text.slice(0, 300)).join('\n');

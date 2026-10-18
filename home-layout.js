@@ -1,3 +1,4 @@
+import { isPhoneAppInstalled } from './state.js';
 import { getPlans, rpToday, fmtPlanDate } from './plans.js';
 import { getSettings, getThreadList } from './state.js';
 import { saveSettingsDebounced } from '../../../../script.js';
@@ -11,7 +12,7 @@ const L=(ru,en)=>lang()==='en'?en:ru;
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const I=n=>'<i class="fa-solid '+n+'" aria-hidden="true"></i>';
 const canonical=app=>['socialhub','storyevent'].includes(app)?'events':app;
-const known=new Set(['list','tw','ig','events','of','bank','shop','chans','casino','browser','maps','discord','twitch','notes','tinder','appearance','settings','phone','contacts','calendar']);
+const known=new Set(['appstore','list','tw','ig','events','of','bank','shop','chans','casino','browser','maps','discord','twitch','notes','tinder','appearance','settings','phone','contacts','calendar']);
 let state={page:0,editing:false,folder:'',suppress:0};
 let gesture=null;
 const mounts=new WeakMap();
@@ -82,7 +83,7 @@ function placeWidgetInOrder(h,id,position){
 function pages(h,templates){
     syncGridOrder(h);
     const entries=new Map(h.entries.filter(e=>e.type==='app'?templates.has(e.app):e.apps.some(a=>templates.has(a))).map(e=>[e.id,e]));
-    for(const widget of h.widgets)entries.set(widget.id,{id:widget.id,type:'widget',widget});
+    for(const widget of h.widgets.filter(w=>isPhoneAppInstalled(({note:'notes',messages:'list',calendar:'calendar'})[w.type])))entries.set(widget.id,{id:widget.id,type:'widget',widget});
     const output=[],placed=new Set();
     const pageAt=index=>{while(output.length<=index)output.push({items:[],widgets:[],cells:Array(16).fill(false)});return output[index];};
     function fit(page,row,col,width,height){
@@ -121,7 +122,7 @@ function tile(app,templates,dock=false){
     if(dock)el.classList.add('gp-dock-app');return el.outerHTML;
 }
 function folderTile(e,templates){
-    const icons=e.apps.slice(0,9).map(app=>{const node=templates.get(app)?.querySelector('.gp-app-icon')?.cloneNode(true);if(!node)return '<span></span>';node.querySelectorAll('.gp-app-badge').forEach(b=>b.remove());return '<span>'+node.innerHTML+'</span>';}).join('');
+    const icons=e.apps.filter(app=>templates.has(app)).slice(0,9).map(app=>{const node=templates.get(app)?.querySelector('.gp-app-icon')?.cloneNode(true);if(!node)return '<span></span>';node.querySelectorAll('.gp-app-badge').forEach(b=>b.remove());return '<span>'+node.innerHTML+'</span>';}).join('');
     const unread=e.apps.some(a=>templates.get(a)?.querySelector('.gp-app-badge'));
     return '<div class="gp-app gp-home-folder" role="button" tabindex="0" data-home-item="'+esc(e.id)+'" aria-label="'+esc(e.name)+'"><div class="gp-app-icon gp-folder-preview">'+icons+(unread?'<b class="gp-folder-alert"></b>':'')+'</div><div class="gp-app-name">'+esc(e.name)+'</div></div>';
 }
@@ -257,7 +258,7 @@ function homeTools(){
         (state.editing?'<button data-home-action="edit">'+L('Готово','Done')+'</button>':'');
 }
 function widgetGallery(home,h,repaint,api){
-    const shade=sheet(home,L('Добавить виджет','Add a widget'),'<div class="gp-widget-gallery">'+[['image','fa-image','Картинка','Photo'],['note','fa-note-sticky','Заметка','Note'],['messages','fa-comment-dots','Сообщения','Messages'],['calendar','fa-calendar-days','Календарь','Calendar']].map(x=>'<button data-widget-type="'+x[0]+'"><span>'+I(x[1])+'</span><b>'+L(x[2],x[3])+'</b></button>').join('')+'</div>');
+    const shade=sheet(home,L('Добавить виджет','Add a widget'),'<div class="gp-widget-gallery">'+[['image','fa-image','Картинка','Photo'],['note','fa-note-sticky','Заметка','Note'],['messages','fa-comment-dots','Сообщения','Messages'],['calendar','fa-calendar-days','Календарь','Calendar']].filter(x=>isPhoneAppInstalled(({note:'notes',messages:'list',calendar:'calendar'})[x[0]])).map(x=>'<button data-widget-type="'+x[0]+'"><span>'+I(x[1])+'</span><b>'+L(x[2],x[3])+'</b></button>').join('')+'</div>');
     shade.querySelectorAll('[data-widget-type]').forEach(b=>b.onclick=()=>{closeSheet(shade);widgetEditor(home,h,{id:'widget:'+uid(),type:b.dataset.widgetType,wide:b.dataset.widgetType==='messages'},repaint,api);});
 }
 export function enhancePhoneHome(screen,api){
