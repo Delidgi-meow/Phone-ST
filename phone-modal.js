@@ -1,4 +1,5 @@
 import { getMeta } from './state.js';
+import { normalizePhoneTextNodes } from './phone-text.js';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export function closePhoneSheet(shade){
     if(!shade)return;const host=shade.parentElement;
@@ -23,5 +24,6 @@ export function openPhoneSheet(host,title,body,view=''){
             else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}
         }
     };
+    normalizePhoneTextNodes(shade);
     shade.querySelector('[data-sheet-close]').focus({preventScroll:true});return shade;
 }

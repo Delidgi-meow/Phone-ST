@@ -1,8 +1,9 @@
+import { normalizePhoneSpaces, parsePhoneJson } from './phone-text.js';
 const TAGS = /<!--\s*tel:(sent|sms):(\{[\s\S]*?\})\s*-->/gi;
 const OUTGOING = /<!--\s*tel:out:(\{[\s\S]*?\})\s*-->/gi;
-const norm = value => String(value || '').trim().replace(/^@+/, '').toLocaleLowerCase();
+const norm = value => normalizePhoneSpaces(value).trim().replace(/^@+/, '').toLocaleLowerCase();
 const escape = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const parse = value => { try { return JSON.parse(value); } catch (_error) { return null; } };
+const parse = value => { try { return parsePhoneJson(value); } catch (_error) { return null; } };
 
 export function extractRoleplaySms(text, { otherNames = [] } = {}) {
     const source = String(text || '').replace(/<!--[\s\S]*?-->|```[\s\S]*?```/g, value => ' '.repeat(value.length));
@@ -28,7 +29,7 @@ export function extractRoleplaySms(text, { otherNames = [] } = {}) {
     return candidates;
 }
 
-export function roleplaySmsKey(quoteIndex, text) { return JSON.stringify([quoteIndex, text]); }
+export function roleplaySmsKey(quoteIndex, text) { return JSON.stringify([quoteIndex, normalizePhoneSpaces(text)]); }
 
 export function resolveRoleplaySms(userMessage, userIndex, replyText, options = {}) {
     if (!userMessage?.is_user || userMessage.is_system) return [];
@@ -42,13 +43,16 @@ export function resolveRoleplaySms(userMessage, userIndex, replyText, options = 
         if (!data) continue;
         if (match[1].toLowerCase() === 'sent') {
             if ((data.source !== userIndex && data.source !== userMessage.extra?.glassphoneRpSmsSource) || (data.from && !isUser(data.from))) continue;
-            const candidate = candidates.find(item => item.quoteIndex === data.quoteIndex && item.text === String(data.text || '').trim());
+            const candidate = candidates.find(item => item.quoteIndex === data.quoteIndex && normalizePhoneSpaces(item.text) === normalizePhoneSpaces(data.text).trim());
             const target = data.chat || data.to;
             if (!candidate || typeof target !== 'string' || !target.trim() || target.length > 120 || /[\r\n]/.test(target) || (data.to && isUser(data.to))) continue;
             sent.set(candidate.quoteIndex, { ...candidate, to: String(data.to || ''), group: data.chat ? String(data.chat) : null });
         }
     }
-    const hidden = new Set(userMessage.extra?.glassphoneRpSmsHidden || []);
+    const hidden = new Set((userMessage.extra?.glassphoneRpSmsHidden || []).map(value => {
+        const key = parse(value);
+        return Array.isArray(key) ? roleplaySmsKey(key[0], key[1]) : value;
+    }));
     return [...sent.values()].filter(item => {
         const key = roleplaySmsKey(item.quoteIndex, item.text);
         return !hidden.has(key);

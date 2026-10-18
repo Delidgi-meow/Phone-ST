@@ -1,9 +1,10 @@
+import { normalizePhoneSpaces } from './phone-text.js';
 import { getMeta, saveMeta, getThreadList, displayName, getSettings } from './state.js';
 import { instagramIdentity, instagramIdentitySignature, repairInstagramIdentity, redirectedIgThreadId, canonicalIgSource } from './instagram-identity.js';
 import { messageForward } from './message-forward.js';
 
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
-const clean=(value,max=400)=>String(value??'').replace(/[\u200b\ufeff]/g,'').trim().slice(0,max);
+const clean=(value,max=400)=>normalizePhoneSpaces(value).trim().slice(0,max);
 const identities = new WeakMap();
 function instagramContext(){
     const root=getMeta();if(!root.social||typeof root.social!=='object')root.social={};

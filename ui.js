@@ -1,3 +1,4 @@
+import { parsePhoneJson, normalizePhoneSpaces, normalizePhoneTextNodes } from './phone-text.js';
 import { renderPhoneSettings, parkPhoneSettings } from './phone-settings.js';
 import { applyLockAppearance, clearLockAppearance, editLockAppearance } from './lock-appearance.js';
 import { openPhoneContactEditor } from './contact-editor.js';
@@ -793,6 +794,7 @@ export function render() {
     applyAppSurface(screen,currentScreen);
     // Перевод отрендеренного экрана (en) / восстановление оригиналов (ru)
     try { trDom(screen); } catch (e) { /* ignore */ }
+    normalizePhoneTextNodes(document.getElementById('gp-phone'));
 }
 
 const SHOP_SCREENS = new Set(['shop', 'shopcat', 'shoporders']);
@@ -1926,7 +1928,7 @@ async function rewriteSmsTag(m, t, mutate) {
         const jm = tag.match(re);
         if (!jm) { logFail('перезапись тега', `по позиции не тег: «${String(tag).slice(0, 40)}»`); return false; }
         let j = null;
-        try { j = JSON.parse(jm[1]); } catch (e) { /* битый JSON от модели — соберём заново */ }
+        try { j = parsePhoneJson(jm[1]); } catch (e) { /* битый JSON от модели — соберём заново */ }
         if (!j) {
             if (m.dir === 'out') { logFail('перезапись тега', 'битый JSON в своём маркере'); return false; }
             j = { from: m.from, text: m.text || '' };
@@ -6532,7 +6534,7 @@ function shotHtml(m) {
 
 function openShot(raw) {
     let j = null;
-    try { j = JSON.parse(raw); } catch (e) { return; }
+    try { j = parsePhoneJson(raw); } catch (e) { return; }
     const app = String(j?.app || '').toLowerCase();
     if (app === 'tw') { currentTweetId = j.id; goto('twthread'); }
     else if (app === 'ig') { currentPostId = j.id; goto('igview'); }
@@ -6625,7 +6627,7 @@ async function deleteSmsFromChat(msg) {
                 : /<!--\s*tel:sms:(\{[\s\S]*?\})\s*-->/gi;
             const hit = [...text.matchAll(re)].find(x => {
                 let j = null;
-                try { j = JSON.parse(x[1]); } catch (e) { return false; }
+                try { j = parsePhoneJson(x[1]); } catch (e) { return false; }
                 const sameText = String(j.text || '') === String(msg.text || '');
                 return msg.dir === 'out' ? sameText : (keyOf(j.from || '') === keyOf(msg.from || '') && sameText);
             });
@@ -6652,7 +6654,7 @@ async function deleteSmsFromChat(msg) {
         } else {
             if (msg.dir === 'out' && removedTag) {
                 try {
-                    const data = JSON.parse(removedTag.match(/<!--\s*tel:out:(\{[\s\S]*?\})\s*-->/i)?.[1] || 'null');
+                    const data = parsePhoneJson(removedTag.match(/<!--\s*tel:out:(\{[\s\S]*?\})\s*-->/i)?.[1] || 'null');
                     if (data?.origin === 'rp') {
                         if (!chatMsg.extra) chatMsg.extra = {};
                         const hidden = new Set(chatMsg.extra.glassphoneRpSmsHidden || []);
@@ -6803,7 +6805,7 @@ async function doSend(key, opts = {}) {
             outgoing.mes = outgoing.mes.replace(photoTok, `${photoTok.slice(0,-1)}: ${reply.desc}*`);
             const tag = outgoing.mes.match(/<!--\s*tel:out:(\{[\s\S]*?\})\s*-->/)?.[0];
             if (tag) {
-                const data = JSON.parse(tag.match(/\{[\s\S]*\}/)[0]);
+                const data = parsePhoneJson(tag.match(/\{[\s\S]*\}/)[0]);
                 replacePhoneMessageTag(outgoing,tag,`<!--tel:out:${JSON.stringify({...data,photo:reply.desc})}-->`);
             }
             invalidateChatCache();
@@ -6873,6 +6875,7 @@ function toastStyleId() {
 }
 
 export function toast(text, icon = 'fa-comment-dots', threadKey = null, onOpen = null) {
+    text = normalizePhoneSpaces(text);
     if (getSettings().quietMode) return;
     text = tr(text); // перевод тостов (точный словарь + regex-правила)
     const style = toastStyleId();

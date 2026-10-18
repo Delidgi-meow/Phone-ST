@@ -1,3 +1,4 @@
+import { parsePhoneJson } from './phone-text.js';
 import { getMeta, saveMeta, getPhoneActivityText as getPhoneMessageText, stripThink, isUserName, isBanned, getSettings, phoneActivityAllowed } from './state.js';
 import { generateInstagramDmReply, logSocialToChat, getUserName, getStories, addIgComment, resolveAuthorKey } from './social.js';
 import { getInstagram, addIgDm, addIgActivity, igParty, igThread, igPerson, igEventText } from './instagram-state.js';
@@ -89,7 +90,7 @@ export function harvestInstagramTags(){
             const base=match[1]+':'+hash(match[2])+':'+(message.send_date||message.extra?.gen_id||i),key=base+':'+(occurrences[base]=(occurrences[base]||0)+1);
             if(seen.has(key))continue;
             if (getSettings().quietMode) { seen.add(key); data.seenTags.push(key); changed=true; continue; }
-            let event;try{event=JSON.parse(match[2]);}catch{continue;}
+            let event;try{event=parsePhoneJson(match[2]);}catch{continue;}
             if(typeof event.from!=='string'||!event.from.trim()||isUserName(event.from)||isBanned(event.from)||(event.to&&!isUserName(event.to)))continue;
             const existingActivity=new Set(data.activity.map(item=>item.id));
             if(match[1].toLowerCase()==='igdm'){

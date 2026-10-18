@@ -1,4 +1,5 @@
-import { buildPhoneCallContext, loreText } from './call-context.js';
+import { normalizePhoneSpaces, parsePhoneJson } from './phone-text.js';
+import { buildPhoneCallContext, buildPhoneConversationContext, loreText } from './call-context.js';
 import { generateRaw, user_avatar, getThumbnailUrl, saveSettingsDebounced } from '../../../../script.js';
 import { saveBase64AsFile } from '../../../utils.js';
 import { extensionNames, extension_settings } from '../../../extensions.js';
@@ -208,10 +209,10 @@ function hash32(str) {
 }
 
 function safeJson(raw) {
-    try { return JSON.parse(raw); } catch (e) {
+    try { return parsePhoneJson(raw); } catch (e) {
         try {
             const fixed = raw.replace(/,\s*([}\]])/g, '$1').replace(/'/g, '"');
-            return JSON.parse(fixed);
+            return parsePhoneJson(fixed);
         } catch (e2) { return null; }
     }
 }
@@ -1103,10 +1104,10 @@ function removeRepeatedPrefill(text, prefill) {
 
 const FIGURE_SPACE_RULE = 'Use FIGURE SPACE (U+2007) between words in generated prose/string values only. Keep JSON separators, keys, names, handles, IDs, numbers and structure unchanged.';
 
-// Обратный проход: фигурные (и родственные «неразрывные») пробелы → обычные.
-// Делается ДО парсинга JSON — U+2007 не является валидным JSON-разделителем.
-function unfigureSpaces(text) {
-    return String(text || '').replace(/[     ]/g, ' ');
+// Structured results are normalized by parsePhoneJson without changing IDs or
+// image URLs. Plain app text is normalized before it reaches its consumer.
+function normalizePhoneResult(text) {
+    return /^[\s\u200b\u2060]*[\[{]/.test(text) ? text : normalizePhoneSpaces(text);
 }
 
 function buildGenerationMessages(prompt, prefill, usePrefill, useFigureSpaces) {
@@ -1207,11 +1208,10 @@ async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '' 
     const finish = (raw) => {
         checkActivity();
         let out = cleanGenOutput(raw);
-        if (useFigureSpaces) out = unfigureSpaces(out);
-        if (!usePrefill) return out;
+        if (!usePrefill) return normalizePhoneResult(out);
         out = removeCommonPreamble(out);
         out = removeRepeatedPrefill(out, prefill);
-        return prefill + out;
+        return normalizePhoneResult(prefill + out);
     };
 
     // Путь 1: отдельный профиль подключения (изоляция + вижн)
@@ -1396,15 +1396,12 @@ export async function generatePrivateSmsReply({ threadKey, contactName, isGroup 
     const activityVersion = getSettings().phoneActivityVersion;
     const thread = getThread(threadKey || contactName);
     const turns = privateThreadTurns(messages || thread?.messages, { user: getUserName(), peer: contactName });
-    const target = isGroup
-        ? `the group chat «${contactName}» (members: ${members.join(', ') || '?'})`
-        : contactName;
-    const header = await taskHeader(`reply in the private SMS conversation with ${target}.`, { publicOnly: true, contactNames: isGroup ? members : [contactName] });
+    const header = await buildPhoneConversationContext({key:threadKey || contactName,name:thread?.name || contactName,originalName:contactName},
+        {medium:'sms',includeSms:false,members:isGroup?members:[],utterance:JSON.stringify(turns.at(-1) || {})});
     if (getMeta() !== owner || !phoneActivityAllowed(activityVersion)) throw Object.assign(new Error('Запрос отменён'), { name: 'AbortError' });
     const prompt = `${header}
-RECIPIENT: ${JSON.stringify(target)}. Saved locally as ${JSON.stringify(thread?.name || contactName)}; this label is the same person, not a new identity. Use this person's established voice; an NPC does not inherit the main character's identity.
 OWN SMS HISTORY (chronological; this is the only private conversation available): ${JSON.stringify(turns)}
-Forwarded messages disclose ONLY the excerpts in "shared.messages". Do not assume omitted lines, quote unshared wording, or read the source conversation. A plausible inference must remain an inference. Background story guides the author; each speaker only knows what they witnessed or were told.
+These app messages supplement the roleplay history above. Remember this participant's own story scenes and established relationship when answering. Forwarded messages disclose ONLY the excerpts in "shared.messages". Do not assume omitted lines, quote unshared wording, or read the source conversation. A plausible inference must remain an inference. Background story guides the author; each speaker only knows what they witnessed or were told.
 ${image ? 'The current photo is ATTACHED. Describe visible contents in "photo_description" and react to what you see.' : 'No current photo is attached. Keep "photo_description" empty; do not invent its contents.'}
 Write 1-5 natural short messages to the latest user entry, without narration, user actions, HTML or phone tags. ${isGroup ? 'Only established listed group members may reply; "from" is the member name.' : `Every reply has "from":${JSON.stringify(contactName)}.`} If unavailable or unwilling, return "replies":[]. Voice entries are transcripts the speaker hears.
 Optional "voice":true marks a spoken transcript; "photo":"visible scene" describes an MMS the speaker actually sends. Optional "forward":{"app":"msg","messages":[{"author":"original speaker","text":"shared line"}]} may share excerpts from the replying character's own correspondence, consistent with established events. It never grants access to another phone.
@@ -3575,13 +3572,13 @@ Return ONE JSON object: {"city":"city / district","pages":[{"title":"title","url
 export async function generateInstagramDmReply(thread) {
     const owner=getMeta(),original=thread.author;
     const turns=privateThreadTurns(thread.messages,{user:getUserName(),peer:original,limit:16});
-    const header = await taskHeader('write one private Instagram Direct reply as '+JSON.stringify(original)+'.',{publicOnly:true,contactNames:[original]});
+    const header = await buildPhoneConversationContext({key:thread.contactKey || original,name:displayName(thread.contactKey || '',original),originalName:original},
+        {medium:'direct',includeSms:false,utterance:JSON.stringify(turns.at(-1) || {})});
     if (getMeta() !== owner) throw new Error('Чат изменился');
     const prompt=`${header}
-RECIPIENT: ${JSON.stringify(original)}. Saved by the user as ${JSON.stringify(displayName(thread.contactKey||'',original))}; this is the same person. The main character card describes only that character; for an NPC use their own established lore and personality.
 DIRECT HISTORY (chronological, private to these participants): ${JSON.stringify(turns)}
 ${privateBankPrompt(original)}
-Reply naturally to the latest user message/shared post or story. Forwarded messages reveal only the attached excerpts, never the rest of someone else's private chat. Refer to what is actually shared, keep your character's voice and relationship, do not invent the user's reply or actions. This is Instagram, not SMS or a phone call. No narration, HTML, phone tags or invented attachments. If a reply is implausible now, return an empty text. ${uiLangLine()}
+Reply naturally to the latest user message/shared post or story, remembering this participant's own scenes from the roleplay history above. Forwarded messages reveal only the attached excerpts, never the rest of someone else's private chat. Refer to what is actually shared, keep your character's voice and relationship, do not invent the user's reply or actions. This is Instagram, not SMS or a phone call. No narration, HTML, phone tags or invented attachments. If a reply is implausible now, return an empty text. ${uiLangLine()}
 You may attach a forwarded excerpt from the speaker's own correspondence when actually sharing it: optional "forward":{"app":"msg","messages":[{"author":"original speaker","text":"shared message"}]}. This reveals only those excerpts, not access to the source phone; respect established events and character knowledge.
 Return JSON only: {"text":"one concise message, at most 800 characters","bank":[]}.`;
     const result=parseJsonObject(await socialGen(prompt,{maxTokens:1000,prefill:'{"text":"'}));

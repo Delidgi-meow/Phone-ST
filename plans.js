@@ -1,3 +1,4 @@
+import { parsePhoneJson } from './phone-text.js';
 // Планы и важные даты: календарь телефона. Живёт по ролевому времени —
 // «сегодня» это сегодня В ИСТОРИИ, а не по часам компьютера.
 // Записи приходят двумя путями: она добавляет их сама или ролевая ставит тег
@@ -243,7 +244,7 @@ export function plansInjectRule() {
 const PLAN_TAG_RE = /<!--\s*tel:plan:(\{[\s\S]*?\})\s*-->/gi;
 
 function safeJson(raw) {
-    try { return JSON.parse(raw); } catch (e) { return null; }
+    try { return parsePhoneJson(raw); } catch (e) { return null; }
 }
 
 export function harvestPlanTags() {

@@ -462,7 +462,7 @@ const DICT = {
     'Профиль генерации телефона': 'Phone generation profile', 'Контекст генерации телефона': 'Phone generation context',
     'SMS, Direct, звонки и соцсети. Без выбранного профиля — текущий API.': 'SMS, Direct, calls and social apps. Uses the current API when no profile is selected.',
     'Только срез истории': 'Recent history only',
-    'SMS и Direct получают свой диалог без чужих переписок. Звонки всегда используют карточку, лорбук и историю ролевой.': 'SMS and Direct receive their own conversation, excluding other private threads. Calls always use the card, lorebook and roleplay history.',
+    'SMS, Direct и звонки всегда получают карточку, лорбук и историю ролевой. Чужие переписки исключены.': 'SMS, Direct and calls always receive the card, lorebook and roleplay history. Other private threads are excluded.',
     'Загрузить список моделей': 'Load model list', 'Изменить @ник': 'Edit @handle',
     'Инструкции для модели': 'Model instructions', 'Компактные правила в инжекте': 'Compact injection rules',
     'Написать собственное действие или реплику': 'Write your own action or line',

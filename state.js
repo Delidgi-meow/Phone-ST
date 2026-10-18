@@ -1,3 +1,4 @@
+import { normalizePhoneSpaces, parsePhoneJson } from './phone-text.js';
 
 import { chat_metadata } from '../../../../script.js';
 import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
@@ -9,7 +10,7 @@ import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.51.1';
+export const GP_VERSION = '2.51.3';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -776,16 +777,16 @@ export function stripThink(text) {
 // ── Толерантный JSON-парсер (модели любят одинарные кавычки и висячие запятые) ──
 function safeJson(raw) {
     if (!raw) return null;
-    try { return JSON.parse(raw); } catch (e) {}
+    try { return parsePhoneJson(raw); } catch (e) {}
     try {
         const fixed = raw.replace(/,\s*([}\]])/g, '$1').replace(/'/g, '"');
-        return JSON.parse(fixed);
+        return parsePhoneJson(fixed);
     } catch (e2) {}
     try {
         // Fallback для неэкранированных переносов строк внутри значений (частая ошибка моделей)
         let f = raw.replace(/,\s*([}\]])/g, '$1').replace(/'/g, '"');
         f = f.replace(/([^\\])\n/g, '$1\\n').replace(/([^\\])\r/g, '$1\\r');
-        return JSON.parse(f);
+        return parsePhoneJson(f);
     } catch (e3) {}
     try {
         // Последняя надежда: извлекаем ключи регулярками
@@ -793,7 +794,7 @@ function safeJson(raw) {
         const extract = (key) => {
             const re = new RegExp(`"${key}"\\s*:\\s*"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"`, 'i');
             const m = raw.match(re) || raw.replace(/'/g, '"').match(re);
-            if (m) return m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+            if (m) return normalizePhoneSpaces(m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"'));
             return null;
         };
         res.from = extract('from');
@@ -1277,7 +1278,7 @@ function scanChatUncached() {
             const rpQuotes = extractRoleplaySms(text, getRoleplaySmsOptions());
             for (const om of text.matchAll(OUT_ALL_RE)) {
                 const j = safeJson(om[1]) || {};
-                if (j.origin === 'rp' && !rpQuotes.some(quote => quote.quoteIndex === j.quoteIndex && quote.text === (j.rpQuote || j.text))) continue;
+                if (j.origin === 'rp' && !rpQuotes.some(quote => quote.quoteIndex === j.quoteIndex && normalizePhoneSpaces(quote.text) === normalizePhoneSpaces(j.rpQuote || j.text))) continue;
                 const stripped = text.replace(OUT_RE, '').trim();
                 const vis = stripped.match(OUT_VISIBLE_RE);
                 const visGroup = !vis ? stripped.match(OUT_VISIBLE_GROUP_RE) : null;
@@ -1288,7 +1289,7 @@ function scanChatUncached() {
                 const groupName = j.group || (typeof to === 'string' && to.match(/^группа:\s*(.+)$/i)?.[1]) || null;
                 // В пузыре телефона токен «*фото...*» не показываем — там миниатюра;
                 // полное описание остаётся в mes (для модели и саммари)
-                const displayBody = body.replace(/\*(?:фото|photo):[^*]*\*\s*/i, '').replace(/\*(?:фото|photo)\*\s*/i, '').replace(/\*(?:переслано|forwarded):[^*]*\*\s*/i, '').trim();
+                const displayBody = normalizePhoneSpaces(body.replace(/\*(?:фото|photo):[^*]*\*\s*/i, '').replace(/\*(?:фото|photo)\*\s*/i, '').replace(/\*(?:переслано|forwarded):[^*]*\*\s*/i, '').trim());
                 const tagStart = text.indexOf(om[0]);
                 const entry = { dir: 'out', text: displayBody, idx: i, time, tagStart, tagEnd: tagStart + om[0].length, tagText: om[0] };
                 if (isVoice) entry.voice = true;

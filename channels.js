@@ -1,3 +1,4 @@
+import { parsePhoneJson } from './phone-text.js';
 // Каналы: свой и чужие, посты с реакциями, просмотрами и обсуждением.
 // Данные лежат per-chat в meta; генерация — по кнопкам и после своих постов.
 
@@ -594,7 +595,7 @@ function hash32(str) {
 }
 
 function safeJson(raw) {
-    try { return JSON.parse(raw); } catch (e) { return null; }
+    try { return parsePhoneJson(raw); } catch (e) { return null; }
 }
 
 function applyChannelTag(j) {

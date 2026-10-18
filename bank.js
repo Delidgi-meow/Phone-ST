@@ -1,3 +1,4 @@
+import { parsePhoneJson } from './phone-text.js';
 
 import { getMeta, saveMeta, getRpDateTime, stripThink, getPhoneMessageText } from './state.js';
 import { normalizeCurrency, currencyInfo, roundCurrency, formatCurrency, currencyStep } from './currencies.js';
@@ -12,8 +13,8 @@ function hash32(str) {
 }
 
 function safeJson(raw) {
-    try { return JSON.parse(raw); } catch (e) {
-        try { return JSON.parse(String(raw).replace(/,\s*([}\]])/g, '$1').replace(/'/g, '"')); } catch (e2) { return null; }
+    try { return parsePhoneJson(raw); } catch (e) {
+        try { return parsePhoneJson(String(raw).replace(/,\s*([}\]])/g, '$1').replace(/'/g, '"')); } catch (e2) { return null; }
     }
 }
 

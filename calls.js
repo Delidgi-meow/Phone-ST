@@ -1,3 +1,4 @@
+import { parsePhoneJson } from './phone-text.js';
 import { openPhoneContactEditor } from './contact-editor.js';
 import { getMeta, saveMeta, getThreadList, getRpDateTime, getPhoneActivityText as getPhoneMessageText, isSmsBlocked, isUserName, getSettings } from './state.js';
 import { generatePhoneCallReply, logSocialToChat, getUserName, getContactAvatar } from './social.js';
@@ -76,7 +77,7 @@ export function harvestPhoneCalls(){
         for(const tag of getPhoneMessageText(m,i).matchAll(/<!--\s*tel:call:(\{[\s\S]*?\})\s*-->/gi)){
             const key=hash(tag[1])+':'+(m.send_date||m.extra?.gen_id||i);
             if(seen.has(key))continue;
-            let data;try{data=JSON.parse(tag[1]);}catch{continue;}
+            let data;try{data=parsePhoneJson(tag[1]);}catch{continue;}
             const name=typeof data.from==='string'?data.from.trim().slice(0,100):'';
             if(!name)continue;seen.add(key);calls.tags.push(key);consumed=true;
             if(getSettings().quietMode||isUserName(name)||(data.to&&!isUserName(data.to)))continue;

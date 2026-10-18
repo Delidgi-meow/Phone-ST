@@ -1,6 +1,7 @@
+import { normalizePhoneSpaces } from './phone-text.js';
 // A forward is a snapshot of explicitly shared messages, never a link giving
 // access to another person's phone or the rest of the source conversation.
-const clean = (value, limit = 8000) => String(value ?? '').trim().slice(0, limit);
+const clean = (value, limit = 8000) => normalizePhoneSpaces(value).trim().slice(0, limit);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[char]));
 
 export function messageForward(value) {
