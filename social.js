@@ -2931,7 +2931,7 @@ export function cancelPhoneImageGenerations() {
 
 export function generatePostImage(post, onStatus = null, cancelKey = null, options = {}) {
     const owner=getMeta(), activityVersion=getSettings().phoneActivityVersion;
-    const app=post.phoneApp || (post.kind==='avatar'?null:post.stream?'twitch':phonePlatformApp(post.kind || 'ig'));
+    const app=options.phoneApp || post.phoneApp || (post.kind==='avatar'?null:post.stream?'twitch':phonePlatformApp(post.kind || 'ig'));
     if(app) requirePhoneApp(app);
     const ctl = new AbortController();
     phoneImageControllers.add(ctl);

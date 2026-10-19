@@ -114,11 +114,13 @@ let _lastFocusKey = null;       // автофокус — только при с
 
 async function generatePostImage(post, onStatus = null, cancelKey = null) {
     const owner = getMeta();
-    post = {...post, phoneApp:currentScreen==='thread'?phoneAppForThread(currentThreadKey):phoneAppId(currentScreen)};
+    const phoneApp = currentScreen==='thread'?phoneAppForThread(currentThreadKey):phoneAppId(currentScreen);
     const options = await chooseImageRepeat(post, cancelKey, document.getElementById('gp-screen'),
         currentScreen === 'thread' ? 'thread:' + currentThreadKey : currentScreen);
     if (getMeta() !== owner) { const error = new Error('Генерация отменена'); error.name = 'ImageGenCancelled'; throw error; }
-    return requestPostImage(post, onStatus, cancelKey, options);
+    // The generator saves the result on this exact object in chat metadata.
+    // Routing belongs to the request options; copying the post loses the image.
+    return requestPostImage(post, onStatus, cancelKey, {...options, phoneApp});
 }
 
 // Ключ привязан к экрану и объекту: черновик треда Вадима не подставится Алисе
@@ -2968,7 +2970,24 @@ function bindIgCardActions(root) {
     root.querySelectorAll('[data-ig-save]').forEach(button=>button.onclick=()=>{const post=getIgPosts().find(item=>item.id===button.dataset.igSave);if(post){post.saved=!post.saved;saveMeta();render();}});
     root.querySelectorAll('[data-ig-menu]').forEach(button=>button.onclick=()=>{
         const post=getIgPosts().find(item=>item.id===button.dataset.igMenu);if(!post)return;
-        const own=post.ak==='user',shade=openPhoneSheet(root,'Публикация',`<div class="gp-insta-menu">${own?'':`<button type="button" data-post-dm>${bankIcon('Send')}Написать автору</button>`}<button type="button" data-post-action>${bankIcon(own?'Trash2':'RotateCw')}${own?'Удалить публикацию':'Переписать публикацию'}</button>${own?'':`<button type="button" data-post-ban>${bankIcon('Ban')}Заблокировать аккаунт</button>`}</div>`,currentScreen);shade.classList.add('gp-insta-sheet');
+        const own=post.ak==='user',shade=openPhoneSheet(root,'Публикация',`<div class="gp-insta-menu">${own?'':`<button type="button" data-post-dm>${bankIcon('Send')}Написать автору</button>`}<button type="button" data-post-action>${bankIcon(own?'Trash2':'RotateCw')}${own?'Удалить публикацию':'Переписать публикацию'}</button><button type="button" data-post-image-pick>${bankIcon('Image')}${tr('Выбрать готовое фото')}</button><input type="file" data-post-image-file accept="image/*" hidden>${own?'':`<button type="button" data-post-ban>${bankIcon('Ban')}Заблокировать аккаунт</button>`}</div>`,currentScreen);shade.classList.add('gp-insta-sheet');
+        const imageOwner=getMeta(),imageInput=shade.querySelector('[data-post-image-file]'),imageButton=shade.querySelector('[data-post-image-pick]');
+        imageButton.onclick=()=>imageInput.click();
+        imageInput.onchange=async()=>{
+            const file=imageInput.files?.[0];if(!file)return;
+            imageButton.disabled=true;
+            const current=()=>getMeta()===imageOwner&&isPhoneAppInstalled('ig')&&getIgPosts().includes(post);
+            try{
+                const data=await compressImage(file,1600,.92);
+                if(!current())return;
+                const src=await saveBase64AsFile(data.replace(/^data:image\/[a-z0-9.+-]+;base64,/i,''),'glassphone',`igpost_${Date.now()}`,'jpeg');
+                if(!current())return;
+                if(typeof src!=='string'||!src)throw new Error('Не удалось сохранить фото');
+                post.image=src;post._imgTs=Date.now();saveMeta();
+                closePhoneSheet(shade);render();toast('Фото добавлено','fa-instagram');
+            }catch(error){if(current())toast(String(error.message||error),'fa-circle-exclamation');}
+            finally{imageButton.disabled=false;imageInput.value='';}
+        };
         shade.querySelector('[data-post-dm]')?.addEventListener('click',()=>{const thread=ensureIgThread({name:post.author,ak:post.ak,handle:post.handle});closePhoneSheet(shade);currentIgDmThread=thread.id;goto('igdm');});
         shade.querySelector('[data-post-action]').onclick=()=>{closePhoneSheet(shade);root.querySelector(own?'[data-del-ig="'+CSS.escape(post.id)+'"]':'[data-regen-ig="'+CSS.escape(post.id)+'"]')?.click();};
         shade.querySelector('[data-post-ban]')?.addEventListener('click',()=>{closePhoneSheet(shade);root.querySelector('[data-ban-ig="'+CSS.escape(post.id)+'"]')?.click();});
@@ -2998,11 +3017,12 @@ function bindIgCardActions(root) {
         _imgGenBusy.add(id);
         render();
         try {
-            await generatePostImage(post, (status) => {
+            post.image = await generatePostImage(post, (status) => {
                 const el = document.querySelector(`[data-genstatus="${CSS.escape(id)}"]`);
                 if (el) el.textContent = status;
             }, id);
             post._imgTs = Date.now(); // cache-busting для перезагрузки нового фото
+            saveMeta();
             toast('Фото готово', 'fa-instagram');
         } catch (err) {
             // Отмена — не ошибка: молча снимаем индикатор

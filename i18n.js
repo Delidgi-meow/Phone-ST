@@ -16,6 +16,9 @@ export const MONTHS_I18N = {
 
 // ── Точный словарь (ключ = русская строка после trim) ──
 const DICT = {
+    'Выбрать готовое фото': 'Choose an existing photo', 'Фото добавлено': 'Photo added',
+    'Не удалось сохранить фото': 'Could not save the photo',
+
     'Положение на экране': 'Screen position', 'Положение уведомлений': 'Notification position',
     'Сверху': 'Top', 'По центру': 'Center', 'Снизу': 'Bottom',
     'Сверху — чуть ниже стандартных уведомлений': 'Top — just below standard notifications',
