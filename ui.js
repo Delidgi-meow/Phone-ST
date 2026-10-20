@@ -1,5 +1,6 @@
 import { cancelPhoneImageGenerations } from './social.js';
 import { renderAppStore } from './app-store.js';
+import { syncAppNotifications, markAppNotificationsRead } from './app-notifications.js';
 import { isPhoneAppInstalled, phoneAppForThread } from './state.js';
 import { phoneAppId } from './phone-apps.js';
 import { getCalls, endPhoneCall } from './calls.js';
@@ -699,6 +700,7 @@ function togglePhone() {
 }
 
 function tickClock() {
+    if(currentScreen==='lock'&&isPhoneOpen()){render();return;}
     const rpDt = getRpDateTime();
     const el = document.getElementById('gp-clock');
     if (el) {
@@ -727,6 +729,7 @@ export function render() {
     const screen = document.getElementById('gp-screen');
     if (!screen || !isPhoneOpen()) return;
     syncPhoneViewOwner();
+    const appNotices=appLockNotifications();
     const app = currentScreen === 'thread' ? phoneAppForThread(currentThreadKey) : phoneAppId(currentScreen);
     if (!isPhoneAppInstalled(app)) currentScreen = 'appstore';
     document.getElementById('gp-phone')?.classList.toggle('gp-home-active',currentScreen==='home');
@@ -807,6 +810,7 @@ export function render() {
     // новое сообщение) больше не стирает то, что юзер печатает
     restoreDrafts(screen);
     applyAppSurface(screen,currentScreen);
+    acknowledgeVisibleAppNotifications(appNotices);
     // Перевод отрендеренного экрана (en) / восстановление оригиналов (ru)
     try { trDom(screen); } catch (e) { /* ignore */ }
     normalizePhoneTextNodes(document.getElementById('gp-phone'));
@@ -1141,7 +1145,7 @@ function renderSocialJournal(screen) {
 
 // ── Экран блокировки ──
 // Часы по времени ролевой и всё непрочитанное одним списком. Отметки
-// «просмотрено» для лент держим в meta: у постов своих счётчиков нет.
+// прочтения приложений держим per-chat по ID событий.
 
 function feedSeen() {
     const m = getMeta();
@@ -1149,7 +1153,7 @@ function feedSeen() {
     return m.feedSeen;
 }
 
-// Лента просмотрена — запоминаем длину, дальше считаем прирост
+// Совместимость с прежними отметками лент; уведомления используют ID событий.
 export function markFeedSeen(kind, count) {
     const s = feedSeen();
     if (s[kind] === count) return;      // без лишнего saveMeta: он сбрасывает кэш чата
@@ -1157,17 +1161,58 @@ export function markFeedSeen(kind, count) {
     saveMeta();
 }
 
-function feedNew(kind, count) {
-    const seen = feedSeen()[kind];
-    // Первый заход: показывать «всё новое» бессмысленно — считаем прочитанным
-    if (seen === undefined) return 0;
-    return Math.max(0, count - seen);
+function appLockNotifications(){
+    const root=getMeta(),d=new Date();
+    const result=syncAppNotifications(root,getSettings(),{user:getUserName(),english:lang()==='en',
+        date:getRpDateTime()||{year:d.getFullYear(),month:d.getMonth()+1,day:d.getDate(),hours:d.getHours(),minutes:d.getMinutes()}});
+    if(result.changed)saveMeta();
+    return result.notifications;
+}
+
+function openAppLockNotification(note){
+    if(!isPhoneAppInstalled(note.app))return;
+    if(markAppNotificationsRead(getMeta(),note.ids))saveMeta();
+    const route=note.route;
+    if(route.screen==='twthread')currentTweetId=route.postId;
+    if(['igview','ofview'].includes(route.screen))currentPostId=route.postId;
+    if(route.channelId)_chanId=route.channelId;
+    if(route.screen==='chanpost')_chanPostId=route.postId;
+    if(route.streamId)_twStreamId=route.streamId;
+    if(route.screen==='igstory'){_storyAuthor=route.author;_storyIdx=0;}
+    if(route.screen==='calendar'&&route.date){_planRoot=getMeta();_planDay=route.date;_planMonth=route.date.slice(0,7);}
+    goto(route.screen);
+}
+
+function acknowledgeVisibleAppNotifications(notes){
+    if(!isPhoneOpen()||currentScreen==='lock')return;
+    const visible=notes.filter(note=>{
+        const r=note.route;
+        if(note.app==='bank')return ['bank','banktx','bankloan','bankmortgage','bankrec'].includes(currentScreen);
+        if(r.screen==='twthread')return currentScreen==='twthread'&&currentTweetId===r.postId;
+        if(['igview','ofview'].includes(r.screen))return currentScreen===r.screen&&currentPostId===r.postId;
+        if(r.screen==='chanpost')return currentScreen==='chanpost'&&_chanId===r.channelId&&_chanPostId===r.postId;
+        if(note.app==='twitch'&&note.kind==='live'&&currentScreen==='twitch')return true;
+        if(r.screen==='stream')return currentScreen==='stream'&&_twStreamId===r.streamId;
+        if(r.screen==='igstory')return currentScreen==='igstory'&&activeStories()[_storyIdx]?.id===r.storyId;
+        if(r.screen==='calendar')return currentScreen==='calendar'&&_planDay===r.date;
+        return currentScreen===r.screen;
+    });
+    if(visible.length&&markAppNotificationsRead(getMeta(),visible.flatMap(note=>note.ids)))saveMeta();
 }
 
 // Всё непрочитанное для локскрина: {icon, title, text, time, go}
 function lockNotifications() {
     const out = [];
     if (getSettings().quietMode) return out;
+    try{
+        for(const call of isPhoneAppInstalled('phone')?getCalls().history:[]){
+            if(call.direction!=='in'||!['ringing','missed','declined'].includes(call.status)||(!call.unread&&call.status!=='ringing'))continue;
+            out.push({icon:'fa-phone',title:call.status==='ringing'?'Входящий звонок':'Пропущенный звонок',
+                text:(getThread(call.key)?.name||call.name)+(call.reason?' · '+call.reason:''),go:()=>openPhone('call:'+call.id)});
+        }
+        for(const match of tinderEnabled()?getMatches():[])if(!match.opened)
+            out.push({icon:'fa-fire',title:'Tinder',text:'Новый мэтч · '+match.name,go:()=>{markMatchOpened(match.id);_tinProfileId=match.id;goto('tinprofile');}});
+    }catch(_error){/* Optional calls / matches. */}
     try {
         for (const thread of isPhoneAppInstalled('ig') ? igThreads() : []) {
             const count = igUnread(thread);
@@ -1202,8 +1247,8 @@ function lockNotifications() {
         for (const t of getThreadList()) {
             if (!isPhoneAppInstalled(phoneAppForThread(t.key)) || !t.unread || !t.last) continue;
             out.push({
-                icon: t.isGroup ? 'fa-user-group' : 'fa-comment-dots',
-                title: t.name,
+                icon: phoneAppForThread(t.key)==='tinder'?'fa-fire':t.isGroup ? 'fa-user-group' : 'fa-comment-dots',
+                title: phoneAppForThread(t.key)==='tinder'?'Tinder · '+t.name:t.name,
                 text: t.last.photoDesc && !t.last.text ? 'Фото' : (t.last.text || ''),
                 count: t.unread,
                 go: () => { currentThreadKey = t.key; goto('thread'); },
@@ -1228,21 +1273,14 @@ function lockNotifications() {
         for (const r of getBankReminders()) {
             out.push({
                 icon: r.kind === 'loan' ? 'fa-landmark' : 'fa-file-invoice-dollar',
-                title: r.overdue ? 'Просрочен платёж' : 'Пора оплатить',
+                title: 'Банк · '+(r.overdue ? 'Просрочен платёж' : 'Пора оплатить'),
                 text: `${r.name} — ${fmtMoney(r.amount)}`,
                 go: () => goto('bank'),
             });
         }
     } catch (e) { /* ignore */ }
     try {
-        const feeds = [
-            { kind: 'tw', n: feedNew('tw', getTweets().length), icon: 'fa-x-twitter', title: 'Twitter', text: 'Новое в ленте' },
-            { kind: 'ig', n: feedNew('ig', getIgPosts().length), icon: 'fa-instagram', title: 'Instagram', text: 'Новое в ленте' },
-            { kind: 'of', n: feedNew('of', getOfPosts().length), icon: 'fa-heart', title: 'OnlyFans', text: 'Новое в ленте' },
-        ];
-        for (const f of feeds) {
-            if (isPhoneAppInstalled(f.kind) && f.n > 0) out.push({ icon: f.icon, title: f.title, text: f.text, count: f.n, go: () => goto(f.kind) });
-        }
+        for(const note of appLockNotifications())out.push({...note,title:note.appTitle+' · '+note.title,go:()=>openAppLockNotification(note)});
     } catch (e) { /* ignore */ }
     try {
         if (isPhoneAppInstalled('events') && getSystemsView().storyEvents.active) {
@@ -1258,6 +1296,7 @@ export function lockUnreadCount() {
 
 function renderLock(screen) {
     currentScreen = 'lock';
+    const notificationScroll=screen.querySelector('.gp-lock-notes')?.scrollTop||0;
     const rpDt = getRpDateTime();
     const d = new Date();
     const DAYS = DAYS_I18N[lang()];
@@ -1278,7 +1317,7 @@ function renderLock(screen) {
             <div class="gp-lock-notes">
                 ${notes.map((n, i) => `
                     <div class="gp-lock-note" data-lock-note="${i}" style="animation-delay:${Math.min(i * 60, 300)}ms">
-                        <span class="gp-lock-note-icon">${/^fa-(x-twitter|instagram|discord)$/.test(n.icon) ? brand(n.icon) : ic(n.icon)}</span>
+                        <span class="gp-lock-note-icon">${/^fa-(x-twitter|instagram|discord|twitch)$/.test(n.icon) ? brand(n.icon) : ic(n.icon)}</span>
                         <span class="gp-lock-note-body">
                             <span class="gp-lock-note-title">${esc(n.title)}${n.count > 1 ? ` <b>${n.count}</b>` : ''}</span>
                             ${n.text ? `<span class="gp-lock-note-text">${esc(String(n.text).slice(0, 90))}</span>` : ''}
@@ -1291,6 +1330,8 @@ function renderLock(screen) {
         </div>`;
 
     applyLockAppearance(screen);
+    const notificationList=screen.querySelector('.gp-lock-notes');
+    if(notificationList)notificationList.scrollTop=notificationScroll;
     const unlock = () => { goto(lastUnlockedScreen); };
     screen.querySelectorAll('[data-lock-note]').forEach(el => el.addEventListener('click', () => {
         const n = notes[parseInt(el.getAttribute('data-lock-note'))];
@@ -1301,16 +1342,16 @@ function renderLock(screen) {
     // Смахивание вверх — пальцем и мышью
     const lock = screen.querySelector('#gp-lock');
     let startY = null;
-    const onDown = (y) => { startY = y; };
+    const onDown = (y,event) => { startY = event.target.closest('.gp-lock-notes')?null:y; };
     const onUp = (y) => {
         if (startY !== null && startY - y > 55) unlock();
         startY = null;
     };
-    lock?.addEventListener('touchstart', (e) => onDown(e.touches[0].clientY), { passive: true });
+    lock?.addEventListener('touchstart', (e) => onDown(e.touches[0].clientY,e), { passive: true });
     lock?.addEventListener('touchend', (e) => onUp(e.changedTouches[0]?.clientY ?? 0), { passive: true });
-    lock?.addEventListener('mousedown', (e) => onDown(e.clientY));
+    lock?.addEventListener('mousedown', (e) => onDown(e.clientY,e));
     lock?.addEventListener('mouseup', (e) => onUp(e.clientY));
-    lock?.addEventListener('wheel', (e) => { if (e.deltaY > 0) unlock(); }, { passive: true });
+    lock?.addEventListener('wheel', (e) => { if (e.deltaY > 0&&!e.target.closest('.gp-lock-notes')) unlock(); }, { passive: true });
 }
 
 // ── Домашний экран ──
@@ -7048,7 +7089,19 @@ function setupNativeShell() {
     } catch (e) { /* ignore */ }
 }
 
+let appNotificationListenerBound=false;
 export function initUI() {
+    appLockNotifications();
+    if(!appNotificationListenerBound){
+        appNotificationListenerBound=true;
+        window.addEventListener('gp:metadata',({detail})=>{
+            if(detail?.owner!==getMeta())return;
+            const notes=appLockNotifications();
+            acknowledgeVisibleAppNotifications(notes);
+            if(isPhoneOpen()&&currentScreen==='lock')render();
+            updateFabBadge();
+        });
+    }
     setupNativeShell();
     createFab();
     createPhone();

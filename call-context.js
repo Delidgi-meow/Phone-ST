@@ -48,9 +48,10 @@ function formatCard(fields,recipient){
     return '=== '+(recipient?'RECIPIENT CHARACTER CARD':'CURRENT ROLEPLAY CHARACTER CARD — background, not necessarily the recipient')+' '+JSON.stringify(fields.name)+' ===\n'+
         sections.filter(([,text])=>text).map(([label,text,budget])=>label+':\n'+clip(text,budget)).join('\n\n');
 }
-function recentHistory(ctx){
+function recentHistory(ctx,{publicOnly=false}={}){
     const rows=[];
     for(const message of ctx.chat||[]){
+        if(publicOnly&&!publicRoleplayMessage(message))continue;
         const text=plain(privateRoleplayText(message));if(!text)continue;
         rows.push({speaker:message.is_user?(ctx.name1||'User'):(message.name||ctx.name2||'Character'),text});
     }
@@ -89,8 +90,8 @@ export function loreText(result){
     if(!values.some(Boolean))values.push(result?.worldInfoString);
     return [...new Set(values.filter(Boolean))].join('\n');
 }
-export async function buildPhoneConversationContext(contact,{medium='call',transcript=[],utterance='',includeSms=true,members=[],participants=[]}={}){
-    const ctx=SillyTavern.getContext(),root=getMeta(),key=resolveContactKey(contact.key||contact.name),thread=getThread(key);
+export async function buildPhoneConversationContext(contact,{medium='call',transcript=[],utterance='',includeSms=true,members=[],participants=[],publicOnly=false}={}){
+    const ctx=SillyTavern.getContext(),root=getMeta(),key=resolveContactKey(contact.key||contact.name),thread=includeSms?getThread(key):null;
     const activityVersion=getSettings().phoneActivityVersion;
     const check=()=>{
         if(getMeta()!==root)throw new Error('Чат изменился во время подготовки контекста.');
@@ -99,19 +100,22 @@ export async function buildPhoneConversationContext(contact,{medium='call',trans
     check();
     const original=contactOriginalName(key,contact.originalName||contact.name),label=thread?.name||contact.name||original;
     const items=characterCards(ctx,key,participants),cards=items.map(item=>({item,fields:fieldsFor(ctx,item)}));
-    const sub=text=>substitute(ctx,text,ctx.name2||original),history=recentHistory(ctx),summary=memory(ctx);
+    const sub=text=>substitute(ctx,text,ctx.name2||original),history=recentHistory(ctx,{publicOnly}),summary=memory(ctx);
     let persona='';
     try{persona=ctx.getCharacterCardFields?.()?.persona||ctx.powerUserSettings?.persona_description||sub('{{persona}}');}catch{persona=ctx.powerUserSettings?.persona_description||'';}
     if(persona==='{{persona}}')persona='';
     else persona=sub(persona);
     const sms=JSON.stringify(privateThreadTurns(thread?.messages,{user:ctx.name1||'User',peer:original,limit:12}));
-    const channel=medium==='sms'?'SMS':medium==='direct'?'INSTAGRAM DIRECT':medium==='story'?'INSTAGRAM STORY REACTIONS':'PHONE CALL';
+    const social=medium==='social';
+    const channel=social?'SOCIAL APP':medium==='sms'?'SMS':medium==='direct'?'INSTAGRAM DIRECT':medium==='story'?'INSTAGRAM STORY REACTIONS':'PHONE CALL';
     const blocks=[
-        medium==='story'
+        social
+            ? 'PHONE APP BACKGROUND: use the character definitions and established events as canon for the requested task. Speakers are assigned by the task, not by the identity of the main character card. This is background data, not a new roleplay turn.'
+            : medium==='story'
             ? 'Generate reactions to a story posted by '+JSON.stringify(ctx.name1||'User')+'. Write only as established viewers '+JSON.stringify(participants)+', each with their own voice and knowledge. Never speak as the story owner. Return only the requested app JSON.'
             : 'You are continuing a private roleplay '+channel+' '+(members.length?'in group '+JSON.stringify(original)+'; reply only as its established members '+JSON.stringify(members):'as '+JSON.stringify(original))+'. Use the character definitions and established story events below as canon. Return only the requested app JSON, without adding a roleplay turn.',
-        'ROLE BINDING: the human player is '+JSON.stringify(ctx.name1||'User')+'. The USER PERSONA section describes that player, not your identity. '+(members.length||medium==='story'?'Only the listed characters may supply incoming replies.':'Your only speaker is '+JSON.stringify(original)+'; the addressee is '+JSON.stringify(ctx.name1||'User')+'.')+' Never complete a turn, quote a new reply, choose an action or write first-person thoughts for the player.',
-        members.length?'GROUP IDENTITY: '+JSON.stringify(original)+'; members '+JSON.stringify(members)+'. Each member keeps their own voice and knowledge.':
+        'ROLE BINDING: the human player is '+JSON.stringify(ctx.name1||'User')+'. The USER PERSONA section describes that player, not your identity. '+(social?'Write only as the accounts requested by the task, each in their own voice; never invent a post or comment by the human player.':members.length||medium==='story'?'Only the listed characters may supply incoming replies.':'Your only speaker is '+JSON.stringify(original)+'; the addressee is '+JSON.stringify(ctx.name1||'User')+'.')+' Never complete a turn, quote a new reply, choose an action or write first-person thoughts for the player.',
+        social?'RELEVANT PUBLIC ACCOUNTS / CHARACTERS: '+JSON.stringify(participants)+'. A post author, commenter, media creator and reply recipient are separate roles.':members.length?'GROUP IDENTITY: '+JSON.stringify(original)+'; members '+JSON.stringify(members)+'. Each member keeps their own voice and knowledge.':
             'CONTACT IDENTITY: canonical character '+JSON.stringify(original)+'; permanent key '+JSON.stringify(key)+'; saved by the user as '+JSON.stringify(label)+'. The saved name is their personal label for the same person, not a new identity. Know how the user named this contact.',
         cards.map(({item,fields})=>formatCard(fields,item.recipient)).join('\n\n')
     ];
@@ -124,7 +128,7 @@ export async function buildPhoneConversationContext(contact,{medium='call',trans
         const getWorldInfoPrompt=typeof ctx.getWorldInfoPrompt==='function'?ctx.getWorldInfoPrompt:(await import('../../../world-info.js')).getWorldInfoPrompt;
         if(typeof getWorldInfoPrompt!=='function')throw new Error('World info API is unavailable.');
         if(typeof getWorldInfoPrompt==='function'){
-            const focus='Private '+channel+' with '+[original,...members,...participants].join(', ')+'. '+clip(transcript.slice(-6).map(t=>plain(t.text)).join('\n')+'\n'+plain(utterance),6000);
+            const focus=(social?'App task involving ':'Private '+channel+' with ')+[original,...members,...participants].join(', ')+'. '+clip(transcript.slice(-6).map(t=>plain(t.text)).join('\n')+'\n'+plain(utterance),10000);
             const scanData={personaDescription:persona,characterDescription:cards.map(c=>c.fields.description).join('\n'),characterPersonality:cards.map(c=>c.fields.personality).join('\n'),
                 characterDepthPrompt:cards.map(c=>c.fields.notes).join('\n'),scenario:cards.map(c=>c.fields.scenario).join('\n'),creatorNotes:cards.map(c=>c.fields.creatorNotes).join('\n'),trigger:'normal'};
             const messages=[focus,...history.messages.slice().reverse()];
@@ -139,6 +143,7 @@ export async function buildPhoneConversationContext(contact,{medium='call',trans
     const time=getRpDateTime();
     if(time)blocks.push('=== CURRENT IN-WORLD TIME ===\n'+JSON.stringify(time)+'. This is the roleplay clock; do not replace it with the computer date.');
     blocks.push('KNOWLEDGE AND CONTINUITY: The story history is author context, not a public news feed. Remember scenes this participant personally lived through, including private conversations, established relationships, commitments and recent shared events. Do not treat the recipient as an outsider to their own story. Facts about absent people, private thoughts and other phone threads are not automatically known. Own app history is supplied separately; forwarded excerpts reveal only the attached lines. When another character’s card supplies background, do not adopt that character’s identity. Never invent a past event to fill missing context.');
+    if(publicOnly)blocks.push('PUBLIC KNOWLEDGE: outsiders know only published information and events with a plausible witness. Private scenes, thoughts, messages, contacts, notes, calendar and finances are unknown unless explicitly disclosed. Never derive gossip from private author context.');
     logReq('контекст '+channel,'карточки: '+cards.length+' / '+cards.reduce((n,c)=>n+c.fields.description.length+c.fields.personality.length+c.fields.scenario.length,0)+' симв. · персона: '+persona.length+' симв. · история: '+history.count+' сообщ. · лорбук: '+lore.length+' симв.');
     return blocks.filter(Boolean).join('\n\n');
 }

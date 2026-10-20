@@ -4,7 +4,7 @@ import { parsePhoneJson } from './phone-text.js';
 // Данные лежат per-chat в meta; генерация — по кнопкам и после своих постов.
 
 import { getMeta, saveMeta, keyOf, stripThink, getSettings, getPhoneActivityText as getPhoneMessageText } from './state.js';
-import { logSocialToChat, getUserName, getUserHandle, resolveAuthorKey } from './social.js';
+import { logSocialToChat, getUserName, getUserHandle, resolveAuthorKey, filterGeneratedSocialEntries } from './social.js';
 import { getBank, addTransaction, fmtMoney } from './bank.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
@@ -493,7 +493,7 @@ function logCommentsDigest(channel, post, fresh) {
 export function addComments(post, arr, { fromUser = false, channel = null } = {}) {
     if (!post) return 0;
     if (!Array.isArray(post.comments)) post.comments = [];
-    const fresh = (Array.isArray(arr) ? arr : [])
+    const fresh = (fromUser ? (Array.isArray(arr) ? arr : []) : filterGeneratedSocialEntries(arr))
         .filter(c => c && c.author && c.text)
         .slice(0, 8)
         .map(c => ({

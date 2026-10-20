@@ -11,7 +11,7 @@ import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.54.0';
+export const GP_VERSION = '2.54.2';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -597,10 +597,21 @@ export function updateGroupMembers(groupKey, members) {
 
 // Версия метаданных: любое сохранение инвалидирует кэш scanChat
 let _metaVersion = 0;
+let metadataNoticeQueued = false;
+let metadataNoticeOwner = null;
 export function saveMeta() {
     _metaVersion++;
     try { saveMetadataDebounced(); } catch (e) { console.warn('[GlassPhone] saveMeta failed:', e); }
     scheduleImageOffload();
+    // Coalesce app writes so a locked phone refreshes after the whole update,
+    // including async reactions and deliveries outside the main chat handler.
+    if(typeof window!=='undefined'){
+        metadataNoticeOwner=chat_metadata[META_KEY];
+        if(!metadataNoticeQueued){metadataNoticeQueued=true;queueMicrotask(()=>{
+            metadataNoticeQueued=false;
+            window.dispatchEvent(new CustomEvent('gp:metadata',{detail:{owner:metadataNoticeOwner}}));
+        });}
+    }
 }
 
 // ── Фото из метаданных — в файлы ──
