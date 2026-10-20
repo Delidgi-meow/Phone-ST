@@ -51,7 +51,7 @@ export function markIgRead(id){const thread=igThread(id);let changed=false;for(c
 export function safeIgShare(value){
     if (value?.app === 'msg') return messageForward(value);
     if(!value||!['tw','ig','st','ch','of','web','map'].includes(value.app))return null;
-    return {app:value.app,id:clean(value.id,100),author:clean(value.author,100),text:clean(value.text,600),...(value.replyTo?{replyTo:true}:{}),...(typeof value.image==='string'&&value.image.length<2048?{image:value.image}:{}),...(value.chan?{chan:clean(value.chan,100)}:{})};
+    return {app:value.app,id:clean(value.id,100),author:clean(value.author,100),text:clean(value.text,600),...(value.imgDesc?{imgDesc:clean(value.imgDesc,4000)}:{}),...(value.replyTo?{replyTo:true}:{}),...(typeof value.image==='string'&&value.image.length<2048?{image:value.image}:{}),...(value.chan?{chan:clean(value.chan,100)}:{})};
 }
 export function addIgDm(value,{dir='in',text='',share=null,source='' }={}){
     if (!isPhoneAppInstalled('ig') || (dir !== 'out' && getSettings().quietMode)) return null;

@@ -50,7 +50,7 @@ export async function sendIgDm(id,text='',share=null){
 }
 export function receiveIgStoryReactions(story,result){
     for(const reaction of result?.reactions||[])addIgActivity({kind:'story_like',author:reaction.author,target:'story',targetId:story.id,text:({fire:'🔥',heart:'❤️',laugh:'😂',wow:'😮',sad:'😢'})[reaction.icon]||'❤️',dedupe:'story:'+story.id+':'+igParty(reaction.author).id+':'+reaction.icon});
-    for(const dm of result?.dms||[])addIgDm(dm.from,{text:dm.text,share:{app:'st',id:story.id,author:story.author,text:story.caption||story.imgDesc,image:story.image,replyTo:true},source:'story:'+story.id+':'+igParty(dm.from).id+':'+dm.text.slice(0,80)});
+    for(const dm of result?.dms||[])addIgDm(dm.from,{text:dm.text,share:{app:'st',id:story.id,author:story.author,text:story.caption||story.imgDesc,imgDesc:story.imgDesc||'',image:story.image,replyTo:true},source:'story:'+story.id+':'+igParty(dm.from).id+':'+dm.text.slice(0,80)});
 }
 export async function flushInstagramJournal(){
     const owner=getMeta();
@@ -99,7 +99,7 @@ export function harvestInstagramTags(){
                 const share=incomingShare(event.shot);
                 if((typeof event.text!=='string'||!event.text.trim())&&!share)continue;
                 const story=event.storyId?getStories().find(item=>item.id===event.storyId&&item.ak==='user'):null;
-                const received=addIgDm({name:event.from,handle:event.handle||''},{text:event.text||'',source:key,share:share||(story?{app:'st',id:story.id,author:story.author,text:story.caption||story.imgDesc,image:story.image,replyTo:true}:null)});
+                const received=addIgDm({name:event.from,handle:event.handle||''},{text:event.text||'',source:key,share:share||(story?{app:'st',id:story.id,author:story.author,text:story.caption||story.imgDesc,imgDesc:story.imgDesc||'',image:story.image,replyTo:true}:null)});
                 if(received){
                     added++;
                 }

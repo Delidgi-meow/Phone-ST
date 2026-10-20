@@ -16,6 +16,8 @@ export const MONTHS_I18N = {
 
 // ── Точный словарь (ключ = русская строка после trim) ──
 const DICT = {
+    'Direct перепутал участников. Ответ не сохранён — нажми «Повторить».': 'Direct mixed up the participants. The reply was not saved — tap Retry.',
+    'Не удалось загрузить лорбук для телефона. Повтори ответ.': 'Could not load the phone lorebook context. Retry the reply.',
     'Выбрать готовое фото': 'Choose an existing photo', 'Фото добавлено': 'Photo added',
     'Не удалось сохранить фото': 'Could not save the photo',
 

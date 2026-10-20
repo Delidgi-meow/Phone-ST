@@ -45,8 +45,12 @@ export function privateThreadTurns(messages, { user, peer, limit = 24 } = {}) {
         const shared = forward ? {
             app: 'msg', messages: forward.messages.map(({ author, text, voice, photo, image }) =>
                 ({ author, text, ...(voice ? { voice: true } : {}), ...(photo || image ? { photo: photo || 'Shared photo; visual details unavailable.' } : {}) })),
-        } : share ? { app: share.app, author: normalizePhoneSpaces(share.author), text: normalizePhoneSpaces(share.text), photo: normalizePhoneSpaces(share.imgDesc) } : null;
+        } : share ? { app: share.app, author: normalizePhoneSpaces(share.author), text: normalizePhoneSpaces(share.text),
+            ...(share.replyTo ? { replyTo: true } : {}),
+            ...(share.imgDesc ? { photo: normalizePhoneSpaces(share.imgDesc) } : share.image ? { photo: 'Shared image; visual details unavailable unless attached to this request.' } : {}),
+        } : null;
         return {
+            role: message.dir === 'out' ? 'user' : 'contact',
             speaker: normalizePhoneSpaces(message.dir === 'out' ? user : message.from || peer),
             text: normalizePhoneSpaces(message.text).slice(0, index === rows.length - 1 ? 8000 : 2400),
             ...(message.voice ? { voice: true } : {}),

@@ -1,3 +1,4 @@
+import { directConversationMedia, directReplyRoleError } from './direct-context.js';
 import { isPhoneAppInstalled, phoneAppForThread } from './state.js';
 import { phonePlatformApp } from './phone-apps.js';
 import { normalizePhoneSpaces, parsePhoneJson } from './phone-text.js';
@@ -90,19 +91,24 @@ export function addStory({ image = null, imgDesc = '', caption = '' }) {
 export async function generateStoryReactions(story) {
     requirePhoneApp('ig');
     const m = getMeta();
-    const names = [...new Set((m.contacts || []).map(c => c.name))].slice(0, 12);
+    const {contacts}=scanChat();
+    const names=[...new Set([...contacts.values()].map(contact=>contactOriginalName(resolveContactKey(contact.name),contact.name)).concat(mainCharName()).filter(name=>name&&!isUserName(name)&&!isBanned(name)))].slice(0,12);
+    const ownerName=getUserName();
+    const context=await buildPhoneConversationContext({name:mainCharName()||names[0]||'Story audience'},
+        {medium:'story',includeSms:false,participants:names,utterance:JSON.stringify({author:ownerName,photo:story.imgDesc||'',caption:story.caption||''})});
     // Снимок и так уходит в этот запрос — просим заодно описать его: в историю
     // чата кладётся описание, а не сам файл
     const wantDesc = !!story.image && !story.imgDesc;
-    const prompt = `${await taskHeader(`react to the Instagram story ${getUserName()} just posted.`)}
+    const prompt = `${context}
+React to the Instagram story posted by ${JSON.stringify(ownerName)}. The story owner is the human player; they are not one of your speakers.
 Story: ${story.imgDesc || 'photo'}${story.caption ? ` — text on it: «${story.caption}»` : ''}${story.image ? ' (the ACTUAL image is attached — LOOK at it and react to what you actually SEE, details included)' : ''}
 Contacts who could have seen it: ${names.join(', ') || 'random followers'}.
 Return:
 ${wantDesc ? '"photo" — one sentence describing what is ACTUALLY on the attached image (who/what, setting, clothes, mood).\n' : ''}"reactions" — 2-6 quick story reactions [{"author":"Имя","icon":"fire|heart|laugh|wow|sad"}] — authors from their contacts (or 1-2 invented followers); icon matches how THAT person would react in-character.
-"dms" — 0-2 private Instagram Direct replies [{"from":"canonical name from the contacts","text":"short in-character reply referencing what's ON the story"}]. Keep them inside Instagram; never send an SMS. Only if this person would actually reply (close, flirty, worried, provoked); otherwise [].
+"dms" — 0-2 private Instagram Direct replies [{"from":"canonical name from the contacts","to":${JSON.stringify(ownerName)},"text":"short in-character reply referencing what's ON the story"}]. Keep them inside Instagram; never send an SMS. Only if this person would actually reply (close, flirty, worried, provoked); otherwise [].
 ${uiLangLine()}
 ${JSON_RULES}
-Format: [{${wantDesc ? '"photo":"...",' : ''}"reactions":[{"author":"Имя","icon":"fire"}],"dms":[{"from":"Имя","text":"..."}]}]`;
+Format: [{${wantDesc ? '"photo":"...",' : ''}"reactions":[{"author":"Имя","icon":"fire"}],"dms":[{"from":"Имя","to":${JSON.stringify(ownerName)},"text":"..."}]}]`;
     const arr = await socialGenArray(prompt, { app: 'ig',
         maxTokens: wantDesc ? 900 : 700,
         image: story.image || null,
@@ -117,12 +123,13 @@ Format: [{${wantDesc ? '"photo":"...",' : ''}"reactions":[{"author":"Имя","ic
     }
     const ICONS = ['fire', 'heart', 'laugh', 'wow', 'sad'];
     const reactions = (Array.isArray(r.reactions) ? r.reactions : [])
-        .filter(x => x && x.author)
+        .filter(x => x && x.author && !isUserName(x.author))
         .map(x => ({ author: String(x.author).slice(0, 32), icon: ICONS.includes(x.icon) ? x.icon : 'heart' }))
         .slice(0, 6);
     const dms = (Array.isArray(r.dms) ? r.dms : [])
-        .filter(x => x && x.from && x.text && !isBanned(x.from))
-        .map(x => ({ from: String(x.from).slice(0, 32), text: String(x.text).slice(0, 300) }))
+        .filter(x => x && x.from && x.text && !isUserName(x.from) && !isBanned(x.from))
+        .map(x => ({ from: names.find(name=>resolveContactKey(name)===resolveContactKey(x.from))||'', ...(x.to?{to:x.to}:{}), text: String(x.text).slice(0, 600) }))
+        .filter(x => x.from && !directReplyRoleError(x,{speaker:x.from,user:ownerName,requireIdentity:false}))
         .slice(0, 2);
     if (reactions.length) {
         story.reacts = reactions;
@@ -3627,21 +3634,30 @@ Return ONE JSON object: {"city":"city / district","pages":[{"title":"title","url
 
 export async function generateInstagramDmReply(thread) {
     requirePhoneApp('ig');
-    const owner=getMeta(),original=thread.author;
-    const turns=privateThreadTurns(thread.messages,{user:getUserName(),peer:original,limit:16});
-    const header = await buildPhoneConversationContext({key:thread.contactKey || original,name:displayName(thread.contactKey || '',original),originalName:original},
-        {medium:'direct',includeSms:false,utterance:JSON.stringify(turns.at(-1) || {})});
-    if (getMeta() !== owner) throw new Error('Чат изменился');
-    const prompt=`${header}
-DIRECT HISTORY (chronological, private to these participants): ${JSON.stringify(turns)}
-${privateBankPrompt(original)}
-Reply naturally to the latest user message/shared post or story, remembering this participant's own scenes from the roleplay history above. Forwarded messages reveal only the attached excerpts, never the rest of someone else's private chat. Refer to what is actually shared, keep your character's voice and relationship, do not invent the user's reply or actions. This is Instagram, not SMS or a phone call. No narration, HTML, phone tags or invented attachments. If a reply is implausible now, return an empty text. ${uiLangLine()}
-You may attach a forwarded excerpt from the speaker's own correspondence when actually sharing it: optional "forward":{"app":"msg","messages":[{"author":"original speaker","text":"shared message"}]}. This reveals only those excerpts, not access to the source phone; respect established events and character knowledge.
-Return JSON only: {"text":"one concise message, at most 800 characters"${isPhoneAppInstalled('bank')?',"bank":[]':''}}.`;
-    const result=parseJsonObject(await socialGen(prompt,{ app: 'ig',maxTokens:1000,prefill:'{"text":"'}));
+    const owner=getMeta(),original=contactOriginalName(thread.contactKey||thread.author,thread.author),user=getUserName();
+    const media=directConversationMedia(thread,owner,{user,peer:original}),turns=media.turns;
+    const header=await buildPhoneConversationContext({key:thread.contactKey||original,name:displayName(thread.contactKey||'',original),originalName:original},
+        {medium:'direct',includeSms:false,utterance:JSON.stringify({recent:turns.slice(-6),sharedImage:media.imageContext})});
     if(getMeta()!==owner)throw new Error('Чат изменился');
-    if(!result||typeof result.text!=='string')throw new Error('Не удалось прочитать ответ Direct');
-    return {text:result.text.trim().slice(0,1000), share:messageForward(result.forward), bank:isPhoneAppInstalled('bank') && Array.isArray(result.bank) ? result.bank.slice(0,5) : []};
+    const prompt=`${header}
+DIRECT PARTICIPANTS: YOU WRITE AS ${JSON.stringify(original)}. The human user is ${JSON.stringify(user)}. Incoming role="contact" messages below are YOUR OWN previous words. Outgoing role="user" messages are the human's words to you. Keep that direction fixed.
+DIRECT HISTORY (chronological, private to these participants): ${JSON.stringify(turns)}
+SHARED MEDIA: "shared.author" names the media creator, NOT the speaker of the message. "replyTo":true means this message replied to that person's story. A caption is overlay text; "photo" describes the image. ${media.image?'The most recent shared image is ATTACHED for visual context: '+JSON.stringify(media.imageContext):'Use the supplied visual descriptions. Do not invent unavailable image details.'}
+${privateBankPrompt(original)}
+Reply to the latest user entry as ${JSON.stringify(original)}, remembering your own story scenes, relationship and previous messages. A user asking for clarification does not erase your previous message or reverse the speakers. The USER PERSONA describes ${JSON.stringify(user)} only. Never write their reply, first-person statements, thoughts or actions. Background cards and lore define established facts; preserve what this speaker personally knows. Do not treat private conversations of other people as accessible.
+Forwarded messages reveal only attached excerpts. Optional "forward":{"app":"msg","messages":[{"author":"original speaker","text":"shared message"}]} may share established correspondence the speaker actually has. No narration, HTML, phone tags or invented attachments. If a reply is implausible now, return empty text. ${uiLangLine()}
+Return JSON only: {"from":${JSON.stringify(original)},"to":${JSON.stringify(user)},"text":"one concise message, at most 800 characters"${isPhoneAppInstalled('bank')?',"bank":[]':''}}. Write only as the exact "from" character to the exact "to" user. Do not address yourself as if you were the user.`;
+    const prefill='{"from":'+JSON.stringify(original)+',"to":'+JSON.stringify(user)+',"text":"';
+    let result;
+    for(let attempt=0;attempt<2;attempt++){
+        const correction=attempt?'\nROLE CORRECTION: '+directReplyRoleError(result,{speaker:original,user})+' Repeat only the required JSON as '+JSON.stringify(original)+' to '+JSON.stringify(user)+'.':'';
+        result=parseJsonObject(await socialGen(prompt+correction,{app:'ig',maxTokens:1000,image:media.image,prefill}));
+        if(getMeta()!==owner)throw new Error('Чат изменился');
+        const error=directReplyRoleError(result,{speaker:original,user});
+        if(!error)return {from:original,to:user,text:result.text.trim().slice(0,1000),share:messageForward(result.forward),bank:isPhoneAppInstalled('bank')&&Array.isArray(result.bank)?result.bank.slice(0,5):[]};
+        logFail('роль Direct',error);
+    }
+    throw new Error('Direct перепутал участников. Ответ не сохранён — нажми «Повторить».');
 }
 
 export async function generatePhoneCallReply(contact, transcript = [], utterance = '') {
