@@ -40,6 +40,21 @@ export function nextBirthdayDate(value, today) {
     return current >= today ? current : birthdayDateInYear(birthday, firstYear + 1);
 }
 
+// An age is relative to its story date, not to the computer's current year.
+export function resolveBirthdayYear(value, today, age = null, ageAsOf = today) {
+    const birthday = parseBirthdayDate(value), current = parseBirthdayDate(today);
+    if (!birthday || !current?.year) return null;
+    if (!birthday.year && age !== null && age !== '') {
+        const reference = parseBirthdayDate(ageAsOf);
+        const years = Number(age);
+        if (!reference?.year || String(ageAsOf) > today || !Number.isInteger(years) || years < 0 || years > 9998) return null;
+        const occurrence = birthdayDateInYear(birthday, reference.year);
+        birthday.year = reference.year - years - (occurrence > ageAsOf ? 1 : 0);
+    }
+    if (!birthday.year || birthday.year > current.year) return null;
+    return parseBirthdayDate(birthday);
+}
+
 export function formatBirthdayDate(value) {
     const b = parseBirthdayDate(value);
     return b ? `${pad(b.day)}.${pad(b.month)}${b.year ? '.' + String(b.year).padStart(4, '0') : ''}` : '';

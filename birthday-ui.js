@@ -33,7 +33,7 @@ export function openBirthdayBook(host, api) {
                 ${icon(view.running ? 'fa-spinner fa-spin' : 'fa-wand-magic-sparkles')}
                 ${view.running ? L('Собираю даты…', 'Collecting dates…') : owner.birthdayImportAt ? L('Обновить из контекста', 'Update from context') : L('Запомнить из контекста', 'Remember from context')}
             </button>
-            <small class="gp-birthday-help">${L('Карточка, персона, лорбук и чат · разовый запрос по нажатию', 'Card, persona, lorebook and chat · one request on tap')}</small>
+            <small class="gp-birthday-help">${L('Из контекста: год по возрасту и дате сюжета; неизвестные данные будут придуманы и сохранены. Разовый запрос по нажатию.', 'From context: birth year from age and story date; unknown details are invented and saved. One request on tap.')}</small>
             <p class="gp-birthday-message${view.error ? ' is-error' : ''}" role="status" ${view.message ? '' : 'hidden'}>${esc(view.message)}</p>
             <div class="gp-birthday-list">${list.length ? list.map(b => `<div class="gp-birthday-person">
                 <span class="gp-birthday-symbol">${icon('fa-cake-candles')}</span>
@@ -45,7 +45,7 @@ export function openBirthdayBook(host, api) {
                 <b>${view.edit ? L('Изменить день рождения', 'Edit birthday') : L('Добавить вручную', 'Add manually')}</b>
                 <label>${L('Имя', 'Name')}<input name="birthday-name" maxlength="100" autocomplete="off" required value="${esc(view.name)}" placeholder="${L('Кого поздравляем?', 'Whose birthday?')}"></label>
                 <label>${L('Дата рождения', 'Date of birth')}<input name="birthday-date" maxlength="10" autocomplete="off" inputmode="numeric" required value="${esc(view.date)}" placeholder="${L('ДД.ММ или ДД.ММ.ГГГГ', 'DD.MM or DD.MM.YYYY')}"></label>
-                <small>${L('Год можно не указывать. Для 29 февраля напоминание в обычный год будет 28 февраля.', 'Year is optional. February 29 birthdays appear on February 28 in non-leap years.')}</small>
+                <small>${L('Год можно не указывать — «Запомнить / Обновить из контекста» рассчитает или придумает его. Для 29 февраля напоминание в обычный год будет 28 февраля.', 'Year is optional — Remember / Update from context will calculate or invent it. February 29 birthdays appear on February 28 in non-leap years.')}</small>
                 <div class="gp-birthday-form-actions"><button type="submit" class="gp-primary">${L('Сохранить', 'Save')}</button>${view.edit ? `<button type="button" class="gp-secondary" data-birthday-cancel>${L('Отмена', 'Cancel')}</button>` : ''}</div>
             </form>`;
         body.scrollTop = scroll;
@@ -94,8 +94,8 @@ export function openBirthdayBook(host, api) {
                 if (saved?.conflict) conflicts++;
             }
             owner.birthdayImportAt = Date.now(); saveMeta(); api.changed?.();
-            view.message = count ? L(`Сохранено дат: ${count}.`, `Dates saved: ${count}.`) : L('Новых подтверждённых дат не найдено.', 'No new confirmed dates found.');
-            if (result.skipped || conflicts) view.message += ' ' + L('Неподтверждённые и спорные даты пропущены.', 'Unverified and conflicting dates were skipped.');
+            view.message = count ? L(`Сохранено дат: ${count}.`, `Dates saved: ${count}.`) : L('Нет новых дат для сохранения.', 'No new dates to save.');
+            if (result.skipped || conflicts) view.message += ' ' + L('Некорректные и противоречащие сохранённым даты пропущены.', 'Invalid dates and conflicts with saved dates were skipped.');
         } catch (error) {
             if (current()) { view.error = true; view.message = String(error?.message || error); }
         } finally { view.running = false; view.repaint?.(); }
