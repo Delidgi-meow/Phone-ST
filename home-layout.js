@@ -16,8 +16,16 @@ const known=new Set(['appstore','list','tw','ig','events','of','bank','shop','ch
 let state={page:0,editing:false,folder:'',suppress:0};
 let gesture=null;
 const mounts=new WeakMap();
-export function homeInteractionBusy(){return !!gesture?.armed||!!document.querySelector('.gp-home-os .gp-home-sheet-shade')||document.activeElement?.matches('.gp-home-os [data-folder-name]');}
-export function cancelHomeGesture(){if(gesture){clearTimeout(gesture.timer);clearTimeout(gesture.edgeTimer);gesture.ghost?.remove();gesture.source?.classList.remove('gp-home-drag-source');}document.querySelectorAll('.gp-home-drop-merge,.gp-home-drop-before').forEach(e=>e.classList.remove('gp-home-drop-merge','gp-home-drop-before'));gesture=null;}
+export function homeInteractionBusy(){return !!gesture||!!document.querySelector('.gp-home-os .gp-home-sheet-shade')||document.activeElement?.matches('.gp-home-os [data-folder-name]');}
+export function cancelHomeGesture(){
+    const g=gesture;gesture=null;
+    if(g){
+        clearTimeout(g.timer);clearTimeout(g.edgeTimer);g.ghost?.remove();g.source?.classList.remove('gp-home-drag-source');
+        g.grid?.style.removeProperty('transform');g.home?.classList.remove('gp-home-swiping');
+        if(g.captureTarget?.hasPointerCapture(g.pointerId))g.captureTarget.releasePointerCapture(g.pointerId);
+    }
+    document.querySelectorAll('.gp-home-drop-merge,.gp-home-drop-before').forEach(e=>e.classList.remove('gp-home-drop-merge','gp-home-drop-before'));
+}
 export function disposePhoneHome(screen){if(screen){screen.querySelectorAll('.gp-home-sheet-shade').forEach(closeSheet);mounts.get(screen)?.abort();mounts.delete(screen);}cancelHomeGesture();state.editing=false;state.folder='';}
 function save(){saveSettingsDebounced();}
 function layout(templates){
@@ -281,6 +289,11 @@ export function enhancePhoneHome(screen,api){
             '</div></div><nav class="gp-home-pages" aria-label="'+L('Страницы','Pages')+'">'+all.map((_,i)=>'<button data-home-page="'+i+'" class="'+(i===state.page?'gp-active':'')+'" aria-label="'+L('Страница ','Page ')+(i+1)+'"></button>').join('')+'</nav><div class="gp-home-dock">'+h.dock.map((app,i)=>'<div class="gp-dock-slot" data-home-dock="'+i+'">'+(app?tile(app,templates,true):'<button class="gp-dock-empty" data-pick-dock="'+i+'" aria-label="'+L('Выбрать приложение','Choose an app')+'">'+I('fa-plus')+'</button>')+'</div>').join('')+'</div>'+
             (openFolder?'<div class="gp-home-folder-shade"><div class="gp-folder-heading"><input data-folder-name maxlength="35" aria-label="'+L('Название папки','Folder name')+'" value="'+esc(openFolder.name)+'"><button data-home-action="closefolder">'+I('fa-xmark')+'</button></div><div class="gp-folder-grid">'+openFolder.apps.map(a=>tile(a,templates)).join('')+'</div>'+(state.editing?'<div class="gp-folder-extract" data-home-extract>'+I('fa-arrow-up-right-from-square')+' '+L('Перетащи сюда, чтобы вынести на главный экран','Drop here to move to the Home screen')+'</div>':'')+'</div>':'');
         resizeGrid();bindControls(openFolder);
+        if(state.pageTransition){
+            const grid=home.querySelector('.gp-home-grid');
+            grid.style.setProperty('--gp-home-page-from',(state.pageTransition*60)+'px');grid.classList.add('gp-home-page-enter');
+            state.pageTransition=0;
+        }
     }
     function bindTools(){
         home.querySelector('[data-home-action="edit"]')?.addEventListener('click',()=>{state.editing=false;state.folder='';repaint();});
@@ -305,7 +318,7 @@ export function enhancePhoneHome(screen,api){
             };
             el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();el.click();}};
         });
-        home.querySelectorAll('[data-widget-route]').forEach(el=>el.onclick=e=>{if(!state.editing&&!e.target.closest('button'))api.open(el.dataset.widgetRoute);});
+        home.querySelectorAll('[data-widget-route]').forEach(el=>el.onclick=e=>{if(!state.editing&&!gesture&&Date.now()>=state.suppress&&!e.target.closest('button'))api.open(el.dataset.widgetRoute);});
         home.querySelectorAll('[data-widget]').forEach(el=>el.oncontextmenu=e=>e.preventDefault());
         home.querySelectorAll('[data-pick-dock]').forEach(b=>b.onclick=()=>pickDock(Number(b.dataset.pickDock)));
     }
@@ -324,8 +337,8 @@ export function enhancePhoneHome(screen,api){
         return {type:'item',key:node.dataset.homeItem||node.dataset.widget,merge:center&&!node.dataset.widget,node,before:e.clientX<rect.left+rect.width/2};
     }
     function arm(){
-        if(!gesture)return;gesture.armed=true;state.editing=true;state.suppress=Date.now()+900;
-        try{screen.setPointerCapture(gesture.pointerId);}catch{}
+        if(!gesture||gesture.moved)return;gesture.armed=true;state.editing=true;state.suppress=Date.now()+900;
+        try{screen.setPointerCapture(gesture.pointerId);gesture.captureTarget=screen;}catch{}
         home.classList.add('gp-home-editing');
         if(state.folder&&!home.querySelector('[data-home-extract]')){const drop=document.createElement('div');drop.className='gp-folder-extract';drop.dataset.homeExtract='';drop.textContent=L('Перетащи сюда, чтобы вынести на главный экран','Drop here to move to the Home screen');home.querySelector('.gp-home-folder-shade')?.appendChild(drop);}
         home.querySelector('.gp-home-tools').innerHTML=homeTools();bindTools();
@@ -341,18 +354,33 @@ export function enhancePhoneHome(screen,api){
         gesture.ghost.style.left=(e.clientX-36)+'px';gesture.ghost.style.top=(e.clientY-40)+'px';
     }
     screen.addEventListener('contextmenu',e=>{if(e.target.closest('.gp-home-os'))e.preventDefault();},{signal});
+    home.addEventListener('click',e=>{if(Date.now()<state.suppress){e.preventDefault();e.stopImmediatePropagation();}},{signal,capture:true});
+    home.addEventListener('dragstart',e=>{if(e.target.closest('[data-home-item],[data-widget]'))e.preventDefault();},{signal});
     screen.addEventListener('pointerdown',e=>{
-        if(e.button>0||!e.isPrimary||e.target.closest('button,input,textarea,select,.gp-home-sheet-shade'))return;
+        if(e.button>0||!e.isPrimary||!home.contains(e.target)||e.target.closest('button,input,textarea,select,.gp-home-sheet-shade'))return;
         const el=e.target.closest('[data-home-item]');
         const widget=e.target.closest('[data-widget]');
-        if(!el&&!widget&&!e.target.closest('.gp-home-stage'))return;
-        cancelHomeGesture();gesture={pointerId:e.pointerId,key:el?.dataset.homeItem||widget?.dataset.widget||'',source:el||widget,x:e.clientX,y:e.clientY,armed:false,moved:false,fromFolder:!!el?.closest('.gp-home-folder-shade')};
+        cancelHomeGesture();gesture={pointerId:e.pointerId,key:el?.dataset.homeItem||widget?.dataset.widget||'',source:el||widget,x:e.clientX,y:e.clientY,armed:false,moved:false,axis:'',canSwipe:!state.folder,home,fromFolder:!!el?.closest('.gp-home-folder-shade')};
         if(el||widget)gesture.timer=setTimeout(arm,state.editing?0:480);
     },{signal});
     screen.addEventListener('pointermove',e=>{
         if(!gesture||gesture.pointerId!==e.pointerId)return;
-        const distance=Math.hypot(e.clientX-gesture.x,e.clientY-gesture.y);
-        if(!gesture.armed){if(distance>9){clearTimeout(gesture.timer);gesture.moved=true;}return;}
+        const dx=e.clientX-gesture.x,dy=e.clientY-gesture.y,distance=Math.hypot(dx,dy);
+        if(!gesture.armed){
+            if(distance>9){clearTimeout(gesture.timer);gesture.moved=true;}
+            if(!gesture.axis&&distance>12){
+                if(Math.abs(dx)>Math.abs(dy)*1.25&&gesture.canSwipe){
+                    gesture.axis='x';gesture.grid=home.querySelector('.gp-home-grid');home.classList.add('gp-home-swiping');
+                    try{screen.setPointerCapture(e.pointerId);gesture.captureTarget=screen;}catch{}
+                }else if(Math.abs(dy)>Math.abs(dx)*1.1)gesture.axis='y';
+            }
+            if(gesture.axis==='x'){
+                e.preventDefault();
+                const direction=dx<0?1:-1,all=pages(h,templates),atEdge=state.page+direction<0||state.page+direction>=all.length;
+                gesture.grid.style.transform='translateX('+(atEdge?dx*.2:dx*.8)+'px)';
+            }
+            return;
+        }
         if(!gesture.source)return;
         e.preventDefault();if(distance<4&&!gesture.moved)return;gesture.moved=true;ghost(e);
         document.querySelectorAll('.gp-home-drop-merge,.gp-home-drop-before').forEach(n=>n.classList.remove('gp-home-drop-merge','gp-home-drop-before'));
@@ -378,14 +406,21 @@ export function enhancePhoneHome(screen,api){
                 syncGridOrder(h);h.positions[g.key]={page:state.page,row:drop.row,col:drop.col};save();
             }
             state.suppress=Date.now()+180;
-        }else if(!g.armed&&g.moved&&Math.abs(e.clientX-g.x)>45&&Math.abs(e.clientY-g.y)<65){
-            state.page+=e.clientX<g.x?1:-1;state.suppress=Date.now()+180;
+        }else if(!g.armed&&g.axis==='x'&&Math.abs(e.clientX-g.x)>Math.min(48,home.clientWidth*.12)){
+            const direction=e.clientX<g.x?1:-1,all=pages(h,templates),next=Math.max(0,Math.min(state.page+direction,all.length-1));
+            if(next!==state.page){state.page=next;state.pageTransition=direction;}
         }
-        const rerender=g.armed||g.moved;if(rerender)state.suppress=Date.now()+180;cancelHomeGesture();
-        if(rerender){repaint();api.refreshAfterGesture?.();}
+        const rerender=g.armed||g.axis==='x';if(g.armed||g.moved)state.suppress=Date.now()+300;cancelHomeGesture();
+        if(rerender){if(api.refreshAfterGesture)api.refreshAfterGesture();else repaint();}
     },{signal});
-    screen.addEventListener('pointercancel',()=>{cancelHomeGesture();repaint();},{signal});
-    screen.addEventListener('lostpointercapture',()=>{if(gesture){cancelHomeGesture();repaint();}},{signal});
+    const cancelPointer=e=>{
+        if(!gesture||gesture.pointerId!==e.pointerId)return;
+        const rerender=gesture.armed||gesture.axis==='x';if(gesture.moved||gesture.armed)state.suppress=Date.now()+300;
+        cancelHomeGesture();if(rerender)repaint();
+    };
+    screen.addEventListener('pointercancel',cancelPointer,{signal});
+    screen.addEventListener('lostpointercapture',cancelPointer,{signal});
+    screen.addEventListener('pointerleave',e=>{if(!screen.hasPointerCapture(e.pointerId))cancelPointer(e);},{signal});
     repaint();
 }
 

@@ -4511,7 +4511,7 @@ img[data-zoom] { cursor: zoom-in; }
 #gp-phone .gp-web-page-hero{background:var(--gp-glass)}
 #gp-phone .gp-web-primary{background:var(--gp-accent-a);color:var(--gp-on-accent,#15151b)}
 /* Home screen: stable pages, two widget slots and a configurable four-app dock. */
-#gp-phone .gp-home-os{isolation:isolate;position:relative;display:flex;flex-direction:column;align-items:stretch;min-height:0;height:100%;width:100%;overflow:hidden;padding:0 2px}
+#gp-phone .gp-home-os{isolation:isolate;position:relative;display:flex;flex-direction:column;align-items:stretch;min-height:0;height:100%;width:100%;overflow:hidden;padding:0 2px;touch-action:pan-y;overscroll-behavior-x:contain}
 #gp-phone .gp-home-tools{display:flex;align-items:center;justify-content:space-between;min-height:31px;gap:8px;flex-shrink:0;color:var(--gp-text-dim)}
 #gp-phone .gp-home-tools button{border:0;background:var(--gp-glass);color:var(--gp-text);border-radius:15px;padding:5px 9px;font-size:9px;min-height:26px}
 #gp-phone .gp-home-tools button:first-child{width:28px;padding:0;font-size:14px}
@@ -4523,6 +4523,11 @@ img[data-zoom] { cursor: zoom-in; }
 #gp-phone .gp-home-with-widgets .gp-home-date{font-size:9px;margin-top:3px}
 #gp-phone .gp-home-stage{flex:1;min-height:0;overflow-y:auto;scrollbar-width:none;padding:1px 0 3px;overscroll-behavior:contain}
 #gp-phone .gp-home-os .gp-home-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px 5px;padding:2px 0;width:100%;touch-action:pan-y}
+#gp-phone .gp-home-swiping .gp-home-grid{will-change:transform}
+@media(prefers-reduced-motion:no-preference){
+    #gp-phone .gp-home-page-enter{animation:gp-home-page-in .2s cubic-bezier(.2,.7,.3,1) both}
+    @keyframes gp-home-page-in{from{transform:translateX(var(--gp-home-page-from,60px));opacity:.55}to{transform:translateX(0);opacity:1}}
+}
 #gp-phone .gp-home-os .gp-app{min-width:0;gap:6px;touch-action:none;position:relative;padding:1px 0 0}
 #gp-phone .gp-home-os .gp-app-icon{width:52px;height:52px;font-size:21px;border-radius:16px;flex-shrink:0}
 #gp-phone .gp-home-os .gp-app-name{font-size:9px;line-height:1.15;text-align:center;max-width:76px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

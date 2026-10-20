@@ -448,7 +448,6 @@ const TOAST_STYLES = [
     { id: 'editorial', name: 'Редакторский' },
 ];
 const LEGACY_SKINS = { rose: 'sunset', emerald: 'fern', mono: 'lcd' };
-const THEME_BODY_CLASSES = [...SKINS, ...Object.values(LEGACY_SKINS)].map(sk => `gp-theme-${sk}`);
 const THEME_INFO = [
     { id: 'liquid', name: 'Жидкое стекло', note: 'Блики, глубина и воздух', colors: ['#a8d7ff', '#b3eedc', '#e9f4ff'] },
     { id: 'indigo', name: 'Индиго', note: 'Синее сияние', colors: ['#6a8dff', '#9a6aff', '#4aaaff'] },
@@ -510,11 +509,12 @@ function shadeHex(hex, delta) {
 export function applySkin() {
     const ph = document.getElementById('gp-phone');
     if (ph) {
-        [...SKINS, ...Object.keys(LEGACY_SKINS)].forEach(sk => ph.classList.remove(`gp-skin-${sk}`));
+        [...ph.classList].filter(c => c.startsWith('gp-skin-')).forEach(c => ph.classList.remove(c));
         const savedSkin = getSettings().skin || 'indigo';
         const skin = LEGACY_SKINS[savedSkin] || (SKINS.includes(savedSkin) ? savedSkin : 'indigo');
+        if (savedSkin !== skin) { getSettings().skin = skin; saveSettingsDebounced(); }
         if (skin !== 'indigo') ph.classList.add(`gp-skin-${skin}`);
-        document.body?.classList.remove(...THEME_BODY_CLASSES);
+        if (document.body) document.body.classList.remove(...[...document.body.classList].filter(c => c.startsWith('gp-theme-')));
         document.body?.classList.add(`gp-theme-${skin}`);
 
         const c = normalizedThemeCustom();
@@ -1339,19 +1339,40 @@ function renderLock(screen) {
     }));
     screen.querySelector('.gp-lock-hint')?.addEventListener('click', unlock);
 
-    // Смахивание вверх — пальцем и мышью
+    // Empty notification space belongs to the unlock area, including mid-screen.
+    // Only a scrollable notification list keeps a gesture for browsing its cards.
     const lock = screen.querySelector('#gp-lock');
-    let startY = null;
-    const onDown = (y,event) => { startY = event.target.closest('.gp-lock-notes')?null:y; };
-    const onUp = (y) => {
-        if (startY !== null && startY - y > 55) unlock();
-        startY = null;
+    let swipe = null;
+    const scrollsNotifications = target => {
+        const list = target.closest('.gp-lock-notes');
+        return list && list.scrollHeight > list.clientHeight + 1
+            && (target.closest('.gp-lock-note') || list.scrollTop > 0);
     };
-    lock?.addEventListener('touchstart', (e) => onDown(e.touches[0].clientY,e), { passive: true });
-    lock?.addEventListener('touchend', (e) => onUp(e.changedTouches[0]?.clientY ?? 0), { passive: true });
-    lock?.addEventListener('mousedown', (e) => onDown(e.clientY,e));
-    lock?.addEventListener('mouseup', (e) => onUp(e.clientY));
-    lock?.addEventListener('wheel', (e) => { if (e.deltaY > 0&&!e.target.closest('.gp-lock-notes')) unlock(); }, { passive: true });
+    const onDown = (point, target) => { swipe = scrollsNotifications(target) ? null : { x: point.clientX, y: point.clientY }; };
+    const onUp = point => {
+        const start = swipe; swipe = null;
+        if (!start || !point) return false;
+        const dy = start.y - point.clientY, dx = Math.abs(start.x - point.clientX);
+        if (dy < 40 || dy < dx * 1.2) return false;
+        unlock(); return true;
+    };
+    lock?.addEventListener('touchstart', e => {
+        if (e.touches.length === 1) onDown(e.touches[0], e.target);
+        else swipe = null;
+    }, { passive: true });
+    lock?.addEventListener('touchmove', e => {
+        if (!swipe || e.touches.length !== 1) { swipe = null; return; }
+        const point = e.touches[0], dy = swipe.y - point.clientY;
+        if (dy > 8 && dy > Math.abs(swipe.x - point.clientX) * 1.2 && e.cancelable) e.preventDefault();
+    }, { passive: false });
+    lock?.addEventListener('touchend', e => {
+        if (onUp(e.changedTouches[0]) && e.cancelable) e.preventDefault();
+    }, { passive: false });
+    lock?.addEventListener('touchcancel', () => { swipe = null; });
+    lock?.addEventListener('mousedown', e => { if (e.button === 0) onDown(e, e.target); });
+    lock?.addEventListener('mouseup', e => onUp(e));
+    lock?.addEventListener('mouseleave', () => { swipe = null; });
+    lock?.addEventListener('wheel', e => { if (e.deltaY > 0 && !scrollsNotifications(e.target)) unlock(); }, { passive: true });
 }
 
 // ── Домашний экран ──
