@@ -1,6 +1,7 @@
 import { PHONE_APPS, phoneAppInstalled } from './phone-apps.js';
 import { normalizePhoneSpaces } from './phone-text.js';
 import { formatCurrency } from './currencies.js';
+import { birthdaysOnDate } from './birthday-dates.js';
 
 const rows=value=>Array.isArray(value)?value:[];
 const text=value=>normalizePhoneSpaces(value).trim();
@@ -63,6 +64,9 @@ function candidates(root,{user='',date=null,english=false}={}){
         if(status==='open'&&plan.date===today&&(at===null||minutes===null||at-minutes<=30))
             add('calendar',plan.id+'/'+plan.date+'/'+plan.time,'reminder',L('Напоминание','Reminder'),[plan.time,plan.text].filter(Boolean).join(' · '),route);
     }
+    const now=new Date(),birthdayToday=today||[now.getFullYear(),String(now.getMonth()+1).padStart(2,'0'),String(now.getDate()).padStart(2,'0')].join('-');
+    for(const birthday of birthdaysOnDate(root,birthdayToday,english))
+        add('calendar',birthday.id+'/'+birthdayToday,'reminder',L('Сегодня день рождения','Birthday today'),birthday.name,{screen:'calendar',date:birthdayToday});
     for(const order of rows(root.shop?.orders))if(['way','done'].includes(order.stage))
         add('shop',order.id+'/'+order.stage,'delivery',order.stage==='done'?L('Заказ доставлен','Order delivered'):L('Курьер в пути','Courier on the way'),order.item||order.store,{screen:'shoporders'});
     for(const offer of rows(social.advertising?.offers))

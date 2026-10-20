@@ -5650,3 +5650,37 @@ img[data-zoom] { cursor: zoom-in; }
 .gp-store-actions>button.gp-store-remove{background:none;color:inherit;opacity:.42;font-size:10px;padding:2px 8px;font-weight:400}
 .gp-store button:focus-visible,.gp-store-search:focus-within{outline:2px solid var(--gp-accent-a,#80baff);outline-offset:3px}
 .gp-store-footnote{margin:20px 0 0;font-size:10px}.gp-store-empty{padding:36px 0;text-align:center;font-size:14px;opacity:.5}
+
+/* Birthday memory: one saved date, annual calendar occurrences. */
+#gp-phone .gp-cal-birthdays-button{display:flex;align-items:center;gap:10px;width:100%;margin:13px 0 17px;padding:12px 4px;background:none;border:0;border-bottom:1px solid var(--gp-border-soft);border-radius:0;box-shadow:none;color:var(--gp-text);text-align:left;font:inherit;cursor:pointer}
+#gp-phone .gp-cal-birthdays-button>span{flex:1;font-size:12px;font-weight:600}
+#gp-phone .gp-cal-birthdays-button>i{color:var(--gp-accent-a);font-size:14px}
+#gp-phone .gp-cal-birthdays-button>i:last-child{font-size:10px;color:var(--gp-text-dim)}
+#gp-phone .gp-cal-birthdays-button>small{color:var(--gp-text-dim);font-size:11px}
+#gp-phone .gp-cal-day i.gp-birthday-day{background:var(--gp-accent-b,var(--gp-accent-a));box-shadow:0 0 5px rgba(var(--gp-accent-b-rgb),.2)}
+#gp-phone .gp-plan-birthday-icon{display:grid;place-items:center;width:18px;height:21px;flex-shrink:0;color:var(--gp-accent-a);font-size:14px}
+#gp-phone .gp-birthday-shade>.gp-web-sheet{height:88%;max-height:88%;display:flex;flex-direction:column;overflow:hidden;padding-bottom:14px}
+#gp-phone .gp-birthday-shade>.gp-web-sheet>header{flex-shrink:0;padding-bottom:12px;border-bottom:1px solid var(--gp-border-soft)}
+#gp-phone .gp-birthday-book{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:3px 2px 14px}
+#gp-phone .gp-birthday-intro{color:var(--gp-text-dim);font-size:11px;line-height:1.6;margin:12px 0}
+#gp-phone .gp-birthday-import{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;min-height:42px;padding:10px 12px;background:rgba(var(--gp-accent-a-rgb),.12);border:0;border-radius:14px;color:var(--gp-accent-a);font-family:inherit;font-size:12px;font-weight:600;cursor:pointer}
+#gp-phone .gp-birthday-import:disabled{opacity:.55;cursor:wait}
+#gp-phone .gp-birthday-help{display:block;text-align:center;color:var(--gp-text-dim);font-size:9px;line-height:1.5;margin:8px 0 16px}
+#gp-phone .gp-birthday-message{margin:8px 0 13px;padding:0 3px;font-size:11px;line-height:1.5;color:var(--gp-accent-a)}
+#gp-phone .gp-birthday-message.is-error{color:var(--gp-red,#ec7e86)}
+#gp-phone .gp-birthday-book [hidden]{display:none!important}
+#gp-phone .gp-birthday-list{display:flex;flex-direction:column;margin:10px 0 18px}
+#gp-phone .gp-birthday-person{display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--gp-border-soft);min-width:0}
+#gp-phone .gp-birthday-symbol{display:grid;place-items:center;width:25px;flex-shrink:0;color:var(--gp-accent-a);font-size:15px}
+#gp-phone .gp-birthday-date-link{display:flex;flex-direction:column;gap:5px;flex:1;min-width:0;text-align:left;background:none;border:0;box-shadow:none;padding:5px 0;color:var(--gp-text);font:inherit;cursor:pointer}
+#gp-phone .gp-birthday-date-link b{font-size:12px;font-weight:600;overflow-wrap:anywhere}
+#gp-phone .gp-birthday-date-link small{font-size:10px;color:var(--gp-text-dim)}
+#gp-phone .gp-birthday-person>.gp-iconbtn{width:30px;height:34px;font-size:11px;flex-shrink:0;background:none;border:0;box-shadow:none;color:var(--gp-text-dim)}
+#gp-phone .gp-birthday-form{display:flex;flex-direction:column;gap:12px;padding-top:10px}
+#gp-phone .gp-birthday-form>b{font-size:12px;font-weight:600}
+#gp-phone .gp-birthday-form label{display:flex;flex-direction:column;gap:6px;font-size:10px;color:var(--gp-text-dim)}
+#gp-phone .gp-birthday-form input{width:100%;min-width:0;min-height:40px;padding:10px 12px;background:var(--gp-glass);border:1px solid var(--gp-border-soft);border-radius:12px;color:var(--gp-text);font-family:inherit;font-size:12px;box-shadow:none}
+#gp-phone .gp-birthday-form>small{font-size:9px;line-height:1.5;color:var(--gp-text-dim)}
+#gp-phone .gp-birthday-form-actions{display:flex;align-items:center;gap:8px}
+#gp-phone .gp-birthday-form-actions>button{flex:1;margin:0;min-height:40px;padding:10px 12px;font-family:inherit;font-size:12px}
+#gp-phone :is(.gp-cal-birthdays-button,.gp-birthday-book button,.gp-birthday-book input):focus-visible{outline:2px solid var(--gp-accent-a);outline-offset:3px}

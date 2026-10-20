@@ -29,6 +29,7 @@ import { bankEvent } from './bank-protocol.js';
 import { chooseImageRepeat } from './phone-image-actions.js';
 import { messageForward, messageForwardHtml, forwardMessageSnapshot } from './message-forward.js';
 import { bindMessageForwarding } from './message-forward-ui.js';
+import { openBirthdayBook } from './birthday-ui.js';
 
 import { sendMessageAsUser, saveSettingsDebounced, saveChatConditional, user_avatar } from '../../../../script.js';
 import { saveBase64AsFile } from '../../../utils.js';
@@ -86,7 +87,7 @@ import {
     matchByContactKey, isInAppMatch, giveNumberTo, ensureMatchContact,
 } from './tinder.js';
 import {
-    getPlans, addPlan, togglePlan, deletePlan, groupedPlans, plansBadgeCount,
+    getPlans, getBirthdays, addPlan, togglePlan, deletePlan, groupedPlans, plansBadgeCount,
     fmtPlanDate, rpToday, PLAN_WHO, monthGrid, monthOf, shiftMonth, plansByDate, daysBetween, harvestPlanTags,
 } from './plans.js';
 import { tr, trDom, lang, DAYS_I18N, MONTHS_I18N } from './i18n.js';
@@ -5559,12 +5560,12 @@ let _planDay = '';     // выбранный день
 function planRowHtml(p) {
     return `
     <div class="gp-plan${p.done ? ' gp-done' : ''}${p.cancelled ? ' gp-plan-cancelled' : ''}">
-        <label class="gp-plan-check"><input type="checkbox" data-plantoggle="${esc(p.id)}" aria-label="${esc(p.text)}" ${p.done ? 'checked' : ''}></label>
+        ${p.kind === 'birthday' ? `<span class="gp-plan-birthday-icon" aria-label="${tr('День рождения')}">${ic('fa-cake-candles')}</span>` : `<label class="gp-plan-check"><input type="checkbox" data-plantoggle="${esc(p.id)}" aria-label="${esc(p.text)}" ${p.done ? 'checked' : ''}></label>`}
         <div class="gp-plan-body">
             <div class="gp-plan-text">${esc(p.text)}</div>
             <div class="gp-plan-meta">
                 <span>${esc(fmtPlanDate(p.date))}${p.time ? ` · ${esc(p.time)}` : ''}</span>
-                <span class="gp-plan-who">${esc(PLAN_WHO[p.who] || PLAN_WHO.user)}</span>
+                <span class="gp-plan-who">${p.kind === 'birthday' ? (lang() === 'en' ? 'Every year' : 'Каждый год') : esc(PLAN_WHO[p.who] || PLAN_WHO.user)}</span>
                 ${p.cancelled ? '<span class="gp-plan-status">'+tr('Отменено')+'</span>' : p.done ? '<span class="gp-plan-status">'+tr('Выполнено')+'</span>' : ''}
                 ${p.source === 'rp' ? `<span class="gp-plan-src" title="Из ролевой">${ic('fa-comment')}</span>` : ''}
             </div>
@@ -5591,7 +5592,7 @@ function renderPlans(screen) {
     const grid = cells.map(c => `
         <button class="gp-cal-day${c.inMonth ? '' : ' gp-out'}${c.isToday ? ' gp-today' : ''}${c.iso === _planDay ? ' gp-sel' : ''}" data-calday="${c.iso}">
             <span>${c.day}</span>
-            ${c.total ? `<i class="${c.open ? (c.past ? 'gp-late' : '') : 'gp-done'}"></i>` : ''}
+            ${c.total ? `<i class="${c.birthday ? 'gp-birthday-day' : c.open ? (c.past ? 'gp-late' : '') : 'gp-done'}"></i>` : ''}
         </button>`).join('');
 
     const planList = (arr, empty) => (arr.length
@@ -5615,6 +5616,7 @@ function renderPlans(screen) {
                 <div class="gp-cal-week">${week.map(d => `<span>${d}</span>`).join('')}</div>
                 <div class="gp-cal-grid">${grid}</div>
             </div>
+            <button type="button" class="gp-cal-birthdays-button" id="gp-birthdays-open">${ic('fa-cake-candles')}<span>${lang() === 'en' ? 'Birthdays' : 'Дни рождения'}</span><small>${getBirthdays().length}</small>${ic('fa-chevron-right')}</button>
             <div class="gp-chan-section">${_planDay === today ? 'Сегодня' : esc(fmtPlanDate(_planDay))}</div>
             ${planList(dayPlans, 'В этот день пусто')}
             <div class="gp-notes-editor gp-plan-editor">
@@ -5633,6 +5635,10 @@ function renderPlans(screen) {
         </div>`);
 
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('home'));
+    screen.querySelector('#gp-birthdays-open')?.addEventListener('click', () => openBirthdayBook(screen, {
+        changed: () => { updatePhoneInjection(); render(); },
+        openDate: date => { _planDay = date; _planMonth = monthOf(date); render(); },
+    }));
     screen.querySelector('#gp-cal-prev')?.addEventListener('click', () => { _planMonth = shiftMonth(_planMonth, -1); render(); });
     screen.querySelector('#gp-cal-next')?.addEventListener('click', () => { _planMonth = shiftMonth(_planMonth, 1); render(); });
     screen.querySelectorAll('[data-calday]').forEach(b => b.addEventListener('click', () => {

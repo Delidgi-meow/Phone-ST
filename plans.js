@@ -1,11 +1,12 @@
 import { isPhoneAppInstalled } from './state.js';
 import { parsePhoneJson } from './phone-text.js';
+import { parseBirthdayDate, birthdayCalendarEntries, birthdaysOnDate, birthdayMemoryLine } from './birthday-dates.js';
 // Планы и важные даты: календарь телефона. Живёт по ролевому времени —
 // «сегодня» это сегодня В ИСТОРИИ, а не по часам компьютера.
 // Записи приходят двумя путями: она добавляет их сама или ролевая ставит тег
 // <!--tel:plan:{...}--> , когда о чём-то договорились.
 
-import { getMeta, saveMeta, getRpDateTime, stripThink, getPhoneAppText as getPhoneMessageText } from './state.js';
+import { getMeta, saveMeta, getSettings, getRpDateTime, stripThink, isUserName, resolveContactKey, contactOriginalName, getPhoneAppText as getPhoneMessageText } from './state.js';
 import { logSocialToChat, getUserName } from './social.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
@@ -23,6 +24,42 @@ export function getPlans() {
     if (!Array.isArray(m.plans)) m.plans = [];
     if (!Array.isArray(m.planTags)) m.planTags = [];
     return m.plans;
+}
+
+export function getBirthdays() {
+    const root = getMeta();
+    if (!Array.isArray(root.birthdays)) root.birthdays = [];
+    return root.birthdays;
+}
+
+const birthdayNameKey = name => String(name || '').normalize('NFKC').toLocaleLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
+
+export function saveBirthday({id = '', name, date, day, month, year, who, source = 'user'}) {
+    name = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 100);
+    if (isUserName(name) || /^(?:я|me|myself|\{\{user\}\})$/i.test(name)) name = getUserName();
+    else name = contactOriginalName(resolveContactKey(name), name);
+    const parsed = parseBirthdayDate(date || {day, month, year});
+    if (!name || !parsed) return null;
+    const list = getBirthdays(), key = birthdayNameKey(name);
+    const existing = id ? list.find(b => b.id === id) : list.find(b => birthdayNameKey(b.name) === key);
+    if (id && !existing) return null;
+    if (list.some(b => b !== existing && birthdayNameKey(b.name) === key)) return null;
+    if (existing && source === 'context' && (existing.day !== parsed.day || existing.month !== parsed.month
+        || existing.year && parsed.year && existing.year !== parsed.year)) return {record:existing, changed:false, conflict:true};
+    if (existing && !parsed.year && existing.day === parsed.day && existing.month === parsed.month) parsed.year = existing.year || null;
+    const fields = {name, ...parsed, who:who === 'user' || isUserName(name) ? 'user' : 'char'};
+    if (existing && Object.entries(fields).every(([key, value]) => existing[key] === value)) return {record:existing, changed:false};
+    const record = existing || {id:'birthday:' + genId(), at:Date.now()};
+    Object.assign(record, fields, {source, updated:Date.now()});
+    if (!existing) list.push(record);
+    saveMeta();
+    return {record, changed:true};
+}
+
+export function getCalendarEntries() {
+    const entries = [...getPlans(), ...birthdayCalendarEntries(getMeta(), rpToday(), getSettings().lang === 'en')];
+    sortPlans(entries);
+    return entries;
 }
 
 // Ролевое «сегодня» как YYYY-MM-DD — так даты сортируются сами собой
@@ -136,6 +173,7 @@ export function setPlanStatus(id,status) {
 export function deletePlan(id) {
     const m = getMeta();
     m.plans = getPlans().filter(x => x.id !== id);
+    if (Array.isArray(m.birthdays)) m.birthdays = m.birthdays.filter(x => x.id !== id);
     saveMeta();
 }
 
@@ -143,7 +181,7 @@ export function deletePlan(id) {
 export function groupedPlans() {
     const today = rpToday();
     const groups = { overdue: [], today: [], tomorrow: [], week: [], later: [], done: [] };
-    for (const p of getPlans()) {
+    for (const p of getCalendarEntries()) {
         if (p.done) { groups.done.push(p); continue; }
         const diff = daysBetween(today, p.date);
         if (diff < 0) groups.overdue.push(p);
@@ -176,7 +214,7 @@ export function shiftMonth(ym, delta) {
 }
 
 export function plansByDate(isoDate) {
-    return getPlans().filter(p => p.date === isoDate);
+    return [...getPlans().filter(p => p.date === isoDate), ...birthdaysOnDate(getMeta(), isoDate, getSettings().lang === 'en')];
 }
 
 // Шесть недель по семь дней, неделя с понедельника: сетка не прыгает по высоте
@@ -200,6 +238,7 @@ export function monthGrid(ym) {
             past: isoDate < today,
             total: dayPlans.length,
             open: dayPlans.filter(x => !x.done).length,
+            birthday: dayPlans.some(x => x.kind === 'birthday'),
             who: [...new Set(dayPlans.map(x => x.who))],
         });
     }
@@ -213,16 +252,17 @@ export function plansInjectLine() {
     if (!isPhoneAppInstalled('calendar')) return '';
     const g = groupedPlans();
     const today = rpToday();
-    const near = [...g.overdue, ...g.today, ...g.tomorrow, ...g.week].slice(0, 8);
+    const near = [...g.overdue, ...g.today, ...g.tomorrow, ...g.week].filter(p => p.kind !== 'birthday').slice(0, 8);
     // Дальние даты тоже нужны: день рождения через три недели или отпуск в мае
     // модель иначе не видела вовсе, пока до них не оставалось недели
-    const ahead = g.later.slice(0, 3);
+    const ahead = g.later.filter(p => p.kind !== 'birthday').slice(0, 3);
     // Недавно закрытое: она отметила галочку — значит дело сделано, и ролевая
     // должна это знать (не напоминать, не тянуть героя туда снова)
     const justDone = g.done
         .filter(p => !p.doneDate || daysBetween(p.doneDate, today) <= 3)
         .slice(-3);
-    if (!near.length && !ahead.length && !justDone.length) return '';
+    const birthdays = birthdayMemoryLine(getMeta(), today);
+    if (!near.length && !ahead.length && !justDone.length) return birthdays;
     const whoOf = (p) => (p.who === 'char' ? 'their plan' : p.who === 'both' ? 'together' : `{{user}}'s plan`);
     const lines = near.map((p) => {
         const diff = daysBetween(today, p.date);
@@ -235,7 +275,7 @@ export function plansInjectLine() {
         return `- [id:${p.id}] ${fmtPlanDate(p.date)}${p.time ? ` ${p.time}` : ''} (in ${diff}d, ${whoOf(p)}): ${p.text}`;
     }).join('\n');
     const body = [lines, aheadLines, doneLines].filter(Boolean).join('\n');
-    return `[CALENDAR — confirmed plans; participants remember them. Keep IDs, dates and ownership. Characters may discuss, cancel or attend their own commitments; do not decide {{user}}’s actions. DONE and CANCELLED entries are closed, not upcoming reminders.]\n${body}`;
+    return `[CALENDAR — confirmed plans; participants remember them. Keep IDs, dates and ownership. Characters may discuss, cancel or attend their own commitments; do not decide {{user}}’s actions. DONE and CANCELLED entries are closed, not upcoming reminders.]\n${body}${birthdays ? '\n' + birthdays : ''}`;
 }
 
 export function plansInjectRule() {

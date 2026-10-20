@@ -1,5 +1,5 @@
 import { isPhoneAppInstalled } from './state.js';
-import { getPlans, rpToday, fmtPlanDate } from './plans.js';
+import { getCalendarEntries, rpToday, fmtPlanDate } from './plans.js';
 import { getSettings, getThreadList } from './state.js';
 import { saveSettingsDebounced } from '../../../../script.js';
 import { saveBase64AsFile } from '../../../utils.js';
@@ -141,7 +141,7 @@ function widgetHTML(w){
     if(w.type==='messages'){const threads=getThreadList();const choices=w.threadKey&&w.threadKey!=='recent'?threads.filter(t=>t.key===w.threadKey):threads.filter(t=>t.last||t.unread).slice(0,2);content='<span class="gp-widget-heading">'+I('fa-comment-dots')+' '+L('Сообщения','Messages')+'</span>'+choices.map(t=>'<div class="gp-widget-message"><b>'+esc(t.name)+(t.unread?' <i>'+t.unread+'</i>':'')+'</b><small>'+esc(t.last?.text||L('Открыть переписку','Open conversation'))+'</small></div>').join('');if(!choices.length)content+='<p>'+L('Пока нет сообщений','No messages yet')+'</p>';route='list';}
     if(w.type==='calendar'){
         const today=rpToday(),filter=w.who||'all';
-        const all=getPlans().filter(p=>!p.done&&(filter==='all'||p.who===filter||(filter!=='both'&&p.who==='both')));
+        const all=getCalendarEntries().filter(p=>!p.done&&(filter==='all'||p.who===filter||(filter!=='both'&&p.who==='both')));
         all.sort((a,b)=>a.date.localeCompare(b.date)||String(a.time||'99:99').localeCompare(String(b.time||'99:99')));
         const upcoming=all.filter(p=>p.date>=today),items=(upcoming.length?upcoming:all).slice(0,w.wide?3:2);
         const date=new Date(today+'T12:00:00'),month=date.toLocaleDateString(lang()==='en'?'en-US':'ru-RU',{month:'long'});

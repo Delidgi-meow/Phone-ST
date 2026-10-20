@@ -16,6 +16,7 @@ export const MONTHS_I18N = {
 
 // ── Точный словарь (ключ = русская строка после trim) ──
 const DICT = {
+    'День рождения': 'Birthday', 'Дни рождения': 'Birthdays', 'Каждый год': 'Every year',
     'Соцсеть перепутала участников. Ответ не сохранён — повтори генерацию.': 'The social app mixed up the participants. The reply was not saved — generate it again.',
     'Direct перепутал участников. Ответ не сохранён — нажми «Повторить».': 'Direct mixed up the participants. The reply was not saved — tap Retry.',
     'Не удалось загрузить лорбук для телефона. Повтори ответ.': 'Could not load the phone lorebook context. Retry the reply.',
