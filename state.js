@@ -583,13 +583,20 @@ export function addGroup(name, members) {
 }
 export function delGroup(groupKey) {
     const m = getMeta();
+    // Old group tags remain in the roleplay chat: hide their thread as well.
+    hideContact(groupKey);
     m.groups = m.groups.filter(g => `group:${keyOf(g.name)}` !== groupKey);
     saveMeta();
 }
 export function updateGroupMembers(groupKey, members) {
     const m = getMeta();
-    const g = m.groups.find(g => `group:${keyOf(g.name)}` === groupKey);
-    if (!g) return false;
+    let g = m.groups.find(g => `group:${keyOf(g.name)}` === groupKey);
+    if (!g) {
+        const thread = getThread(groupKey);
+        if (!thread?.isGroup) return false;
+        g = {id:'g' + Date.now().toString(36), name:thread.originalName, members:[]};
+        m.groups.push(g);
+    }
     g.members = (members || []).map(x => String(x).trim()).filter(Boolean);
     saveMeta();
     return true;

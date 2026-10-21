@@ -4,15 +4,16 @@ import { saveBase64AsFile } from '../../../utils.js';
 import { openPhoneSheet, closePhoneSheet } from './phone-modal.js';
 import { editThreadAppearance } from './thread-appearance.js';
 import { lang } from './i18n.js';
+import { openGroupMembers, confirmThreadDeletion } from './thread-management.js';
 import { contactAvatarGeneratorHtml, bindContactAvatarGenerator } from './contact-avatar-ui.js';
 const L=(ru,en)=>lang()==='en'?en:ru;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const I=n=>'<i class="fa-solid '+n+'" aria-hidden="true"></i>';
-function avatar(t){const url=getContactAvatar(t.key);return url?'<img src="'+esc(url)+'" alt="">':'<span>'+esc(t.name.slice(0,1).toUpperCase())+'</span>';}
+function avatar(t){const url=getContactAvatar(t.key);return url?'<img src="'+esc(url)+'" alt="">':t.isGroup?I('fa-users'):'<span>'+esc(t.name.slice(0,1).toUpperCase())+'</span>';}
 export function openThreadProfile(screen,thread,api){
     const t=getThread(thread.key)||thread,root=getMeta(),src=getContactAvatar(t.key),handle=t.isGroup?'':handleFor('contact:'+t.key,t.originalName||t.name);
     const shade=openPhoneSheet(screen,t.name,'<div class="gp-contact-profile">'+
-        '<div class="gp-contact-profile-hero"><div class="gp-contact-profile-backdrop"></div><div class="gp-contact-avatar-wrap"><button type="button" class="gp-profile-avatar" id="gp-profile-avatar" aria-label="'+L('Изменить фото контакта','Change contact photo')+'">'+(t.isGroup?I('fa-users'):avatar(t))+'</button>'+
+        '<div class="gp-contact-profile-hero"><div class="gp-contact-profile-backdrop"></div><div class="gp-contact-avatar-wrap"><button type="button" class="gp-profile-avatar" id="gp-profile-avatar" aria-label="'+L('Изменить фото контакта','Change contact photo')+'">'+avatar(t)+'</button>'+
         '<input type="file" accept="image/*" id="gp-profile-avatar-file" hidden>'+(!t.isGroup?contactAvatarGeneratorHtml():'')+'</div><h1>'+esc(t.name)+'</h1><p>'+esc(t.isGroup?(t.members||[]).join(', '):t.originalName+' · '+handle)+'</p>'+
         '<div class="gp-profile-shortcuts">'+(!t.isGroup?'<button type="button" data-profile-call title="'+L('Звонок','Call')+'" aria-label="'+L('Звонок','Call')+'" '+(!t.number?'disabled':'')+'>'+I('fa-phone')+'</button>':'')+
         '<button type="button" data-profile-wall title="'+L('Оформление чата','Chat appearance')+'" aria-label="'+L('Оформление чата','Chat appearance')+'">'+I('fa-image')+'</button></div></div>'+
@@ -32,7 +33,7 @@ export function openThreadProfile(screen,thread,api){
     file.onchange=async()=>{
         if(!file.files[0])return;avatarButton.disabled=true;
         try{const data=await compressImage(file.files[0],512,.85);const url=await saveBase64AsFile(data.slice(data.indexOf(',')+1),'glassphone','contact_'+Date.now(),'jpeg');
-            if(getMeta()!==root||!shade.isConnected)return;setContactAvatar(t.key,url);avatarButton.innerHTML='<img src="'+esc(url)+'" alt="">';shade.querySelector('.gp-contact-profile-backdrop').style.backgroundImage='url('+JSON.stringify(url)+')';
+            if(getMeta()!==root||!shade.isConnected)return;setContactAvatar(t.key,url);avatarButton.innerHTML='<img src="'+esc(url)+'" alt="">';shade.querySelector('.gp-contact-profile-backdrop').style.backgroundImage='url('+JSON.stringify(url)+')';api.changed();
         }catch(e){api.toast(L('Не удалось загрузить фото','Could not upload photo'),'fa-circle-exclamation');}finally{if(shade.isConnected)avatarButton.disabled=false;}
     };
     shade.querySelector('#gp-profile-number-generate')?.addEventListener('click',()=>{shade.querySelector('#gp-profile-number').value=randomNumber();});
@@ -49,14 +50,20 @@ export function openThreadProfile(screen,thread,api){
     };
     shade.querySelector('[data-profile-wall]').onclick=()=>{closePhoneSheet(shade);editThreadAppearance(screen,t.key,api);};
     shade.querySelector('[data-profile-call]')?.addEventListener('click',()=>{closePhoneSheet(shade);api.call(t);});
-    shade.querySelectorAll('[data-profile-legacy]').forEach(b=>b.onclick=()=>{const target=screen.querySelector('#'+b.dataset.profileLegacy);closePhoneSheet(shade);target?.click();});
+    shade.querySelectorAll('[data-profile-legacy]').forEach(b=>b.onclick=()=>{
+        const action=b.dataset.profileLegacy;
+        if(action==='gp-add-member'){openGroupMembers(screen,t,api);return;}
+        if(action==='gp-kick-member'){openGroupMembers(screen,t,api,true);return;}
+        if(action==='gp-del'){confirmThreadDeletion(screen,t,api);return;}
+        const target=screen.querySelector('#'+action);closePhoneSheet(shade);target?.click();
+    });
 }
 export function decorateThreadHeader(screen,t,api){
     const old=screen.querySelector('.gp-thread-header');if(!old)return;
     const back=old.querySelector('#gp-back'),hidden=document.createElement('div');hidden.className='gp-thread-legacy-tools';hidden.hidden=true;
     while(old.firstChild)hidden.appendChild(old.firstChild);
     const header=document.createElement('header');header.className='gp-thread-header gp-thread-float';
-    header.innerHTML='<button class="gp-thread-name-pill" id="gp-thread-info"><b>'+esc(t.name)+'</b></button><button class="gp-thread-avatar-pill" id="gp-contact-profile" aria-label="'+L('Профиль и настройки контакта','Contact profile and settings')+'">'+(t.isGroup?I('fa-users'):avatar(t))+'</button>';
+    header.innerHTML='<button class="gp-thread-name-pill" id="gp-thread-info"><b>'+esc(t.name)+'</b></button><button class="gp-thread-avatar-pill" id="gp-contact-profile" aria-label="'+L('Профиль и настройки контакта','Contact profile and settings')+'">'+avatar(t)+'</button>';
     if(back)header.prepend(back);old.replaceWith(header);header.after(hidden);
     const open=()=>openThreadProfile(screen,t,api);
     header.querySelector('#gp-contact-profile').onclick=open;header.querySelector('#gp-thread-info').onclick=open;

@@ -11,6 +11,7 @@ import { applyLockAppearance, clearLockAppearance, editLockAppearance } from './
 import { openPhoneContactEditor } from './contact-editor.js';
 import { openGroupComposer } from './group-composer.js';
 import { decorateThreadHeader } from './thread-profile.js';
+import { openGroupMembers, confirmThreadDeletion } from './thread-management.js';
 import { applyThreadAppearance, editThreadAppearance, clearThreadAppearance } from './thread-appearance.js';
 import { openPhoneSheet, closePhoneSheet } from './phone-modal.js';
 import { renderBankApp } from './bank-ui.js';
@@ -34,9 +35,9 @@ import { openBirthdayBook } from './birthday-ui.js';
 import { sendMessageAsUser, saveSettingsDebounced, saveChatConditional, user_avatar } from '../../../../script.js';
 import { saveBase64AsFile } from '../../../utils.js';
 import {
-    getSettings, getThreadList, getThread, markRead, addManualContact, hideContact,
+    getSettings, getThreadList, getThread, markRead, addManualContact,
     randomNumber, getTotalUnread, fmtTime, getRpDateTime, keyOf, getHiddenMessageIndexes, resolveContactKey, contactOriginalName,
-    addGroup, delGroup, updateGroupMembers, renameContact, banAccount,
+    addGroup, renameContact, banAccount,
     isSmsBlocked, blockSmsContact, unblockSmsContact, saveMeta, invalidateChatCache, getMeta, getPhoneMessageText, phoneActivityAllowed,
 } from './state.js';
 import { phoneMessageSources, replacePhoneMessageTag } from './message-sources.js';
@@ -1929,7 +1930,7 @@ function renderList(screen) {
             : '<span class="gp-prev-empty">Нет сообщений — напиши первым</span>';
         const time = t.last && t.last.time ? fmtTime(t.last.time) : '';
         const ava = t.isGroup
-            ? `<div class="gp-avatar gp-avatar-group">${ic('fa-users')}</div>`
+            ? (getContactAvatar(t.key) ? avatarHtml(t.name, getContactAvatar(t.key), 'gp-avatar gp-avatar-group') : `<div class="gp-avatar gp-avatar-group">${ic('fa-users')}</div>`)
             : avatarHtml(t.name, getContactAvatar(t.key));
         rows += `
         <div class="gp-row" data-key="${esc(t.key)}">
@@ -2180,7 +2181,8 @@ function renderThread(screen) {
             <button class="gp-send" id="gp-send" ${sending ? 'disabled' : ''}>${ic('fa-paper-plane')}</button>
         </div>`;
 
-    decorateThreadHeader(screen,t,{render,toast,changed:()=>{updatePhoneInjection();applyChatHiding();},call:contact=>{const pending=startPhoneCall(contact);goto('phone');pending.finally(()=>render()).catch(e=>toast(e.message,'fa-circle-exclamation'));}});
+    const threadApi = {render,toast,deleted:()=>{currentScreen='list';currentThreadKey=null;render();updateFabBadge();},changed:()=>{updatePhoneInjection();applyChatHiding();},call:contact=>{const pending=startPhoneCall(contact);goto('phone');pending.finally(()=>render()).catch(e=>toast(e.message,'fa-circle-exclamation'));}};
+    decorateThreadHeader(screen,t,threadApi);
     bindMessageForwarding(screen, {
         view: 'sms:' + t.key, header: screen.querySelector('.gp-thread-header'), composer: screen.querySelector('.gp-inputbar'),
         rows: screen.querySelectorAll('[data-bmi]'), messages: t.messages,
@@ -2297,90 +2299,9 @@ function renderThread(screen) {
         }
     }));
 
-    // Убрать участника из группового чата
-    screen.querySelector('#gp-kick-member')?.addEventListener('click', () => {
-        const members = [...(t.members || [])];
-        if (!members.length) { toast('В чате никого нет', 'fa-circle-exclamation'); return; }
-        const overlay = document.createElement('div');
-        overlay.className = 'gp-member-overlay';
-        overlay.innerHTML = `
-            <div class="gp-member-overlay-panel">
-                <div class="gp-member-overlay-header">
-                    <span>Убрать участника</span>
-                    <button class="gp-iconbtn" id="gp-kick-close">${ic('fa-xmark')}</button>
-                </div>
-                <div class="gp-member-overlay-list">${members.map(m => `<label class="gp-member-check"><input type="checkbox" value="${esc(m)}"><span>${esc(m)}</span></label>`).join('')}</div>
-                <button class="gp-primary gp-danger" id="gp-kick-apply">${ic('fa-user-minus')} Убрать</button>
-            </div>`;
-        screen.appendChild(overlay);
-        const close = () => overlay.remove();
-        overlay.querySelector('#gp-kick-close')?.addEventListener('click', close);
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-        overlay.querySelector('#gp-kick-apply')?.addEventListener('click', () => {
-            const gone = [...overlay.querySelectorAll('input:checked')].map(i => i.value);
-            if (!gone.length) { close(); return; }
-            const left = members.filter(m => !gone.includes(m));
-            updateGroupMembers(t.key, left);
-            // Ролевая должна знать: человека убрали из чата, а не он сам ушёл
-            try {
-                logSocialToChat(`${getUserName()} убирает из группового чата «${t.name}»: ${gone.join(', ')}`);
-            } catch (e) { /* ignore */ }
-            updatePhoneInjection();
-            close();
-            render();
-            toast(`Убрали: ${gone.join(', ')}`, 'fa-user-minus');
-        });
-    });
-
-    // Добавить участника из телефонной книги в групповой чат
-    screen.querySelector('#gp-add-member')?.addEventListener('click', () => {
-        const allContacts = getThreadList().filter(x => !x.isGroup);
-        const currentMembers = new Set((t.members || []).map(m => keyOf(m)));
-        const available = allContacts.filter(c => !currentMembers.has(keyOf(c.name)));
-        if (!available.length) {
-            toast('Все контакты уже в чате', 'fa-circle-check');
-            return;
-        }
-        // Создаём оверлей с выбором контактов
-        const overlay = document.createElement('div');
-        overlay.className = 'gp-member-overlay';
-        const list = available.map(c =>
-            `<label class="gp-member-check"><input type="checkbox" value="${esc(c.name)}"><span>${esc(c.name)}</span></label>`
-        ).join('');
-        overlay.innerHTML = `
-            <div class="gp-member-overlay-panel">
-                <div class="gp-member-overlay-header">
-                    <span>Добавить участника</span>
-                    <button class="gp-iconbtn" id="gp-member-close">${ic('fa-xmark')}</button>
-                </div>
-                <div class="gp-member-overlay-list">${list}</div>
-                <button class="gp-primary" id="gp-member-confirm">${ic('fa-check')} Добавить</button>
-            </div>`;
-        screen.appendChild(overlay);
-        overlay.querySelector('#gp-member-close').addEventListener('click', () => overlay.remove());
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-        overlay.querySelector('#gp-member-confirm').addEventListener('click', () => {
-            const selected = [...overlay.querySelectorAll('input:checked')].map(i => i.value);
-            if (!selected.length) { toast('Выбери хотя бы одного', 'fa-circle-exclamation'); return; }
-            const newMembers = [...(t.members || []), ...selected];
-            updateGroupMembers(t.key, newMembers);
-            overlay.remove();
-            updatePhoneInjection();
-            toast(`Добавлено: ${selected.join(', ')}`, 'fa-user-plus');
-            render();
-        });
-    });
-
-    screen.querySelector('#gp-del')?.addEventListener('click', () => {
-        if (!confirm(`Удалить ${t.isGroup ? 'групповой чат' : 'контакт'} «${t.name}» из телефона?\n(Сообщения в самом чате останутся.)`)) return;
-        if (t.isGroup) delGroup(t.key);
-        else hideContact(t.key);
-        currentScreen = 'list';
-        currentThreadKey = null;
-        updatePhoneInjection();
-        render();
-        updateFabBadge();
-    });
+    screen.querySelector('#gp-kick-member')?.addEventListener('click', () => openGroupMembers(screen,t,threadApi,true));
+    screen.querySelector('#gp-add-member')?.addEventListener('click', () => openGroupMembers(screen,t,threadApi));
+    screen.querySelector('#gp-del')?.addEventListener('click', () => confirmThreadDeletion(screen,t,threadApi));
 
     const input = screen.querySelector('#gp-input');
     const sendBtn = screen.querySelector('#gp-send');
