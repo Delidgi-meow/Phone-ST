@@ -1,6 +1,7 @@
 import { getMeta, getSettings, saveMeta } from './state.js';
 import { generateStoryQuestions, addStory, getStories, logSocialToChat, getUserName } from './social.js';
 import { openPhoneSheet, closePhoneSheet } from './phone-modal.js';
+import { checkPostingTasks } from './posting-tasks.js';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export function storyQuestionHtml(st,isMine) {
     return (st.questionAnswer?'<div class="gp-story-question-card"><small>Анонимный вопрос</small><b>'+esc(st.questionAnswer.question)+'</b><p>'+esc(st.questionAnswer.answer)+'</p></div>':'')+
@@ -29,6 +30,7 @@ export function openStoryQuestions(host,st,api) {
             const answerShade=openPhoneSheet(host,'Ответ в сторис','<form class="gp-group-composer"><p>'+esc(q.text)+'</p><textarea name="answer" maxlength="1000" rows="5" placeholder="Твой ответ" required></textarea><button type="submit" class="gp-web-primary">Опубликовать ответ</button></form>',host.dataset.phoneView||'igstory');
             answerShade.querySelector('form').onsubmit=e=>{e.preventDefault();const answer=e.target.elements.answer.value.trim();if(!answer||getMeta()!==owner||!getStories().includes(st)||q.answered)return;
                 const story=addStory({image:st.image,imgDesc:st.imgDesc,caption:'',questionAnswer:{question:q.text,answer}});q.answered=true;q.answerStoryId=story.id;saveMeta();closePhoneSheet(answerShade);api.changed();api.render();
+                checkPostingTasks().catch(error=>console.warn('[Phone] answer task check:',error));
                 Promise.resolve(logSocialToChat(`${getUserName()} отвечает в Instagram-сторис на анонимный вопрос «${q.text}»: «${answer}». Автор вопроса неизвестен.`)).catch(()=>{});
             };
         });

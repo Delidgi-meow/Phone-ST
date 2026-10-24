@@ -2,6 +2,7 @@ import { getMeta, saveMeta } from './state.js';
 import { publishToMyChannel, findChanPost } from './channels.js';
 import { generateChannelPollVotes, logSocialToChat, getUserName } from './social.js';
 import { openPhoneSheet, closePhoneSheet } from './phone-modal.js';
+import { checkPostingTasks } from './posting-tasks.js';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const pending=new WeakSet();
 export function pollHtml(post) {
@@ -16,6 +17,7 @@ export function openChannelPoll(host,ch,api) {
         const question=form.elements.question.value.trim(),options=form.elements.options.value.split('\n').map(s=>s.trim()).filter(Boolean);
         if(!question||options.length<2||options.length>10||new Set(options.map(s=>s.toLowerCase())).size!==options.length||options.some(s=>s.length>150)){shade.querySelector('[data-error]').textContent='Нужны вопрос и от 2 до 10 разных вариантов длиной до 150 символов.';return;}
         const post=publishToMyChannel({text:question});post.poll={question,options,votes:options.map(()=>0),choice:null,closed:false};saveMeta();closePhoneSheet(shade);api.changed();api.render();
+        checkPostingTasks().catch(error=>console.warn('[Phone] poll task check:',error));
         Promise.resolve(logSocialToChat(`${getUserName()} публикует анонимный опрос в канале «${ch.name}»: ${question}. Варианты: ${options.join('; ')}`)).catch(()=>{});
     };
 }

@@ -34,6 +34,7 @@ import { openBirthdayBook } from './birthday-ui.js';
 import { openUserValues } from './user-values-ui.js';
 import { pollHtml, openChannelPoll, bindChannelPolls } from './channel-polls.js';
 import { storyQuestionHtml, openStoryQuestions } from './story-questions.js';
+import { createPostingTasks, checkPostingTasks, dismissPostingTask, postingTaskBusy, postingPlatformName } from './posting-tasks.js';
 
 import { sendMessageAsUser, saveSettingsDebounced, saveChatConditional, user_avatar } from '../../../../script.js';
 import { saveBase64AsFile } from '../../../utils.js';
@@ -813,12 +814,11 @@ export function render() {
     else renderHome(screen);
     // Возвращаем набранный текст: перерисовка (генерация картинки, публикация,
     // новое сообщение) больше не стирает то, что юзер печатает
-    if (['settings','bank','socialhub','tw','ig','of'].includes(currentScreen) || currentScreen==='chan'&&findChannel(_chanId)?.mine) {
-        const header=screen.querySelector('.gp-header, .gp-insta-header, .gp-wallet-header');
+    if (currentScreen==='bank') {
+        const header=screen.querySelector('.gp-wallet-header');
         if(header&&!header.querySelector('[data-user-values]')) {
-            const balanceOnly=currentScreen==='bank';
-            const button=document.createElement('button');button.type='button';button.className='gp-iconbtn';button.dataset.userValues='';button.title=balanceOnly?(lang()==='en'?'Edit balance':'Изменить баланс'):(lang()==='en'?'Balance and followers':'Баланс и подписчики');button.setAttribute('aria-label',button.title);button.innerHTML=ic('fa-sliders');
-            button.onclick=()=>openUserValues(screen,{render,toast,changed:updatePhoneInjection},{balanceOnly});header.appendChild(button);
+            const button=document.createElement('button');button.type='button';button.className='gp-iconbtn';button.dataset.userValues='';button.title=lang()==='en'?'Edit balance':'Изменить баланс';button.setAttribute('aria-label',button.title);button.innerHTML=ic('fa-sliders');
+            button.onclick=()=>openUserValues(screen,{render,toast,changed:updatePhoneInjection},{balanceOnly:true});header.appendChild(button);
         }
     }
     if (['chan','chanpost'].includes(currentScreen)) {
@@ -931,17 +931,23 @@ function socialImpactToast(platform, post, addedComments = 0, addedFeed = 0) {
 // охватов, подписчиков, репутации, рекламы и сюжетных поворотов.
 function systemsOn() { return getSettings().socialSystems !== false; }
 
+function refreshPostingTaskProgress() {
+    const owner=getMeta();
+    checkPostingTasks().then(count=>{if(getMeta()!==owner||!count)return;toast('Прогресс заданий обновлён','fa-check');if(currentScreen==='socialhub')render();}).catch(error=>console.warn('[Phone] posting task check:',error));
+}
+
 async function finalizeSocialPost(platform, post, { addedComments = 0, addedFeed = 0 } = {}) {
     if (!post || post.ak !== 'user' || post.performance?.settled) return null;
     if (!systemsOn()) return null;
     const perf = settleSocialPost(platform, post);
+    refreshPostingTaskProgress();
     updatePhoneInjection();
     if (perf) {
         socialImpactToast(platform, post, addedComments, addedFeed);
         const event = await maybeGenerateStoryEvent(platform, post);
         if (event) {
             updatePhoneInjection();
-            toast('Новый сюжетный поворот', 'fa-wand-sparkles');
+            toast('Новый сюжетный поворот', 'gp-event-sparkles');
             // Не прячем созданный ивент за отдельной иконкой: сразу показываем
             // три варианта ответа и поле собственного действия.
             goto('storyevent');
@@ -973,12 +979,12 @@ function renderSocialHub(screen) {
     if (!systemsOn()) {
         screen.innerHTML = `<div class="gp-header gp-thread-header">
             <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button>
-            <div class="gp-title gp-title-app">Социальный профиль</div>
+            <div class="gp-title gp-title-app">Ивенты</div>
             <span style="width:32px"></span>
         </div>
-        <div class="gp-feed gp-social-hub">
+        <div class="gp-feed gp-social-hub gp-events-hub">
             <div class="gp-empty">
-                <div class="gp-empty-icon">${ic('fa-wand-sparkles')}</div>
+                <div class="gp-empty-icon">${ic('gp-event-sparkles')}</div>
                 <div class="gp-empty-text">Подписчики, охваты, репутация, реклама и сюжетные повороты выключены. Посты и комментарии работают как обычно.</div>
             </div>
             <button class="gp-save-preset" id="gp-systems-on" type="button">${ic('fa-power-off')} Включить</button>
@@ -988,7 +994,7 @@ function renderSocialHub(screen) {
             getSettings().socialSystems = true;
             saveSettingsDebounced();
             updatePhoneInjection();
-            toast('Системы включены', 'fa-wand-sparkles');
+            toast('Системы включены', 'gp-event-sparkles');
             render();
         });
         return;
@@ -1009,37 +1015,51 @@ function renderSocialHub(screen) {
     const ads = s.advertising || { offers: [], active: null, history: [] };
     const recentEvents = s.storyEvents.recent || [];
     screen.innerHTML = `<div class="gp-header gp-thread-header">
-        <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button><div class="gp-title gp-title-app">Социальный профиль</div>
+        <button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button><div class="gp-title gp-title-app">Ивенты</div>
         <button class="gp-iconbtn" id="gp-open-journal" title="Журнал памяти">${ic('fa-book-open')}</button>
         <button class="gp-iconbtn" id="gp-systems-off" title="Выключить системы">${ic('fa-power-off')}</button>
-        ${event ? `<button class="gp-iconbtn gp-event-pulse" data-open-story title="Сюжетный поворот">${ic('fa-wand-sparkles')}</button>` : ''}
-    </div><div class="gp-feed gp-social-hub">
+        ${event ? `<button class="gp-iconbtn gp-event-pulse" data-open-story title="Сюжетный поворот">${ic('gp-event-sparkles')}</button>` : ''}
+    </div><div class="gp-feed gp-social-hub gp-events-hub">
+        <div class="gp-events-intro"><span>ТВОЯ ИСТОРИЯ</span><h2>Что будет дальше?</h2><p>Аудитория, новые возможности и повороты сюжета.</p></div>
         <div class="gp-profile-grid">
             <div class="gp-profile-card"><div>${brand('fa-x-twitter')} Twitter</div><b>${compactNum(s.socialProfiles.twitter.followers)}</b><span>подписчиков · ${esc(repLabelOf(s, 'twitter'))}</span></div>
             <div class="gp-profile-card"><div>${brand('fa-instagram')} Instagram</div><b>${compactNum(s.socialProfiles.instagram.followers)}</b><span>подписчиков · ${esc(repLabelOf(s, 'instagram'))}</span></div>
         </div>
-        <section class="gp-social-section gp-ad-section"><h3>${ic('fa-star')} Рекламные предложения</h3>
+        <section class="gp-social-section gp-ad-section"><h3>Реклама</h3>
             ${ads.active
                 ? `<div class="gp-ad-active"><b>${esc(ads.active.brand)} · ${ads.active.platform === 'twitter' ? 'Twitter' : 'Instagram'}</b><span>${esc(ads.active.product)}</span><small>${ads.active.state === 'published' ? `Публикация размещена · ожидается подсчёт реакции и выплата ${fmtMoney(ads.active.payment)}` : `Следующая публикация в этой соцсети станет рекламной · ${fmtMoney(ads.active.payment)}`}</small></div>`
                 : `${(ads.offers || []).length
                     ? (ads.offers || []).map(a => `<div class="gp-ad-card gp-ad-${esc(a.risk)}"><div><b>${esc(a.title)}</b><span>${esc(a.product)}</span><small>${esc(a.brief)} · ${fmtMoney(a.payment)}</small></div><div class="gp-ad-actions"><button class="gp-ad-accept" data-ad-accept="${esc(a.id)}">${ic('fa-check')} Взять</button><button class="gp-ad-decline" data-ad-decline="${esc(a.id)}" title="Отклонить">${ic('fa-xmark')}</button></div></div>`).join('')
-                    : `<div class="gp-event-empty"><b>Предложений пока нет</b><span>Запроси свежие интеграции — модель подберёт бренды, товары и оплату под сеттинг текущей ролевой.</span></div>`}
+                    : `<div class="gp-event-empty"><b>Пока без предложений</b><span>Найди бренды и коллаборации, которые подходят твоей истории.</span></div>`}
                    <button class="gp-event-generate" id="gp-ad-generate" ${genBusy ? 'disabled' : ''}>${genBusy ? ic('fa-spinner fa-spin') : ic('fa-wand-magic-sparkles')} ${(ads.offers || []).length ? 'Обновить предложения' : 'Найти предложения'}</button>`}
         </section>
         <section class="gp-social-section gp-events-section">
-            <h3>${ic('fa-wand-sparkles')} Сюжетные ивенты</h3>
+            <h3>Сюжетные повороты</h3>
             ${event
-                ? `<button class="gp-event-banner" data-open-story><span>${ic('fa-wand-sparkles')}</span><div><b>${esc(event.title)}</b><small>${esc(event.hook)}</small></div>${ic('fa-chevron-right')}</button>`
-                : `<div class="gp-event-empty"><b>Активного ивента пока нет</b><span>Модель соберёт три сюжетных поворота из лорбука, карточки, истории RP, журнала телефона и всех недавних постов.</span></div>
+                ? `<button class="gp-event-banner" data-open-story><span>${ic('gp-event-sparkles')}</span><div><b>${esc(event.title)}</b><small>${esc(event.hook)}</small></div>${ic('fa-chevron-right')}</button>`
+                : `<div class="gp-event-empty"><b>У истории есть продолжение</b><span>Три возможных поворота — выбери тот, который хочется прожить.</span></div>
                    <button class="gp-event-generate" id="gp-event-generate" ${!genBusy ? '' : 'disabled'}>
                        ${genBusy ? ic('fa-spinner fa-spin') : ic('fa-wand-magic-sparkles')}
-                       Создать три сюжетных поворота
+                       Найти сюжетный поворот
                    </button>`}
             ${recentEvents.length ? `<div class="gp-event-history"><small>Архив</small>${recentEvents.slice(0, 8).map(e => `<button data-story-result="${esc(e.id)}" ${e.state === 'declined' ? 'disabled' : ''}><i class="fa-solid ${e.state === 'declined' ? 'fa-ban' : 'fa-check'}"></i><span><b>${esc(e.title)}</b><small>${esc(e.state === 'declined' ? 'отклонён' : 'нажми, чтобы прочитать итог')}</small></span>${e.state === 'declined' ? '' : ic('fa-chevron-right')}</button>`).join('')}</div>` : ''}
         </section>
-        <section class="gp-social-section"><h3>${ic('fa-list-check')} Задания на постинг</h3>${tasks.map(t => `<div class="gp-task-card"><div><b>${esc(t.title)}</b><span>${esc(t.text)}</span></div><strong>${Math.min(t.progress, t.goal)}/${t.goal}</strong><i><em style="width:${Math.round(Math.min(1, t.progress / t.goal) * 100)}%"></em></i></div>`).join('')}</section>
+        <section class="gp-social-section gp-posting-section"><h3>Твои задания <small>${tasks.length}</small></h3><div class="gp-posting-actions"><button type="button" id="gp-tasks-generate" ${genBusy?'disabled':''}>${ic(genBusy?'fa-spinner fa-spin':'gp-event-sparkles')} ${tasks.length?'Новые идеи':'Подобрать по сюжету'}</button>${tasks.length?'<button type="button" id="gp-tasks-check" '+(postingTaskBusy()?'disabled':'')+'>'+ic(postingTaskBusy()?'fa-spinner fa-spin':'fa-check')+' Проверить</button>':''}</div>${tasks.length?'<p class="gp-events-no-tasks">Засчитываются новые публикации после создания задания.</p>':''}${tasks.map(t => `<div class="gp-task-card"><div><button type="button" class="gp-task-title" data-task-detail="${esc(t.id)}">${esc(t.title)}</button><small class="gp-task-platform">${esc(postingPlatformName(t.platform))}</small><span>${esc(t.text)}</span></div><div class="gp-task-count"><strong>${Math.min(t.progress, t.goal)}/${t.goal}</strong><button type="button" data-task-dismiss="${esc(t.id)}" aria-label="Убрать задание">×</button></div><i><em style="width:${Math.round(Math.min(1, t.progress / t.goal) * 100)}%"></em></i></div>`).join('')||'<p class="gp-events-no-tasks">Подберём идеи под события и интересы твоего персонажа.</p>'}${s.postingTasks.completed.length?'<details class="gp-tasks-completed"><summary>Выполнено · '+s.postingTasks.completed.length+'</summary>'+s.postingTasks.completed.slice(-5).reverse().map(t=>'<div>'+ic('fa-check')+' '+esc(t.title)+'</div>').join('')+'</details>':''}</section>
     </div>`;
     screen.querySelector('#gp-back')?.addEventListener('click', () => goto('home'));
+    screen.querySelector('#gp-tasks-generate')?.addEventListener('click',async()=>{
+        if(genBusy)return;genBusy=true;render();const owner=getMeta();
+        try{await createPostingTasks();if(getMeta()===owner)toast('Новые идеи готовы','gp-event-sparkles');}catch(error){if(getMeta()===owner)toast(error.message,'fa-circle-exclamation');}finally{genBusy=false;if(getMeta()===owner&&currentScreen==='socialhub')render();}
+    });
+    screen.querySelector('#gp-tasks-check')?.addEventListener('click',async()=>{
+        if(postingTaskBusy())return;const owner=getMeta(),pending=checkPostingTasks();render();
+        try{const count=await pending;if(getMeta()===owner)toast(count?'Прогресс заданий обновлён':'Подходящих новых публикаций пока нет',count?'fa-check':'fa-circle-info');}catch(error){if(getMeta()===owner)toast(error.message,'fa-circle-exclamation');}finally{if(getMeta()===owner&&currentScreen==='socialhub')render();}
+    });
+    screen.querySelectorAll('[data-task-dismiss]').forEach(b=>b.onclick=()=>{dismissPostingTask(b.dataset.taskDismiss);render();});
+    screen.querySelectorAll('[data-task-detail]').forEach(b=>b.onclick=()=>{
+        const task=tasks.find(t=>t.id===b.dataset.taskDetail);if(!task)return;
+        openPhoneSheet(screen,task.title,'<div class="gp-group-composer"><p>'+esc(task.text)+'</p><b>Что засчитывается</b><p>'+esc(task.criterion)+'</p><small>'+esc(postingPlatformName(task.platform))+' · '+task.progress+'/'+task.goal+' новых публикаций</small>'+(task.matches||[]).map(m=>'<blockquote>'+esc(m.evidence)+'</blockquote>').join('')+'</div>','socialhub');
+    });
     screen.querySelector('#gp-open-journal')?.addEventListener('click', () => goto('socialjournal'));
     screen.querySelector('#gp-systems-off')?.addEventListener('click', () => {
         getSettings().socialSystems = false;
@@ -1075,7 +1095,7 @@ function renderSocialHub(screen) {
             const created = await maybeGenerateStoryEvent('phone', null, { force: true });
             if (created) {
                 updatePhoneInjection();
-                toast('Сюжетный ивент создан', 'fa-wand-sparkles');
+                toast('Сюжетный ивент создан', 'gp-event-sparkles');
                 goto('storyevent');
                 return;
             }
@@ -1099,7 +1119,7 @@ function renderStoryEvent(screen) {
     const choosingEvent = !waiting && alternatives.length > 1 && event.selectedAlternative == null;
     if (choosingEvent) {
         screen.innerHTML = `<div class="gp-header gp-thread-header"><button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button><div class="gp-title gp-title-app">Выбрать ивент</div></div><div class="gp-feed gp-story-screen"><div class="gp-story-card">
-            <div class="gp-story-kicker">${ic('fa-wand-sparkles')} Три возможных поворота</div><h2>Какую нить вплести в историю?</h2><p class="gp-story-hook">Выбери сам ивент. Следующим экраном появятся варианты реакции на него.</p>
+            <div class="gp-story-kicker">${ic('gp-event-sparkles')} Три возможных поворота</div><h2>Какую нить вплести в историю?</h2><p class="gp-story-hook">Выбери сам ивент. Следующим экраном появятся варианты реакции на него.</p>
             <div class="gp-story-choices">${alternatives.map((a, i) => `<button data-select-event="${i}"><b>${esc(a.title)}</b><span>${esc(a.hook)}</span></button>`).join('')}</div>
             <div class="gp-story-foot"><button id="gp-event-later">Не сейчас</button><button id="gp-event-decline">Отклонить все</button></div>
         </div></div>`;
@@ -1112,7 +1132,7 @@ function renderStoryEvent(screen) {
         return;
     }
     screen.innerHTML = `<div class="gp-header gp-thread-header"><button class="gp-iconbtn" id="gp-back">${ic('fa-chevron-left')}</button><div class="gp-title gp-title-app">Сюжетный поворот</div></div><div class="gp-feed gp-story-screen"><div class="gp-story-card">
-        <div class="gp-story-kicker">${ic('fa-wand-sparkles')} ${esc(event.urgency === 'immediate' ? 'Срочно' : 'Новая нить истории')}</div><h2>${esc(event.title)}</h2><p class="gp-story-hook">${esc(event.hook)}</p>
+        <div class="gp-story-kicker">${ic('gp-event-sparkles')} ${esc(event.urgency === 'immediate' ? 'Срочно' : 'Новая нить истории')}</div><h2>${esc(event.title)}</h2><p class="gp-story-hook">${esc(event.hook)}</p>
         ${event.openingMessage ? `<blockquote>${esc(event.openingMessage)}</blockquote>` : ''}${event.involvedActors?.length ? `<div class="gp-story-actors">${event.involvedActors.map(a => `<span>${ic('fa-user')} ${esc(a)}</span>`).join('')}</div>` : ''}
         ${waiting ? `<div class="gp-story-result"><b>${ic('fa-circle-check')} Решение принято</b><p>${esc(event.immediateResult)}</p>${event.state === 'waiting_rp' ? '<small>Продолжение естественно появится в основном RP.</small>' : ''}</div>` : `<div class="gp-story-choices">${event.choices.map((c, i) => `<button data-event-choice="${i}"><b>${esc(c.label)}</b><span>${esc(c.text)}</span></button>`).join('')}<button id="gp-custom-toggle"><b>${ic('fa-pen')} Свой ответ</b><span>Написать собственное действие или реплику</span></button></div><div class="gp-story-custom" id="gp-story-custom" hidden><textarea id="gp-story-text" rows="4" maxlength="1000" placeholder="Что вы отвечаете или делаете?"></textarea><button class="gp-primary" id="gp-story-send">Продолжить</button></div><div class="gp-story-foot"><button id="gp-event-later">Не сейчас</button><button id="gp-event-decline">Отклонить</button></div>`}
     </div></div>`;
@@ -1125,7 +1145,7 @@ function renderStoryEvent(screen) {
         loading.className = 'gp-story-loading';
         loading.innerHTML = `<div>${ic('fa-spinner fa-spin')}</div><b>История меняется…</b><span>Ждём итог и последствия выбранного ответа</span>`;
         screen.appendChild(loading);
-        try { const outcome = await resolveStoryEvent(choice); if (outcome) { await logSocialToChat(`[Сюжетный поворот из соцсети] ${event.hook} ${getUserName()}: «${outcome.choice.text}». Результат: ${outcome.event.immediateResult}`); updatePhoneInjection(); toast('Выбор изменил историю', 'fa-wand-sparkles'); selectedStoryEventId = outcome.event.id; currentScreen = 'storyresult'; } }
+        try { const outcome = await resolveStoryEvent(choice); if (outcome) { await logSocialToChat(`[Сюжетный поворот из соцсети] ${event.hook} ${getUserName()}: «${outcome.choice.text}». Результат: ${outcome.event.immediateResult}`); updatePhoneInjection(); toast('Выбор изменил историю', 'gp-event-sparkles'); selectedStoryEventId = outcome.event.id; currentScreen = 'storyresult'; } }
         catch (e) { console.error('[GlassPhone] story event failed:', e); toast('Не удалось продолжить событие', 'fa-circle-exclamation'); }
         finally { genBusy = false; render(); }
     };
@@ -1312,7 +1332,7 @@ function lockNotifications() {
     } catch (e) { /* ignore */ }
     try {
         if (isPhoneAppInstalled('events') && getSystemsView().storyEvents.active) {
-            out.push({ icon: 'fa-wand-sparkles', title: 'Ивент', text: 'Ждёт твоего решения', go: () => goto('storyevent') });
+            out.push({ icon: 'gp-event-sparkles', title: 'Ивент', text: 'Ждёт твоего решения', go: () => goto('storyevent') });
         }
     } catch (e) { /* ignore */ }
     const dismissed=new Set(getMeta().lockDismissed||[]);
@@ -1456,7 +1476,7 @@ function renderHome(screen) {
                     <div class="gp-app-name">Instagram</div>
                 </div>
                 <div class="gp-app" data-app="${activeStoryEvent ? 'storyevent' : 'socialhub'}">
-                    <div class="gp-app-icon gp-app-events${activeStoryEvent ? ' gp-event-pulse' : ''}">${ic('fa-wand-sparkles')}${activeStoryEvent ? '<span class="gp-app-badge">!</span>' : ''}</div>
+                    <div class="gp-app-icon gp-app-events${activeStoryEvent ? ' gp-event-pulse' : ''}">${ic('gp-event-sparkles')}${activeStoryEvent ? '<span class="gp-app-badge">!</span>' : ''}</div>
                     <div class="gp-app-name">Ивенты</div>
                 </div>
                 <div class="gp-app" data-app="of">
@@ -3445,6 +3465,7 @@ function renderIgNewStory(screen) {
         const questionPrompt=screen.querySelector('#gp-st-question-prompt')?.value.trim()||'';
         clearDraft('gp-st-desc'); clearDraft('gp-st-caption');clearDraft('gp-st-question-prompt');
         const story = addStory({ image: _storyDraftImage, imgDesc: desc, caption, questionPrompt });
+        refreshPostingTaskProgress();
         const owner=getMeta();
         _storyDraftImage = null;
         // Журнал: в чат уходит описание, а не сам снимок. Если фото выбрано,
@@ -6036,6 +6057,7 @@ function renderChannel(screen) {
         let post;
         try {
             post = publishToMyChannel({ text, image: _chanDraftImage, imgDesc: '' });
+            refreshPostingTaskProgress();
         } catch (e) { toast(String(e?.message || e).slice(0, 60), 'fa-circle-exclamation'); return; }
         _chanDraftImage = null;
         if (box) box.value = '';
@@ -6952,7 +6974,7 @@ function showPhoneNotificationPreview(){
 export function toast(text, icon = 'fa-comment-dots', threadKey = null, onOpen = null) {
     text = normalizePhoneSpaces(text);
     if (getSettings().quietMode) return;
-    const app = threadKey ? phoneAppForThread(threadKey) : ({'fa-instagram':'ig','fa-x-twitter':'tw','fa-twitter':'tw','fa-paper-plane':'chans','fa-discord':'discord','fa-twitch':'twitch','fa-truck-fast':'shop','fa-box-open':'shop','fa-landmark':'bank','fa-file-invoice-dollar':'bank','fa-wand-sparkles':'events'})[icon];
+    const app = threadKey ? phoneAppForThread(threadKey) : ({'fa-instagram':'ig','fa-x-twitter':'tw','fa-twitter':'tw','fa-paper-plane':'chans','fa-discord':'discord','fa-twitch':'twitch','fa-truck-fast':'shop','fa-box-open':'shop','fa-landmark':'bank','fa-file-invoice-dollar':'bank','gp-event-sparkles':'events'})[icon];
     if (app && !isPhoneAppInstalled(app)) return;
     text = tr(text); // перевод тостов (точный словарь + regex-правила)
     const style = toastStyleId();

@@ -17,7 +17,7 @@ export const PHONE_APPS = [
     ['maps','Карты','Maps','fa-map-location-dot','#78b991','Места и маршруты','Places and routes'],
     ['notes','Заметки','Notes','fa-note-sticky','#cab76b','Заметки для себя и сюжета','Personal and shared notes'],
     ['calendar','Календарь','Calendar','fa-calendar-days','#cc8293','Планы и события','Plans and events'],
-    ['events','Ивенты','Events','fa-wand-sparkles','#ae8acb','События и предложения','Story events and offers'],
+    ['events','Ивенты','Events','gp-event-sparkles','#ae8acb','События и предложения','Story events and offers'],
     ['appearance','Оформление','Appearance','fa-palette','#8d9acb','Темы и обои','Themes and wallpapers'],
     ['settings','Настройки','Settings','fa-gear','#89909c','Настройки телефона','Phone settings',true],
     ['appstore','App Store','App Store','fa-store','#559ce6','Приложения твоего телефона','Apps for your phone',true],
