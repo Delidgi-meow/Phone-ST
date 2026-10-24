@@ -1343,7 +1343,7 @@ function renderLock(screen) {
                 <div class="gp-lock-clock">${String(h).padStart(2, '0')}:${String(mi).padStart(2, '0')}</div>
                 <div class="gp-lock-date">${esc(dateStr)}</div>
             </div>
-            ${notes.length ? '<button type="button" class="gp-web-textbutton" id="gp-lock-clear">'+(lang()==='en'?'Clear all notifications':'Убрать все уведомления')+'</button>' : ''}
+            ${notes.length ? '<button type="button" id="gp-lock-clear" title="'+(lang()==='en'?'Clear all notifications':'Убрать все уведомления')+'" aria-label="'+(lang()==='en'?'Clear all notifications':'Убрать все уведомления')+'"><svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 4 8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>' : ''}
             <div class="gp-lock-notes">
                 ${notes.map((n, i) => `
                     <div class="gp-lock-note" data-lock-note="${i}" style="animation-delay:${Math.min(i * 60, 300)}ms">
