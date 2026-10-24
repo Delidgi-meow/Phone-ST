@@ -1,4 +1,5 @@
 import { directConversationMedia, directReplyRoleError } from './direct-context.js';
+import { smsConversationHistory, SMS_CONTINUITY } from './sms-context.js';
 import { parseBirthdayDate, birthdayEvidenceMatches, resolveBirthdayYear } from './birthday-dates.js';
 import { rpToday } from './plans.js';
 import { isPhoneAppInstalled, phoneAppForThread } from './state.js';
@@ -59,6 +60,32 @@ export function getSocial() {
 export function getTweets() { return getSocial().tweets; }
 export function getIgPosts() { return getSocial().igPosts; }
 
+export async function generateUserValues(current) {
+    const owner=getMeta(),version=getSettings().phoneActivityVersion,ctx=SillyTavern.getContext();
+    const header=await buildPhoneConversationContext({name:ctx.name2||ctx.name1||'Profile'}, {medium:'setup',includeSms:false,utterance:'Determine the human persona\u2019s current finances and social media audience.'});
+    const clues=/подпис|миллион|блогер|бюджет|баланс|счет|счёт|деньг|заработ|followers|subscribers|balance|budget|wealth|blogger/i;
+    const older=(ctx.chat||[]).filter(m=>m&&!m.is_system&&clues.test(m.mes||'')).slice(-30).map(m=>privateRoleplayText(m).slice(0,2000)).join('\n');
+    const prompt=`${header}\nOLDER RELEVANT STORY EXCERPTS:\n${older}\nSETUP TASK: propose current values for the HUMAN PERSONA ${JSON.stringify(ctx.name1)} only. Return a proposal, do not create events, payments, posts, channels or messages. Current values (random defaults may not fit the story): ${JSON.stringify(current)}. Use exact established amounts where known; otherwise estimate plausible values from the persona, story, fame, profession and activated lorebook. Keep separate audiences for Twitter, Instagram, OnlyFans and the existing Telegram channel. A millionaire blogger should have a plausible large audience on the established platform; do not automatically give every platform the same audience. Only propose keys supplied above; telegram must stay null when no own channel exists. Balance is CURRENT available money in ${current.currency}; never change currency or confuse net worth, someone else's money or monthly salary with available balance. Counts are nonnegative integers; balance may be negative. Each number must be finite with magnitude at most 1000000000000. Add a short reason explaining what was established and what was estimated. ${uiLangLine()}\nReturn JSON: {"values":{"balance":0,"twitter":0,"instagram":0,"onlyfans":0,"telegram":null},"reason":"..."}`;
+    const result=parseJsonObject(await socialGen(prompt,{setupTask:true,maxTokens:1600}));
+    if(getMeta()!==owner||getSettings().phoneActivityVersion!==version)throw new Error('Чат или настройки изменились');
+    if(!result?.values||typeof result.values!=='object')throw new Error('Не удалось прочитать значения');
+    return {values:result.values,reason:String(result.reason||'').slice(0,2000)};
+}
+
+export async function generateStoryQuestions(story) {
+    requirePhoneApp('ig');
+    if(getSettings().storyQuestionsEnabled===false||!story.questionsEnabled)throw new Error('Анонимные вопросы выключены');
+    const header=await taskHeaderPub('Write anonymous audience questions for the human\u2019s Instagram story.');
+    const result=parseJsonObject(await socialGen(`${header}\nStory: ${JSON.stringify({caption:story.caption,photo:story.imgDesc,sticker:story.questionPrompt})}. Already received: ${JSON.stringify((story.questions||[]).map(q=>q.text))}. Generate 3-5 NEW short questions matching the sticker and publicly visible story. Questions are anonymous: no author names, no hidden private knowledge, no answers or user actions. ${uiLangLine()} Return {"questions":["question text"]}.`,{app:'ig',maxTokens:1000}));
+    return Array.isArray(result?.questions)?result.questions.filter(q=>typeof q==='string'&&q.trim()).slice(0,5).map(q=>q.trim().slice(0,400)):[];
+}
+
+export async function generateChannelPollVotes(channel,poll) {
+    requirePhoneApp('chans');
+    const header=await taskHeaderPub('Estimate audience voting on the human\u2019s Telegram channel poll.');
+    return parseJsonObject(await socialGen(`${header}\nChannel: ${JSON.stringify({name:channel.name,desc:channel.desc,subscribers:channel.subs})}. Poll: ${JSON.stringify({question:poll.question,options:poll.options})}. Propose a plausible cumulative vote distribution, in option order. Each count must be a nonnegative integer, total votes at most ${Math.max(0,Number(channel.subs)||0)} subscribers. Reflect public audience interests, no private knowledge. Do not write comments, user actions, payments or subscriber changes. Return {"votes":[0,0]}.`,{app:'chans',maxTokens:600}));
+}
+
 // ── Инста-сторис: живут 24 часа реального времени, потом гаснут ──
 export function getStories() {
     const s = getSocial();
@@ -69,7 +96,7 @@ export function activeStories() {
     const now = Date.now();
     return getStories().filter(st => st && now - (st.time || 0) < 24 * 3600 * 1000);
 }
-export function addStory({ image = null, imgDesc = '', caption = '' }) {
+export function addStory({ image = null, imgDesc = '', caption = '', questionPrompt = '', questionAnswer = null }) {
     const stories = getStories();
     const story = {
         id: genId(),
@@ -80,6 +107,10 @@ export function addStory({ image = null, imgDesc = '', caption = '' }) {
         caption: String(caption || '').slice(0, 300),
         time: Date.now(),
         views: 0,
+        questionPrompt:String(questionPrompt||'').trim().slice(0,200),
+        questionsEnabled:!!String(questionPrompt||'').trim(),
+        questions:[],
+        ...(questionAnswer?{questionAnswer:{question:String(questionAnswer.question||'').slice(0,400),answer:String(questionAnswer.answer||'').slice(0,1000)}}:{}),
     };
     stories.unshift(story);
     getSocial().stories = stories.slice(0, 30);
@@ -1205,11 +1236,11 @@ function socialTokenLimit(requested = 1024) {
     return configured ? Math.min(taskLimit, configured) : taskLimit;
 }
 
-async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '', app = null, calendarTask = false } = {}) {
+async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '', app = null, calendarTask = false, setupTask = false } = {}) {
     const st = getSettings();
     const activityVersion = st.phoneActivityVersion;
     const checkActivity = () => {
-        const tracking=calendarTask&&app==='calendar'&&getSettings().isEnabled!==false&&activityVersion===getSettings().phoneActivityVersion;
+        const tracking=(calendarTask&&app==='calendar'||setupTask)&&getSettings().isEnabled!==false&&activityVersion===getSettings().phoneActivityVersion;
         if ((tracking || phoneActivityAllowed(activityVersion)) && (!app || isPhoneAppInstalled(app))) return;
         const error = new Error('Активность телефона отменена или приложение удалено.');
         error.name = 'AbortError';
@@ -1415,12 +1446,13 @@ export async function generatePrivateSmsReply({ threadKey, contactName, isGroup 
     const owner = getMeta();
     const activityVersion = getSettings().phoneActivityVersion;
     const thread = getThread(threadKey || contactName);
-    const turns = privateThreadTurns(messages || thread?.messages, { user: getUserName(), peer: contactName });
+    const turns = smsConversationHistory(messages || thread?.messages, { user: getUserName(), peer: contactName });
     const header = await buildPhoneConversationContext({key:threadKey || contactName,name:thread?.name || contactName,originalName:contactName},
         {medium:'sms',includeSms:false,members:isGroup?members:[],utterance:JSON.stringify(turns.at(-1) || {})});
     if (getMeta() !== owner || !phoneActivityAllowed(activityVersion)) throw Object.assign(new Error('Запрос отменён'), { name: 'AbortError' });
     const prompt = `${header}
 OWN SMS HISTORY (chronological; this is the only private conversation available): ${JSON.stringify(turns)}
+${SMS_CONTINUITY}
 These app messages supplement the roleplay history above. Remember this participant's own story scenes and established relationship when answering. Forwarded messages disclose ONLY the excerpts in "shared.messages". Do not assume omitted lines, quote unshared wording, or read the source conversation. A plausible inference must remain an inference. Background story guides the author; each speaker only knows what they witnessed or were told.
 ${image ? 'The current photo is ATTACHED. Describe visible contents in "photo_description" and react to what you see.' : 'No current photo is attached. Keep "photo_description" empty; do not invent its contents.'}
 Write 1-5 natural short messages to the latest user entry, without narration, user actions, HTML or phone tags. ${isGroup ? 'Only established listed group members may reply; "from" is the member name.' : `Every reply has "from":${JSON.stringify(contactName)}.`} If unavailable or unwilling, return "replies":[]. Voice entries are transcripts the speaker hears.

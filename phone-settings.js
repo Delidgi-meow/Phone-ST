@@ -1,4 +1,6 @@
 import { lang } from './i18n.js';
+import { getSettings } from './state.js';
+import { saveSettingsDebounced } from '../../../../script.js';
 const L=(ru,en)=>lang()==='en'?en:ru;
 const I=n=>'<i class="fa-solid '+n+'" aria-hidden="true"></i>';
 let panel=null;
@@ -21,12 +23,14 @@ export function renderPhoneSettings(screen,api){
     screen.innerHTML='<header class="gp-header"><button type="button" class="gp-iconbtn" id="gp-settings-back" aria-label="'+L('На главный экран','Home')+'">'+I('fa-chevron-left')+'</button><h2>'+L('Настройки','Settings')+'</h2><span class="gp-settings-header-space"></span></header>'+
         '<div class="gp-phone-settings"><div class="gp-phone-settings-links">'+
         [['appstore','fa-store',L('App Store','App Store'),L('Установить и удалить приложения','Install and remove apps')],['appearance','fa-palette',L('Оформление телефона','Phone appearance'),L('Тема, иконки и главный экран','Theme, icons and home screen')],['lock','fa-lock',L('Экран блокировки','Lock screen'),L('Часы, дата и отдельные обои','Clock, date and wallpaper')],['chats','fa-comments',L('Оформление переписок','Chat appearance'),L('Общий стандарт обоев и пузырей','Default wallpaper and bubbles')]].map(([id,icon,title,subtitle])=>'<button type="button" data-settings-open="'+id+'"><i class="fa-solid '+icon+'" aria-hidden="true"></i><span><b>'+title+'</b><small>'+subtitle+'</small></span>'+I('fa-chevron-right')+'</button>').join('')+
-        '</div><div class="gp-phone-settings-mount"></div></div>';
+        '</div><label style="display:flex;align-items:center;gap:10px;padding:14px"><input type="checkbox" data-story-questions-setting '+(getSettings().storyQuestionsEnabled!==false?'checked':'')+'><span>'+L('Разрешить анонимные вопросы в сторис','Allow anonymous story questions')+'<small style="display:block">'+L('Только со стикером и по кнопке сбора; можно полностью выключить здесь.','Only with a sticker and manual collection; disable completely here.')+'</small></span></label><div class="gp-phone-settings-mount"></div></div>';
+    screen.querySelector('[data-story-questions-setting]').onchange=e=>{getSettings().storyQuestionsEnabled=e.target.checked;saveSettingsDebounced();};
     screen.querySelector('#gp-settings-back').onclick=api.home;
     screen.querySelector('[data-settings-open="appstore"]').onclick=api.appstore;
     screen.querySelector('[data-settings-open="appearance"]').onclick=api.appearance;
     screen.querySelector('[data-settings-open="lock"]').onclick=api.lock;
     screen.querySelector('[data-settings-open="chats"]').onclick=api.chats;
+    const values=document.createElement('button');values.type='button';values.innerHTML=I('fa-sliders')+'<span><b>'+L('Баланс и подписчики','Balance and followers')+'</b><small>'+L('Вручную или по сюжету: банк, Telegram, Instagram, Twitter и OnlyFans','Manual or story-based: bank, Telegram, Instagram, Twitter and OnlyFans')+'</small></span>'+I('fa-chevron-right');values.onclick=api.values;screen.querySelector('.gp-phone-settings-links').prepend(values);
     if(panel)screen.querySelector('.gp-phone-settings-mount').appendChild(panel);
 }
 

@@ -1,4 +1,5 @@
 import { isPhoneAppInstalled } from './state.js';
+import { smsRoleplayMemory } from './sms-context.js';
 
 import { setExtensionPrompt, extension_prompt_types, extension_prompt_roles } from '../../../../script.js';
 import { getSettings, getMeta, scanChat, getBlockedSmsKeys, keyOf, EXT_NAME, getRoleplaySmsOptions, contactIdentityPrompt } from './state.js';
@@ -117,6 +118,10 @@ function buildPrompt() {
         if (isPhoneAppInstalled('ig')) parts.push('INSTAGRAM POST: an established new character post: <!--tel:insta:{"author":"CharacterName","photo":"visual description","caption":"caption"}-->. Never post for {{user}}.');
     }
     const add = producer => { try { const text = producer(); if (text) parts.push(text); } catch (e) { /* Optional app context. */ } };
+    if (messaging) add(() => smsRoleplayMemory(threads, {
+        user:SillyTavern.getContext().name1 || '{{user}}',
+        allowed:key => sms || inAppKeys.has(keyOf(key)),
+    }));
     add(() => {
         const summary = getSocialActivitySummary();
         return summary ? 'RECENT SOCIAL ACTIVITY (only followers/subscribers with access may know it):\n' + summary : '';

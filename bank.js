@@ -54,6 +54,20 @@ export function bankActive() {
     return b.balance !== 0 || b.transactions.length > 0 || b.loans.length > 0 || b.recurring.length > 0;
 }
 
+// Set the current amount, rather than inventing income or replaying purchases.
+export function setUserBalance(value) {
+    const b = getBank(), amount = roundCurrency(value, b.currency);
+    if (!Number.isFinite(value) || !Number.isFinite(amount) || Math.abs(amount) > 1e12) throw new RangeError('Invalid balance');
+    const delta = roundCurrency(amount - b.balance, b.currency);
+    b.openingBalance = roundCurrency((Number(b.openingBalance) || 0) + delta, b.currency);
+    b.balance = amount;
+    b.manualBalanceSet = true;
+    b.manualBalanceAt = Date.now();
+    markCurrencyHistory(b);
+    saveMeta();
+    return amount;
+}
+
 export function setCurrency(sym) {
     return convertCurrency(sym);
 }
@@ -790,8 +804,10 @@ export function harvestBankTags() {
                         // not charged later via the next infoblock's delta.
                     } else if (rpBaseline === null) {
                         // самый первый инфоблок за всю историю — абсолютная инициализация
-                        b.balance = rpBalance.value;
-                        b.syncQueue = [];
+                        if (!b.manualBalanceSet) {
+                            b.balance = rpBalance.value;
+                            b.syncQueue = [];
+                        }
                     } else {
                         let delta = roundMoney(rpBalance.value - rpBaseline);
                         // Зачёт телефонных операций: покупку в магазине телефон уже

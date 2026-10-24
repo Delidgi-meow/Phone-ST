@@ -31,6 +31,9 @@ import { chooseImageRepeat } from './phone-image-actions.js';
 import { messageForward, messageForwardHtml, forwardMessageSnapshot } from './message-forward.js';
 import { bindMessageForwarding } from './message-forward-ui.js';
 import { openBirthdayBook } from './birthday-ui.js';
+import { openUserValues } from './user-values-ui.js';
+import { pollHtml, openChannelPoll, bindChannelPolls } from './channel-polls.js';
+import { storyQuestionHtml, openStoryQuestions } from './story-questions.js';
 
 import { sendMessageAsUser, saveSettingsDebounced, saveChatConditional, user_avatar } from '../../../../script.js';
 import { saveBase64AsFile } from '../../../utils.js';
@@ -805,11 +808,34 @@ export function render() {
     else if (currentScreen === 'mystream') renderMyStream(screen);
     else if (currentScreen === 'notes') renderNotes(screen);
     else if (currentScreen === 'calendar') renderPlans(screen);
-    else if (currentScreen === 'settings') renderPhoneSettings(screen,{home:()=>goto('home'),appstore:()=>goto('appstore'),appearance:()=>goto('appearance'),lock:()=>editLockAppearance(screen,{render,toast}),chats:()=>editThreadAppearance(screen,null,{render,toast},{scope:'all'})});
+    else if (currentScreen === 'settings') renderPhoneSettings(screen,{home:()=>goto('home'),appstore:()=>goto('appstore'),appearance:()=>goto('appearance'),lock:()=>editLockAppearance(screen,{render,toast}),values:()=>openUserValues(screen,{render,toast,changed:updatePhoneInjection}),chats:()=>editThreadAppearance(screen,null,{render,toast},{scope:'all'})});
     else if (currentScreen === 'appearance') renderAppearance(screen);
     else renderHome(screen);
     // Возвращаем набранный текст: перерисовка (генерация картинки, публикация,
     // новое сообщение) больше не стирает то, что юзер печатает
+    if (['settings','bank','socialhub','tw','ig','of'].includes(currentScreen) || currentScreen==='chan'&&findChannel(_chanId)?.mine) {
+        const header=screen.querySelector('.gp-header, .gp-insta-header, .gp-wallet-header');
+        if(header&&!header.querySelector('[data-user-values]')) {
+            const balanceOnly=currentScreen==='bank';
+            const button=document.createElement('button');button.type='button';button.className='gp-iconbtn';button.dataset.userValues='';button.title=balanceOnly?(lang()==='en'?'Edit balance':'Изменить баланс'):(lang()==='en'?'Balance and followers':'Баланс и подписчики');button.setAttribute('aria-label',button.title);button.innerHTML=ic('fa-sliders');
+            button.onclick=()=>openUserValues(screen,{render,toast,changed:updatePhoneInjection},{balanceOnly});header.appendChild(button);
+        }
+    }
+    if (['chan','chanpost'].includes(currentScreen)) {
+        const channel=findChannel(_chanId),api={render,toast,changed:updatePhoneInjection};
+        if(channel?.mine){
+            bindChannelPolls(screen,channel,api);
+            const header=screen.querySelector('.gp-header');
+            if(header&&!header.querySelector('[data-create-poll]')){const button=document.createElement('button');button.type='button';button.className='gp-iconbtn';button.dataset.createPoll='';button.title='Создать опрос';button.setAttribute('aria-label',button.title);button.innerHTML=ic('fa-square-poll-vertical');button.onclick=()=>openChannelPoll(screen,channel,api);header.appendChild(button);}
+        }
+    }
+    if(currentScreen==='ignewstory') {
+        const field=document.createElement('label');field.className='gp-field';field.innerHTML='<span>Анонимные вопросы · пусто — выключены</span><input id="gp-st-question-prompt" type="text" maxlength="200" placeholder="Например: Спроси меня о чём-нибудь">';screen.querySelector('#gp-st-publish')?.before(field);
+    }
+    if(currentScreen==='igstory') {
+        const story=allStoriesOrdered()[_storyIdx];
+        if(story){const holder=document.createElement('div');holder.className='gp-story-question-holder';holder.innerHTML=storyQuestionHtml(story,story.ak==='user');screen.querySelector('.gp-insta-story-footer')?.prepend(holder);holder.querySelector('[data-story-questions]')?.addEventListener('click',e=>{e.stopPropagation();openStoryQuestions(screen,story,{render,toast,changed:updatePhoneInjection});});}
+    }
     restoreDrafts(screen);
     applyAppSurface(screen,currentScreen);
     acknowledgeVisibleAppNotifications(appNotices);
@@ -1209,29 +1235,29 @@ function lockNotifications() {
     try{
         for(const call of isPhoneAppInstalled('phone')?getCalls().history:[]){
             if(call.direction!=='in'||!['ringing','missed','declined'].includes(call.status)||(!call.unread&&call.status!=='ringing'))continue;
-            out.push({icon:'fa-phone',title:call.status==='ringing'?'Входящий звонок':'Пропущенный звонок',
+            out.push({icon:'fa-phone',time:call.id,title:call.status==='ringing'?'Входящий звонок':'Пропущенный звонок',
                 text:(getThread(call.key)?.name||call.name)+(call.reason?' · '+call.reason:''),go:()=>openPhone('call:'+call.id)});
         }
         for(const match of tinderEnabled()?getMatches():[])if(!match.opened)
-            out.push({icon:'fa-fire',title:'Tinder',text:'Новый мэтч · '+match.name,go:()=>{markMatchOpened(match.id);_tinProfileId=match.id;goto('tinprofile');}});
+            out.push({icon:'fa-fire',time:match.id,title:'Tinder',text:'Новый мэтч · '+match.name,go:()=>{markMatchOpened(match.id);_tinProfileId=match.id;goto('tinprofile');}});
     }catch(_error){/* Optional calls / matches. */}
     try {
         for (const thread of isPhoneAppInstalled('ig') ? igThreads() : []) {
             const count = igUnread(thread);
             if (!count) continue;
             const last = thread.messages.filter(message => message.dir === 'in' && !message.read).at(-1);
-            out.push({ icon: 'fa-instagram', title: 'Instagram · ' + igPerson(thread).name,
+            out.push({ icon: 'fa-instagram', time:last?.id||last?.at, title: 'Instagram · ' + igPerson(thread).name,
                 text: last?.text || (last?.share?.app === 'msg' ? 'Пересланные сообщения' : last?.share?.text || 'Публикация'), count,
                 go: () => { currentIgDmThread = canonicalIgThreadId(thread.id); goto('igdm'); } });
         }
         const activity = (isPhoneAppInstalled('ig') ? getInstagram().activity : []).filter(event => !event.read && event.kind !== 'dm');
-        if (activity.length) out.push({ icon: 'fa-instagram', title: 'Instagram', count: activity.length,
+        if (activity.length) out.push({ icon: 'fa-instagram', time:activity[0].id, title: 'Instagram', count: activity.length,
             text: activity[0].author + (activity[0].text ? ': ' + activity[0].text : ''), go: () => goto('igactivity') });
     } catch (_error) { /* Optional messenger. */ }
     try {
         for (const channel of isPhoneAppInstalled('chans') ? allChannels() : []) {
             if (channel.mine || !channel.unread) continue;
-            out.push({ icon: 'fa-paper-plane', title: channel.name, text: channel.posts?.[0]?.text || '', count: channel.unread,
+            out.push({ icon: 'fa-paper-plane', time:channel.posts?.[0]?.id, title: channel.name, text: channel.posts?.[0]?.text || '', count: channel.unread,
                 go: () => { _chanId = channel.id; goto('chan'); } });
         }
     } catch (_error) { /* Optional channels. */ }
@@ -1240,7 +1266,7 @@ function lockNotifications() {
             const unread = (channel.messages || []).filter(message => !message.user && message.read === false);
             if (!unread.length) continue;
             const last = unread.at(-1);
-            out.push({ icon: 'fa-discord', title: 'Discord · ' + server.name + ' / #' + channel.name,
+            out.push({ icon: 'fa-discord', time:last.id||last.ts, title: 'Discord · ' + server.name + ' / #' + channel.name,
                 text: last.author + ': ' + last.text, count: unread.length,
                 go: () => { _dServerId = server.id; _dChannelId = channel.id; goto('dchannel'); } });
         }
@@ -1252,7 +1278,7 @@ function lockNotifications() {
                 icon: phoneAppForThread(t.key)==='tinder'?'fa-fire':t.isGroup ? 'fa-user-group' : 'fa-comment-dots',
                 title: phoneAppForThread(t.key)==='tinder'?'Tinder · '+t.name:t.name,
                 text: t.last.photoDesc && !t.last.text ? 'Фото' : (t.last.text || ''),
-                count: t.unread,
+                count: t.unread, time:t.last.eventId||`${t.last.idx}:${t.last.tagStart||0}`,
                 go: () => { currentThreadKey = t.key; goto('thread'); },
             });
         }
@@ -1289,7 +1315,8 @@ function lockNotifications() {
             out.push({ icon: 'fa-wand-sparkles', title: 'Ивент', text: 'Ждёт твоего решения', go: () => goto('storyevent') });
         }
     } catch (e) { /* ignore */ }
-    return out;
+    const dismissed=new Set(getMeta().lockDismissed||[]);
+    return out.map(note=>({...note,dismissKey:JSON.stringify([note.title,note.text,note.count,note.time,note.ids])})).filter(note=>!dismissed.has(note.dismissKey));
 }
 
 export function lockUnreadCount() {
@@ -1316,6 +1343,7 @@ function renderLock(screen) {
                 <div class="gp-lock-clock">${String(h).padStart(2, '0')}:${String(mi).padStart(2, '0')}</div>
                 <div class="gp-lock-date">${esc(dateStr)}</div>
             </div>
+            ${notes.length ? '<button type="button" class="gp-web-textbutton" id="gp-lock-clear">'+(lang()==='en'?'Clear all notifications':'Убрать все уведомления')+'</button>' : ''}
             <div class="gp-lock-notes">
                 ${notes.map((n, i) => `
                     <div class="gp-lock-note" data-lock-note="${i}" style="animation-delay:${Math.min(i * 60, 300)}ms">
@@ -1332,6 +1360,9 @@ function renderLock(screen) {
         </div>`;
 
     applyLockAppearance(screen);
+    screen.querySelector('#gp-lock-clear')?.addEventListener('click',event=>{
+        event.stopPropagation();const root=getMeta();root.lockDismissed=[...new Set([...(root.lockDismissed||[]),...notes.map(n=>n.dismissKey)])].slice(-500);saveMeta();clearPhoneNotifications();render();updateFabBadge();
+    });
     const notificationList=screen.querySelector('.gp-lock-notes');
     if(notificationList)notificationList.scrollTop=notificationScroll;
     const unlock = () => { goto(lastUnlockedScreen); };
@@ -3411,8 +3442,9 @@ function renderIgNewStory(screen) {
             toast('Выбери фото или опиши, что на нём', 'fa-circle-exclamation');
             return;
         }
-        clearDraft('gp-st-desc'); clearDraft('gp-st-caption');
-        const story = addStory({ image: _storyDraftImage, imgDesc: desc, caption });
+        const questionPrompt=screen.querySelector('#gp-st-question-prompt')?.value.trim()||'';
+        clearDraft('gp-st-desc'); clearDraft('gp-st-caption');clearDraft('gp-st-question-prompt');
+        const story = addStory({ image: _storyDraftImage, imgDesc: desc, caption, questionPrompt });
         const owner=getMeta();
         _storyDraftImage = null;
         // Журнал: в чат уходит описание, а не сам снимок. Если фото выбрано,
@@ -5746,7 +5778,7 @@ function chanPostHtml(ch, post) {
     <div class="gp-chan-post" data-chanpost="${esc(post.id)}">
         ${media}
         <div class="gp-chan-body">
-            ${post.text ? `<div class="gp-chan-text">${anonTagHtml(post)}${atHtml(post.text)}</div>` : ''}
+            ${post.poll ? pollHtml(post) : post.text ? `<div class="gp-chan-text">${anonTagHtml(post)}${atHtml(post.text)}</div>` : ''}
             <div class="gp-chan-foot">
                 <div class="gp-chan-reacts">${reacts}<button class="gp-chan-react gp-chan-react-add" data-chanreactadd="${esc(post.id)}">${ic('fa-plus')}</button></div>
                 <span class="gp-chan-views">${ic('fa-eye')} ${fmtSubs(post.views)} · ${esc(timeAgo(post.time))}</span>

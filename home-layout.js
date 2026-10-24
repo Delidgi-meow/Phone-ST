@@ -356,14 +356,14 @@ export function enhancePhoneHome(screen,api){
     screen.addEventListener('contextmenu',e=>{if(e.target.closest('.gp-home-os'))e.preventDefault();},{signal});
     home.addEventListener('click',e=>{if(Date.now()<state.suppress){e.preventDefault();e.stopImmediatePropagation();}},{signal,capture:true});
     home.addEventListener('dragstart',e=>{if(e.target.closest('[data-home-item],[data-widget]'))e.preventDefault();},{signal});
-    screen.addEventListener('pointerdown',e=>{
+    const pointerDown=e=>{
         if(e.button>0||!e.isPrimary||!home.contains(e.target)||e.target.closest('button,input,textarea,select,.gp-home-sheet-shade'))return;
         const el=e.target.closest('[data-home-item]');
         const widget=e.target.closest('[data-widget]');
         cancelHomeGesture();gesture={pointerId:e.pointerId,key:el?.dataset.homeItem||widget?.dataset.widget||'',source:el||widget,x:e.clientX,y:e.clientY,armed:false,moved:false,axis:'',canSwipe:!state.folder,home,fromFolder:!!el?.closest('.gp-home-folder-shade')};
         if(el||widget)gesture.timer=setTimeout(arm,state.editing?0:480);
-    },{signal});
-    screen.addEventListener('pointermove',e=>{
+    };
+    const pointerMove=e=>{
         if(!gesture||gesture.pointerId!==e.pointerId)return;
         const dx=e.clientX-gesture.x,dy=e.clientY-gesture.y,distance=Math.hypot(dx,dy);
         if(!gesture.armed){
@@ -389,8 +389,8 @@ export function enhancePhoneHome(screen,api){
         if(direction&&state.page+direction>=0&&state.page+direction<all.length&&!state.folder){
             if(!gesture.edgeTimer)gesture.edgeTimer=setTimeout(()=>{if(gesture){state.page+=direction;gesture.edgeTimer=null;repaint();}},550);
         }else{clearTimeout(gesture.edgeTimer);gesture.edgeTimer=null;}
-    },{signal,passive:false});
-    screen.addEventListener('pointerup',e=>{
+    };
+    const pointerUp=e=>{
         if(!gesture||gesture.pointerId!==e.pointerId)return;
         const g=gesture;clearTimeout(g.timer);clearTimeout(g.edgeTimer);
         if(g.armed&&g.moved){const drop=candidate(e)||g.target;const app=g.key.startsWith('app:')?g.key.slice(4):'';
@@ -412,7 +412,17 @@ export function enhancePhoneHome(screen,api){
         }
         const rerender=g.armed||g.axis==='x';if(g.armed||g.moved)state.suppress=Date.now()+300;cancelHomeGesture();
         if(rerender){if(api.refreshAfterGesture)api.refreshAfterGesture();else repaint();}
-    },{signal});
+    };
+    screen.addEventListener('pointerdown',e=>{if(e.pointerType!=='touch')pointerDown(e);},{signal});
+    screen.addEventListener('pointermove',e=>{if(e.pointerType!=='touch')pointerMove(e);},{signal,passive:false});
+    screen.addEventListener('pointerup',e=>{if(e.pointerType!=='touch')pointerUp(e);},{signal});
+    // Android may cancel Pointer Events when native scrolling claims the touch.
+    // Follow the touch sequence directly and prevent scrolling only for horizontal moves.
+    const touchPoint=(event,touch)=>({pointerId:touch.identifier+100000,button:0,isPrimary:true,target:event.target,clientX:touch.clientX,clientY:touch.clientY,preventDefault:()=>{if(event.cancelable)event.preventDefault();}});
+    screen.addEventListener('touchstart',e=>{if(e.touches.length===1)pointerDown(touchPoint(e,e.touches[0]));else cancelHomeGesture();},{signal,passive:true});
+    screen.addEventListener('touchmove',e=>{if(e.touches.length===1)pointerMove(touchPoint(e,e.touches[0]));else cancelHomeGesture();},{signal,passive:false});
+    screen.addEventListener('touchend',e=>{if(e.changedTouches[0])pointerUp(touchPoint(e,e.changedTouches[0]));},{signal});
+    screen.addEventListener('touchcancel',()=>cancelHomeGesture(),{signal});
     const cancelPointer=e=>{
         if(!gesture||gesture.pointerId!==e.pointerId)return;
         const rerender=gesture.armed||gesture.axis==='x';if(gesture.moved||gesture.armed)state.suppress=Date.now()+300;

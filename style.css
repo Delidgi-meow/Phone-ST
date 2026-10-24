@@ -5684,3 +5684,18 @@ img[data-zoom] { cursor: zoom-in; }
 #gp-phone .gp-birthday-form-actions{display:flex;align-items:center;gap:8px}
 #gp-phone .gp-birthday-form-actions>button{flex:1;margin:0;min-height:40px;padding:10px 12px;font-family:inherit;font-size:12px}
 #gp-phone :is(.gp-cal-birthdays-button,.gp-birthday-book button,.gp-birthday-book input):focus-visible{outline:2px solid var(--gp-accent-a);outline-offset:3px}
+
+/* Profile setup, channel polls and opt-in anonymous story questions. */
+#gp-phone .gp-values-form{overflow-wrap:anywhere;font-size:12px;line-height:1.5}
+#gp-phone .gp-values-form input,#gp-phone .gp-group-composer>label>input:not([type=checkbox]),#gp-phone .gp-group-composer textarea{box-sizing:border-box;display:block;width:100%;min-height:42px;border:1px solid var(--gp-border-soft);border-radius:10px;background:var(--gp-glass);color:var(--gp-text);padding:10px;margin:6px 0 14px;font:inherit}
+#gp-phone .gp-poll{display:flex;flex-direction:column;gap:9px;padding:10px 0}
+#gp-phone .gp-poll small{color:var(--gp-text-dim);font-size:11px}
+#gp-phone .gp-poll button{position:relative;overflow:hidden;display:flex;justify-content:space-between;align-items:center;gap:10px;min-height:44px;border:1px solid var(--gp-border-soft);border-radius:10px;padding:10px;background:var(--gp-glass);color:var(--gp-text);font:inherit;text-align:left}
+#gp-phone .gp-poll button:disabled{opacity:.8}
+#gp-phone .gp-poll button>i{position:absolute;left:0;bottom:0;height:3px;background:var(--gp-accent-a);pointer-events:none}
+#gp-phone .gp-story-question-card{display:flex;flex-direction:column;gap:8px;box-sizing:border-box;width:100%;padding:13px 16px;border:1px solid #ffffff50;border-radius:16px;background:#fff;color:#262332;font-size:14px;text-align:center;overflow-wrap:anywhere}
+#gp-phone .gp-story-question-card small{color:#716476;font-size:11px}
+#gp-phone .gp-story-question-card span{font-size:12px;color:#77557e}
+#gp-phone .gp-story-question-card p{margin:3px 0;white-space:pre-wrap}
+#gp-phone .gp-question-entry{padding:12px 0;border-bottom:1px solid var(--gp-border-soft);overflow-wrap:anywhere}
+#gp-phone #gp-lock-clear{align-self:flex-end;position:relative;z-index:3;margin:4px 12px;min-height:40px;background:rgba(20,20,24,.5);color:white;border-radius:20px;padding:8px 13px;border:1px solid #ffffff40}
