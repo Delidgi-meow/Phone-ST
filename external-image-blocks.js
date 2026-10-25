@@ -1,5 +1,7 @@
 import { extensionNames, extension_settings } from '../../../extensions.js';
 import { getSettings, stripThink } from './state.js';
+import { descriptionBlockMessages } from './description-photo-prompt.js';
+import { requireCompleteImagePrompt } from './image-prompt-completion.js';
 
 // Read every saved set, not only the currently active ExtBlocks preset.
 export function collectImageBlocks(settings, character) {
@@ -107,7 +109,7 @@ export async function parseExternalImagePrompt(raw, parser, blockName) {
     return instruction;
 }
 
-export async function generatePhoneBlockPrompt(post, { imageContext = '', parser, onStatus, signal, blockKey = getSettings().imageGenBlockKey } = {}) {
+export async function generatePhoneBlockPrompt(post, { imageContext = '', parser, onStatus, signal, descriptionOnly = false, blockKey = getSettings().imageGenBlockKey } = {}) {
     const selectedKey = blockKey;
     if (!selectedKey) return null;
     const selected = listPhoneImageBlocks().find(entry => entry.key === selectedKey);
@@ -127,7 +129,11 @@ export async function generatePhoneBlockPrompt(post, { imageContext = '', parser
     };
     onStatus?.(`Составляю промпт: ${block.name}…`);
     if (signal?.aborted) throw new DOMException('Генерация остановлена', 'AbortError');
-    let messages = BlockService.getBlocksFullPrompt([block], messageId, allBlocks, macros);
+    let messages;
+    if (descriptionOnly) {
+        messages = descriptionBlockMessages(block, post, imageContext, { charName: context.characters?.[context.characterId]?.name || '' });
+    } else {
+    messages = BlockService.getBlocksFullPrompt([block], messageId, allBlocks, macros);
     // ExtBlocks normally requires a character; phone drafts in a temporary
     // chat still need the selected block's template and configured context.
     if (!messages.length) {
@@ -136,6 +142,7 @@ export async function generatePhoneBlockPrompt(post, { imageContext = '', parser
     }
     messages.push({ role: 'user', content: `Create exactly one image instruction in the configured block’s format; no commentary. Use the requested photo, not another roleplay moment. Describe visible subjects only; captions and app names are context, not text/UI to draw unless explicitly requested.\nApp: ${post.kind || 'ig'}; photographer: ${post.author || ''}\nBehind camera: ${post._behindCamera ? post._cameraName || post.author || 'author' : 'unspecified'}\n${post.mms ? 'MMS: the user is the recipient, outside the frame unless explicitly pictured.\n' : ''}Requested photo:\n${scene}\nFraming: ${post.framing || ''}\n${imageContext ? 'Relevant appearance/preset details (only for pictured subjects):\n' + imageContext : ''}` });
     messages = await MacroService.checkAllMacros(messages);
+    }
     if (signal?.aborted) throw new DOMException('Генерация остановлена', 'AbortError');
     const presetName = block.api_preset || extension_settings.ExtBlocks.active_api_preset;
     const preset = ApiService.getApiPreset(presetName);
@@ -150,5 +157,6 @@ export async function generatePhoneBlockPrompt(post, { imageContext = '', parser
     try { data = await pending; }
     finally { signal?.removeEventListener('abort', abort); }
     if (signal?.aborted) throw new DOMException('Генерация остановлена', 'AbortError');
+    requireCompleteImagePrompt(data);
     return await parseExternalImagePrompt(ApiService.extractMessageFromData(data, preset), parser, block.name);
 }

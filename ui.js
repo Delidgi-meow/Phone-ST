@@ -35,6 +35,8 @@ import { openUserValues } from './user-values-ui.js';
 import { pollHtml, openChannelPoll, bindChannelPolls } from './channel-polls.js';
 import { storyQuestionHtml, openStoryQuestions } from './story-questions.js';
 import { createPostingTasks, checkPostingTasks, dismissPostingTask, postingTaskBusy, postingPlatformName } from './posting-tasks.js';
+import { preparePhotoUpload, persistPhoto } from './photo-upload.js';
+import { getSmsAttachment, setSmsAttachment, openSmsAttachments } from './sms-attachments.js';
 
 import { sendMessageAsUser, saveSettingsDebounced, saveChatConditional, user_avatar } from '../../../../script.js';
 import { saveBase64AsFile } from '../../../utils.js';
@@ -111,7 +113,6 @@ let phoneViewOwner = null;
 let lastUnlockedScreen = 'home';
 let typingKey = null;           // тред, в котором «печатает…»
 let sending = false;
-let _smsDraftImage = null;      // фото, приложенное к смс (dataURL до отправки)
 let _smsDraftVoice = false;     // режим голосового: текст уйдёт как расшифровка
 
 // Черновики полей ввода. Живут ВНЕ DOM, поэтому переживают и перерисовку
@@ -2129,6 +2130,7 @@ function voiceBubbleHtml(m) {
 function renderThread(screen) {
     const t = getThread(currentThreadKey);
     if (!t) { currentScreen = 'list'; renderList(screen); return; }
+    const _smsDraftImage=getSmsAttachment(t.key)?.image;
     markRead(t.key);
     updateFabBadge();
 
@@ -2178,7 +2180,7 @@ function renderThread(screen) {
         <div class="gp-bubble-wrap ${m.dir === 'out' ? 'gp-out' : 'gp-in'}${reaction ? ' gp-has-react' : ''}">
             ${picker}
             <div class="gp-bubble${m.voice ? ' gp-bubble-voice' : ''}" data-bmi="${mi}">${senderLabel}${media}${shotHtml(m)}${body}<button class="gp-sms-del" data-smsdel="${mi}" title="Удалить">${ic('fa-xmark')}</button>${reactChip}</div>
-            ${tm ? `<div class="gp-bubble-time">${esc(tm)}</div>` : ''}
+            ${tm || mi===t.messages.length-1 ? `<div class="gp-bubble-time gp-sms-message-foot">${tm?`<span>${esc(tm)}</span>`:''}${mi===t.messages.length-1?`<button type="button" class="gp-sms-inline-regen" id="gp-regen" title="${m.dir==='in'?'Другой ответ':'Получить ответ'}" aria-label="${m.dir==='in'?'Другой ответ':'Получить ответ'}" ${sending?'disabled':''}>${ic('fa-rotate-right')}</button>`:''}</div>` : ''}
         </div>`;
     }
 
@@ -2223,10 +2225,7 @@ function renderThread(screen) {
         </div>
         ${_smsDraftImage ? `<div class="gp-sms-attach"><img src="${esc(_smsDraftImage)}" alt=""><span>Фото приложено</span><button class="gp-iconbtn gp-danger" id="gp-attach-clear">${ic('fa-xmark')}</button></div>` : ''}
         <div class="gp-inputbar">
-            ${t.messages.length > 0
-                ? `<button class="gp-iconbtn gp-regen" id="gp-regen" title="Другой ответ" ${sending ? 'disabled' : ''}>${ic('fa-rotate-right')}</button>` : ''}
             <button class="gp-iconbtn" id="gp-attach" title="Приложить фото">${ic('fa-paperclip')}</button>
-            <input type="file" id="gp-attach-file" accept="image/*" style="display:none">
             <button class="gp-iconbtn${_smsDraftVoice ? ' gp-voice-armed' : ''}" id="gp-voice-toggle" title="Голосовое сообщение">${ic('fa-microphone')}</button>
             <textarea id="gp-input" rows="1" placeholder="${_smsDraftVoice ? 'Расшифровка голосового...' : 'Сообщение...'}"></textarea>
             <button class="gp-send" id="gp-send" ${sending ? 'disabled' : ''}>${ic('fa-paper-plane')}</button>
@@ -2306,20 +2305,9 @@ function renderThread(screen) {
 
     // Скрепка: приложить фото к смс
     const attachBtn = screen.querySelector('#gp-attach');
-    const attachFile = screen.querySelector('#gp-attach-file');
-    attachBtn?.addEventListener('click', () => attachFile?.click());
-    attachFile?.addEventListener('change', async () => {
-        const f = attachFile.files?.[0];
-        if (!f) return;
-        try {
-            _smsDraftImage = await compressImage(f, 720, 0.82);
-            render();
-        } catch (e) {
-            toast('Не удалось загрузить фото', 'fa-circle-exclamation');
-        }
-    });
+    attachBtn?.addEventListener('click', () => openSmsAttachments(screen,t,{attached:render}));
     screen.querySelector('#gp-attach-clear')?.addEventListener('click', () => {
-        _smsDraftImage = null;
+        setSmsAttachment(t.key,null);
         render();
     });
 
@@ -3420,8 +3408,13 @@ function renderIgNewStory(screen) {
     file?.addEventListener('change', async () => {
         const f = file.files?.[0];
         if (!f) return;
+        const owner=getMeta();
         try {
-            _storyDraftImage = await compressImage(f, 720, 0.82);
+            const prepared=await preparePhotoUpload(f);
+            if(getMeta()!==owner||currentScreen!=='ignewstory'||!isPhoneAppInstalled('ig'))return;
+            const image=await persistPhoto(prepared,'story');
+            if(getMeta()!==owner||currentScreen!=='ignewstory'||!isPhoneAppInstalled('ig'))return;
+            _storyDraftImage = image;
             render();
         } catch (e) {
             toast('Не удалось загрузить фото', 'fa-circle-exclamation');
@@ -6835,12 +6828,13 @@ async function doSend(key, opts = {}) {
     const fromInput = opts.text === undefined;
     const text = (fromInput ? (input?.value || '') : opts.text).trim();
     const shot = opts.shot || null;
-    if (!text && !_smsDraftImage && !shot) return;
+    const attachment=fromInput?getSmsAttachment(key):null;
+    if (!text && !attachment?.image && !shot) return;
     const t = getThread(key);
     const name = t ? (t.originalName||t.name||t.key) : key;
     const isGroup = !!t?.isGroup;
-    const draftImg = fromInput ? _smsDraftImage : null;
-    if (fromInput) _smsDraftImage = null;
+    const draftImg = attachment?.image||null;
+    if (fromInput) setSmsAttachment(key,null);
     const asVoice = fromInput && _smsDraftVoice && !!text; // голосовое без расшифровки не бывает
     if (fromInput) _smsDraftVoice = false;
 
@@ -6849,6 +6843,7 @@ async function doSend(key, opts = {}) {
 
     // Сообщение чата: скрытый маркер + видимый текст (модель и без инжекции поймёт формат)
     const markerBase = isGroup ? { to: `группа:${name}` } : { to: name, contactKey:key };
+    if(attachment?.description)markerBase.photo=attachment.description;
     if (asVoice) markerBase.voice = true;
     if (shot) markerBase.shot = shot;
     const marker = `<!--tel:out:${JSON.stringify(markerBase)}-->`;
@@ -6862,9 +6857,10 @@ async function doSend(key, opts = {}) {
     // Скрин виден и модели: она должна понимать, ЧТО именно переслали
     const shotTok = shot ? `*${shot.app === 'msg' ? (en ? 'forwarded' : 'переслано') : (en ? 'screenshot' : 'скрин')}: ${shotLabel(shot)}*` : '';
     const mes = `${marker}\n${visible} ${draftImg ? photoTok + ' ' : ''}${shotTok ? shotTok + ' ' : ''}${text}`;
-
+    let outgoingSent=false;
     try {
         await sendMessageAsUser(mes);
+        outgoingSent=true;
         if (getMeta() !== owner) return;
 
         const ctx = SillyTavern.getContext();
@@ -6872,8 +6868,7 @@ async function doSend(key, opts = {}) {
         if (draftImg && outgoing) {
             let src = draftImg;
             try {
-                const base64 = draftImg.replace(/^data:image\/[a-z]+;base64,/i, '');
-                src = await saveBase64AsFile(base64, 'glassphone', `sms_${Date.now()}`, 'jpeg');
+                src = await persistPhoto(draftImg,'sms');
             } catch (error) {
                 console.warn('[GlassPhone] keeping attached image dataURL:', error);
             }
@@ -6904,6 +6899,7 @@ async function doSend(key, opts = {}) {
         await insertGhostReply(name,privateSmsReplyTags(thread,reply));
     } catch (e) {
         if (e.name === 'AbortError') return;
+        if(!outgoingSent&&attachment&&getMeta()===owner&&!getSmsAttachment(key))setSmsAttachment(key,attachment);
         console.error('[GlassPhone] send failed:', e);
         toast('Не удалось получить ответ — нажми перегенерацию', 'fa-circle-exclamation');
     } finally {

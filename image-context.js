@@ -1,8 +1,15 @@
 // This module only reads image extension data, so the phone follows changes
 // to its enabled presets and lorebooks on every generation.
+function presetNamePattern(name) {
+    // Names can contain comma-separated aliases, with an optional trailing comma.
+    return [...new Set(String(name || '').split(',').map(alias => alias.trim()).filter(Boolean))]
+        .sort((a, b) => b.length - a.length)
+        .map(alias => alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+}
+
 export function containsPresetName(text, name) {
-    const escaped = String(name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return !!escaped && new RegExp(`(^|[^\\p{L}\\p{N}_])${escaped}(?=$|[^\\p{L}\\p{N}_])`, 'iu').test(text);
+    const pattern = presetNamePattern(name);
+    return !!pattern && new RegExp(`(^|[^\\p{L}\\p{N}_])(?:${pattern})(?=$|[^\\p{L}\\p{N}_])`, 'iu').test(text);
 }
 
 // Keep Cyrillic preset substitution inside the phone extension.
@@ -11,8 +18,9 @@ export function applyPhoneImagePresets(prompt, settings) {
     for (const preset of settings?.novelaiPresets || []) {
         const value = String(preset?.value ?? (typeof preset?.tags === 'string' ? preset.tags : '')).trim();
         if (!preset || preset.enabled === false || !preset.name || !value) continue;
-        const escaped = String(preset.name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const regex = new RegExp(`(^|[^\\p{L}\\p{N}_])${escaped}(?=$|[^\\p{L}\\p{N}_])`, 'giu');
+        const pattern = presetNamePattern(preset.name);
+        if (!pattern) continue;
+        const regex = new RegExp(`(^|[^\\p{L}\\p{N}_])(?:${pattern})(?=$|[^\\p{L}\\p{N}_])`, 'giu');
         result = result.replace(regex, (_match, boundary) => boundary + value);
     }
     return result;

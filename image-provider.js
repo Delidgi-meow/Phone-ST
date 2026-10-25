@@ -37,7 +37,7 @@ export async function generateIsolatedImage(mod, prompt, style, onStatus, option
     const provider = providers.resolveActiveProvider(settings);
     if (!provider) throw new Error('Провайдер картинок не настроен');
     const refsEnabled = provider.supportsReferences?.(settings)!==false;
-    const matched = !refsEnabled?[]:options.referencePolicy==='contacts'?(sceneReferences||[]):!options.referencePolicy?[...(sceneReferences || []), ...(mod.parser?.getMatchedAdditionalReferences?.(prompt) || [])]:[];
+    const matched = !refsEnabled?[]:['contacts','description'].includes(options.referencePolicy)?(sceneReferences||[]):!options.referencePolicy?[...(sceneReferences || []), ...(mod.parser?.getMatchedAdditionalReferences?.(prompt) || [])]:[];
     const seen = new Set();
     const matchedAdditionalRefs = matched.filter(ref => {
         const key = JSON.stringify([ref.name, ref.imagePath]);

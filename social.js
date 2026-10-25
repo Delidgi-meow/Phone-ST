@@ -6,15 +6,16 @@ import { isPhoneAppInstalled, phoneAppForThread } from './state.js';
 import { phonePlatformApp } from './phone-apps.js';
 import { normalizePhoneSpaces, parsePhoneJson } from './phone-text.js';
 import { buildPhoneCallContext, buildPhoneConversationContext } from './call-context.js';
-import { generateRaw, user_avatar, getThumbnailUrl, saveSettingsDebounced } from '../../../../script.js';
+import { generateRaw, generateRawData, user_avatar, getThumbnailUrl, saveSettingsDebounced } from '../../../../script.js';
 import { saveBase64AsFile } from '../../../utils.js';
 import { extensionNames, extension_settings } from '../../../extensions.js';
 import { getMeta, saveMeta, keyOf, scanChat, getSettings, stripThink, textMentionsName, stripHandle, isBanned, displayName, getRpDateTime, extractTemporalContext, isUserName, isAppJournal, getPhoneMessageText, contactOriginalName, contactIdentityPrompt, resolveContactKey } from './state.js';
-import { buildPhoneImageContext, applyPhoneImagePresets } from './image-context.js';
+import { buildPhoneImageContext, applyPhoneImagePresets, containsPresetName } from './image-context.js';
 import { generateIsolatedImage, imageProviderSupportsReferences } from './image-provider.js';
 import { personaImageTags, isolateShopImageSettings, shopProductTags, shopBooruPrompt } from './shop-image.js';
 import { contactImageSubjects, contactImageSettings, contactReferenceHints, contactReferenceMatches } from './contact-images.js';
 import { generatePhoneBlockPrompt } from './external-image-blocks.js';
+import { requireCompleteImagePrompt } from './image-prompt-completion.js';
 import { savedImagePrompt, saveImagePrompt } from './image-prompt-cache.js';
 import { getPhoneActivityText, phoneActivityAllowed, getThread } from './state.js';
 import { messageForward } from './message-forward.js';
@@ -1044,7 +1045,7 @@ async function toDataUrl(src) {
 
 // ── Прямой запрос ТЕКУЩИМ chat-completion подключением (без профиля/пресета) ──
 // Принимает готовый массив messages, поэтому поддерживает финальный assistant-prefill.
-async function currentApiRequest(messages, maxTokens = 1024) {
+async function currentApiRequest(messages, maxTokens = 1024, requireComplete = false) {
     try {
         const ctx = SillyTavern.getContext();
         if (ctx?.mainApi !== 'openai') return null; // только chat completion
@@ -1067,12 +1068,14 @@ async function currentApiRequest(messages, maxTokens = 1024) {
             custom_url: oai.custom_url,
             reverse_proxy: oai.reverse_proxy,
             proxy_password: oai.proxy_password,
-        }, {}, true);
+        }, {}, !requireComplete);
 
+        if (requireComplete) requireCompleteImagePrompt(res);
         const raw = await extractGeneratedText(res);
         const out = cleanGenOutput(raw);
         return out || null;
     } catch (e) {
+        if (e.name === 'ImagePromptIncomplete') throw e;
         const rescued = cleanGenOutput(await extractGeneratedText(e));
         if (isUsableGeneratedText(rescued)) {
             console.warn('[GlassPhone] currentApiRequest: ST сообщил об ошибке, но candidate восстановлен:', rootErrorMessage(e));
@@ -1220,7 +1223,7 @@ function profileInfo(profileId) {
     };
 }
 
-async function profileRequest(profileId, messages, maxTokens) {
+async function profileRequest(profileId, messages, maxTokens, requireComplete = false) {
     const ctx = SillyTavern.getContext();
     const cm = ctx?.ConnectionManagerRequestService;
     if (!cm?.sendRequest) {
@@ -1229,8 +1232,9 @@ async function profileRequest(profileId, messages, maxTokens) {
     const built = profileInfo(profileId);
     if (!built) throw new Error(`Профиль подключения не найден: ${profileId}`);
     const res = await cm.sendRequest(profileId, messages, maxTokens, {
-        stream: false, extractData: true, includePreset: false, includeInstruct: false,
+        stream: false, extractData: !requireComplete, includePreset: false, includeInstruct: false,
     });
+    if (requireComplete) requireCompleteImagePrompt(res);
     return { content: await extractGeneratedText(res), info: `${built.info} · Connection Manager` };
 }
 
@@ -1248,7 +1252,7 @@ function socialTokenLimit(requested = 1024) {
     return configured ? Math.min(taskLimit, configured) : taskLimit;
 }
 
-async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '', app = null, calendarTask = false, setupTask = false } = {}) {
+async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '', app = null, calendarTask = false, setupTask = false, requireComplete = false } = {}) {
     const st = getSettings();
     const activityVersion = st.phoneActivityVersion;
     const checkActivity = () => {
@@ -1291,10 +1295,11 @@ async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '',
             const built = profileInfo(profileId);
             logReq('запрос (профиль)', `${built?.info || profileId} · ${String(prompt).length} симв.${image ? ' + фото' : ''}${usePrefill ? ' · assistant-prefill' : ''}${useFigureSpaces ? ' · U+2007' : ''} · max ${maxTokens}`);
             checkActivity();
-            const res = await profileRequest(profileId, requestMessages, maxTokens);
+            const res = await profileRequest(profileId, requestMessages, maxTokens, requireComplete);
             logOk('ответ (профиль)', `${String(res.content || '').length} симв.`);
             return finish(res.content);
         } catch (e) {
+            if (e.name === 'ImagePromptIncomplete') throw e;
             const root = rootErrorMessage(e);
             const rescued = await recoverGeneratedText(e, finish, usePrefill ? prefill : '');
             if (rescued !== null) {
@@ -1315,10 +1320,11 @@ async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '',
                     console.warn('[GlassPhone] профиль не принял assistant-prefill; fallback к текстовой эмуляции:', root);
                     logReq('повтор (эмуляция префилла)', `${profileId} · max ${maxTokens}`);
                     checkActivity();
-                    const retry = await profileRequest(profileId, [{ role: 'user', content }], maxTokens);
+                    const retry = await profileRequest(profileId, [{ role: 'user', content }], maxTokens, requireComplete);
                     logOk('ответ (эмуляция префилла)', `${String(retry.content || '').length} симв.`);
                     return finish(retry.content);
                 } catch (retryError) {
+                    if (retryError.name === 'ImagePromptIncomplete') throw retryError;
                     const retryRoot = rootErrorMessage(retryError);
                     const rescuedRetry = await recoverGeneratedText(retryError, finish, usePrefill ? prefill : '');
                     if (rescuedRetry !== null) {
@@ -1348,26 +1354,32 @@ async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '',
 
     // Путь 3: текущий chat-completion API. При включённом префилле сначала
     // пробуем настоящий массив user + assistant, без пресета и истории ST.
-    if (usePrefill) {
-        logReq('запрос (текущий API)', `assistant-prefill · max ${maxTokens}${useFigureSpaces ? ' · U+2007' : ''}`);
+    if (usePrefill || requireComplete) {
+        logReq('запрос (текущий API)', `${usePrefill ? 'assistant-prefill' : 'полный ответ для картинки'} · max ${maxTokens}${useFigureSpaces ? ' · U+2007' : ''}`);
         checkActivity();
-        const direct = await currentApiRequest(messages, maxTokens);
+        const direct = await currentApiRequest(messages, maxTokens, requireComplete);
         if (direct !== null) {
             logOk('ответ (текущий API)', `${String(direct || '').length} симв.`);
             return finish(direct);
         }
-        _noPrefill.add(profileId || '(current)');
-        console.warn('[GlassPhone] текущий API не принял messages-prefill; используется текстовая эмуляция');
+        if (usePrefill) _noPrefill.add(profileId || '(current)');
+        console.warn('[GlassPhone] прямой запрос недоступен; используется текстовая эмуляция');
     }
 
     // Путь 4: text-completion/несовместимый API через generateRaw.
     logReq('запрос (текущий API)', `max ${maxTokens}${image ? ' · фото не приложено' : ''}${usePrefill ? ' · эмуляция префилла' : ''}${useFigureSpaces ? ' · U+2007' : ''}`);
     try {
         checkActivity();
-        const res = await generateRaw({ prompt: fallbackPrompt, responseLength: maxTokens });
+        let res;
+        if (requireComplete) {
+            const data = await generateRawData({ prompt: fallbackPrompt, responseLength: maxTokens });
+            requireCompleteImagePrompt(data);
+            res = await extractGeneratedText(data);
+        } else res = await generateRaw({ prompt: fallbackPrompt, responseLength: maxTokens });
         logOk('ответ (текущий API)', `${String(res || '').length} симв.`);
         return finish(res);
     } catch (e) {
+        if (e.name === 'ImagePromptIncomplete') throw e;
         const root = rootErrorMessage(e);
         const rescued = await recoverGeneratedText(e, finish, usePrefill ? prefill : '');
         if (rescued !== null) {
@@ -2884,6 +2896,7 @@ function buildImagePrompt(post, { anonymous = false, allowChar = false } = {}) {
 async function sceneToBooruTags(post, { anonymous, imageContext = '' }) {
     const productOnly=post.kind==='shop'&&!post.tryOn;
     const scene = post.imgDesc || post.caption || `photo posted by ${post.author}`;
+    const framing = post.framing || (post.kind === 'of' ? getSettings().imgPromptOf : getSettings().imgPromptIg) || '';
     const nsfw = post.kind === 'of'
         ? 'This is adult NSFW content — include explicit danbooru tags matching the scene, do not sanitize.'
         : '';
@@ -2898,10 +2911,13 @@ async function sceneToBooruTags(post, { anonymous, imageContext = '' }) {
     }
     const prompt = `Convert this scene into ONE line of English Danbooru-style image tags for an anime image model (NovelAI).
 Scene: ${scene}
+${framing ? `Framing requirements: ${framing}` : ''}
 ${post.kind==='shop'?`Literal product name: ${post.productName||scene}. Product identity tags: ${shopProductTags(post).join(', ')}. Preserve that exact type of item; do not substitute a bag, backpack, armor or another garment.`:''}
 ${imageContext ? `\nAppearance and object details from the image extension (use only for subjects actually in this scene):\n${imageContext}\nPreserve these established details when converting the scene to tags.\n` : ''}
 
 Rules:
+ - Preserve the exact requested objects and actions. Do not replace a named prop with a phone or another object just because this is a social-media photo.
+ - Supplied appearance details override generic assumptions: preserve hair color, eye color and other established traits; do not add conflicting traits.
 ${productOnly?'- Start with no humans, still life, product focus. Do not add 1girl, 1boy, portrait, hair or facial features. Then describe the exact object, color, material, shape, full item and background.':'- Start with subject count (1girl / 1boy / 2girls / 1girl 1boy / etc.), add "solo" if only one person. Then: appearance, clothing, pose, expression, setting/background, lighting.'}
 ${post.kind==='shop'&&post.tryOn?'- This is a clothing fitting on the specified persona. Preserve provided face/hair/body traits; the catalog item replaces their old outfit. Frame the garment and body wearing it; no cropped face portrait.':''}
 - End with quality tags (masterpiece, best quality, highly detailed).
@@ -2910,7 +2926,13 @@ ${post.kind==='shop'&&post.tryOn?'- This is a clothing fitting on the specified 
 ${who} ${nsfw}
 Output ONLY the comma-separated tags.`;
     try {
-        const raw = await socialGen(prompt, { maxTokens: 400 });
+        let raw;
+        try {
+            raw = await socialGen(prompt, { maxTokens: 2400, requireComplete: true });
+        } catch (error) {
+            if (error.name !== 'ImagePromptIncomplete' || socialTokenLimit(4800) <= socialTokenLimit(2400)) throw error;
+            raw = await socialGen(prompt, { maxTokens: 4800, requireComplete: true });
+        }
         const tags = String(raw || '')
             .replace(/<!--[\s\S]*?-->/g, '')
             .replace(/^[^:]*tags?:\s*/i, '')
@@ -2919,10 +2941,11 @@ Output ONLY the comma-separated tags.`;
             .replace(/\s*,\s*/g, ', ')
             .replace(/(,\s*)+/g, ', ')
             .trim().replace(/^,|,$/g, '').trim();
+        if (!tags) throw new Error('Модель вернула пустое описание картинки.');
         return tags;
     } catch (e) {
         console.warn('[GlassPhone] sceneToBooruTags failed:', e);
-        return '';
+        throw e;
     }
 }
 
@@ -3047,10 +3070,12 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
     // упоминает её имя/селфи-слова, описания нет вовсе, это OF или её фейскам-стрим.
     // (\b не работает с кириллицей — ручные границы)
     const selfDesc = `${post.imgDesc || ''} ${post.caption || ''}`.trim();
+    const userAliasMention = st.imageGenExtensionContext !== false && (sourceSettings.novelaiPresets || []).some(preset =>
+        preset?.enabled !== false && containsPresetName(getUserName(), preset?.name) && containsPresetName(selfDesc, preset?.name));
     const SELF_RE = /(^|[^а-яёa-z0-9])(я|мы|меня|себя|себе|собой|селфи|selfie|me|myself|we)(?=$|[^а-яёa-z0-9])/i;
     const userInFrame = !!(isShop&&post.tryOn) || isUserPost && (
         !post.imgDesc || post.kind === 'of' || !!post.stream
-        || textMentionsName(selfDesc, getUserName()) || SELF_RE.test(selfDesc)
+        || textMentionsName(selfDesc, getUserName()) || userAliasMention || SELF_RE.test(selfDesc)
     );
     // Канал ведёт человек, но его посты — не селфи: мишень, инструктаж, стакан
     // на столе. В кадре он только если описание кадра его называет.
@@ -3086,6 +3111,10 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
         const hints=contactReferenceHints(contactSubjects);if(hints)imageContext.hints=[imageContext.hints,hints].filter(Boolean).join('\n');
         imageContext.lorebookDescriptions.push(...contactSubjects.map(item=>contactBooru&&item.tags?item.tags:item.appearance||item.tags).filter(Boolean));
     }
+    if(options.descriptionOnly && userInFrame && st.imageGenExtensionContext !== false){
+        const appearance=personaImageTags(sourceSettings,personaAvatarId,getUserName());
+        if(appearance)imageContext.hints=[imageContext.hints,`${getUserName()}: ${appearance}`].filter(Boolean).join('\n');
+    }
 
     let prompt;
     let externalInstruction = null;
@@ -3099,7 +3128,7 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
     if (blockKey) {
         const framing = post.framing || (post.kind === 'of' ? st.imgPromptOf : st.imgPromptIg) || '';
         externalInstruction = await generatePhoneBlockPrompt({ ...post, framing }, {
-            imageContext: imageContext.hints, parser: mod.parser, onStatus, signal, blockKey,
+            imageContext: imageContext.hints, parser: mod.parser, onStatus, signal, blockKey, descriptionOnly:!!options.descriptionOnly,
         });
         prompt = externalInstruction.prompt;
     } else if (st.imgTagMode || shopBooru || contactBooru) {
@@ -3157,6 +3186,12 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
         requestSettings.overrideImageSize = false;
     }
     const genOptions = { providerSettings: requestSettings };
+    if(options.descriptionOnly){
+        genOptions.referencePolicy='description';
+        genOptions.includeReferencePromptBlocks=false;
+        requestSettings.autoDetectNames=false;
+        genOptions.referenceInstruction='References supply appearance only for subjects explicitly requested in the photo. Do not copy their setting, pose, objects or other people.';
+    }
     if(contactSubjects.length){
         genOptions.referencePolicy='contacts';genOptions.includeReferencePromptBlocks=false;
         if(contactRefsSupported)genOptions.phoneContactReferences=contactSubjects.filter(item=>item.src).map(item=>({name:item.name,imagePath:item.src,description:item.appearance||'Preserve this person’s face and identity; clothing and pose follow the requested scene.'}));
