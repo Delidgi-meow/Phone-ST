@@ -17,14 +17,14 @@ function identity(post, cancelKey, blockKey = getSettings().imageGenBlockKey || 
 export function savedImagePrompt(post, cancelKey = null, blockKey) {
     const { key, input } = identity(post, cancelKey, blockKey);
     const cached = getMeta().imagePrompts?.[key];
-    return cached?.input === input && typeof cached.prompt === 'string' && cached.prompt.trim()
+    return cached?.input === input && (post.imageSubjectSignature === undefined || post.imageSubjectSignature === cached.subjectSignature) && typeof cached.prompt === 'string' && cached.prompt.trim()
         ? cached : null;
 }
 
 export function saveImagePrompt(post, cancelKey, prompt, instruction, blockKey) {
     const { key, input } = identity(post, cancelKey, blockKey), root = getMeta();
     if (!root.imagePrompts || typeof root.imagePrompts !== 'object' || Array.isArray(root.imagePrompts)) root.imagePrompts = {};
-    root.imagePrompts[key] = { input, prompt, instruction: instruction ? { ...instruction } : null, at: Date.now() };
+    root.imagePrompts[key] = { input, subjectSignature:post.imageSubjectSignature, prompt, instruction: instruction ? { ...instruction } : null, at: Date.now() };
     const entries = Object.entries(root.imagePrompts).sort((a, b) => Number(b[1]?.at || 0) - Number(a[1]?.at || 0));
     for (const [oldKey] of entries.slice(250)) delete root.imagePrompts[oldKey];
     saveMeta();

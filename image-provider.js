@@ -12,9 +12,16 @@ function waitForRetry(ms, signal) {
     });
 }
 
+// Match the extension's pipeline: collection belongs to the provider, even
+// when an OpenAI-compatible proxy uses an unknown/custom model identifier.
+// NovelAI alone explicitly disables collection for unsupported model versions.
+export function canCollectPhoneReferences(provider,settings){
+    return settings.apiType!=='novelai'||provider.supportsReferences?.(settings)!==false;
+}
+
 export async function imageProviderSupportsReferences(mod,settings){
     if(mod.folder&&!mod.builtin){
-        try{const providers=await import('/scripts/extensions/third-party/'+mod.folder+'/src/providers.js');const provider=providers.resolveActiveProvider(settings);return !!provider&&provider.supportsReferences?.(settings)!==false;}catch{return false;}
+        try{const providers=await import('/scripts/extensions/third-party/'+mod.folder+'/src/providers.js');const provider=providers.resolveActiveProvider(settings);return !!provider&&canCollectPhoneReferences(provider,settings);}catch{return false;}
     }
     const model=String(settings.naisteraModel||settings.model||'').toLowerCase();
     if(settings.apiType==='naistera')return ['grok','nano banana','grok-pro'].includes(model);
@@ -36,8 +43,8 @@ export async function generateIsolatedImage(mod, prompt, style, onStatus, option
     providers.validateSettings(settings);
     const provider = providers.resolveActiveProvider(settings);
     if (!provider) throw new Error('Провайдер картинок не настроен');
-    const refsEnabled = provider.supportsReferences?.(settings)!==false;
-    const matched = !refsEnabled?[]:['contacts','description'].includes(options.referencePolicy)?(sceneReferences||[]):!options.referencePolicy?[...(sceneReferences || []), ...(mod.parser?.getMatchedAdditionalReferences?.(prompt) || [])]:[];
+    const refsEnabled = canCollectPhoneReferences(provider,settings);
+    const matched = !refsEnabled?[]:['contacts','description','subjects'].includes(options.referencePolicy)?(sceneReferences||[]):!options.referencePolicy?[...(sceneReferences || []), ...(mod.parser?.getMatchedAdditionalReferences?.(prompt) || [])]:[];
     const seen = new Set();
     const matchedAdditionalRefs = matched.filter(ref => {
         const key = JSON.stringify([ref.name, ref.imagePath]);

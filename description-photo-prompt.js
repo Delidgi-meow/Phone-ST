@@ -1,3 +1,5 @@
+import { matchesImageIdentity } from './image-subjects.js';
+
 // A manual photo has its own scene. Never expand arbitrary ST/ExtBlocks
 // macros here: they can read chat history, previous images or the main prompt.
 export function descriptionBlockMessages(block, post, imageContext = '', identities = {}) {
@@ -11,7 +13,7 @@ export function descriptionBlockMessages(block, post, imageContext = '', identit
         (_match, key) => values[key.trim()] ?? '');
     const mentions = (text, name) => String(name || '').split(',').map(alias => alias.trim()).filter(Boolean)
         .some(alias => new RegExp(`(^|[^\\p{L}\\p{N}_])${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[^\\p{L}\\p{N}_])`, 'iu').test(text));
-    if (mentions(scene, identities.charName)) values.char = identities.charName;
+    if (post.imageSubjects?.char || mentions(scene, identities.charName)) values.char = identities.charName;
     const appearances = [];
     for (const item of block.context || []) {
         // Read only literal identity specifications. Do not call ContextService:
@@ -21,7 +23,7 @@ export function descriptionBlockMessages(block, post, imageContext = '', identit
         const name = formatText(rawName).trim();
         const isUser = /^\{\{\s*user\s*\}\}$/i.test(rawName)
             || (name && mentions(post.author || '', name));
-        const pictured = name && mentions(scene, name);
+        const pictured = name && (mentions(scene, name) || post.imageSubjects?.subjects?.some(subject=>matchesImageIdentity(name,subject)));
         if (!isUser && !pictured) continue;
         const text = formatText(item.text).trim();
         if (text) appearances.push(`${name || post.author} — identity/appearance only, use ONLY if this person is requested in the photo:\n${text}`);

@@ -16,6 +16,7 @@ import { personaImageTags, isolateShopImageSettings, shopProductTags, shopBooruP
 import { contactImageSubjects, contactImageSettings, contactReferenceHints, contactReferenceMatches } from './contact-images.js';
 import { generatePhoneBlockPrompt } from './external-image-blocks.js';
 import { requireCompleteImagePrompt } from './image-prompt-completion.js';
+import { resolveImageSubjects, loadImageIdentityContext, matchesImageIdentity } from './image-subjects.js';
 import { savedImagePrompt, saveImagePrompt } from './image-prompt-cache.js';
 import { getPhoneActivityText, phoneActivityAllowed, getThread } from './state.js';
 import { messageForward } from './message-forward.js';
@@ -3053,6 +3054,12 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
     const sourceSettings=structuredClone(nvSettings||imgBucket()||{}),phoneProfile=_imgProfile(st.imageGenProfileId);
     if(phoneProfile)for(const [key,value]of Object.entries(phoneProfile))if(key!=='id'&&key!=='name'&&key in sourceSettings)sourceSettings[key]=value;
     const useModel=effectiveModel(sourceSettings);if(useModel)sourceSettings.model=useModel;
+    const identityLibrary=isShop?{}:await loadImageIdentityContext(mod,sourceSettings);
+    if(getMeta()!==owner||signal?.aborted)throw new ImageGenCancelled();
+    const identityContext=SillyTavern.getContext();
+    const imageSubjects=resolveImageSubjects(post.imgDesc||post.caption||'',{userName:getUserName(),charName:mainCharName(),
+        cardName:identityContext.characters?.[identityContext.characterId]?.name||'',settings:sourceSettings,meta:owner,library:identityLibrary});
+    const scenePost={...post,imgDesc:post.imgDesc?imageSubjects.scene:post.imgDesc,imageSubjects};
     const shopBooru=isShop&&(st.imgTagMode||sourceSettings.apiType==='novelai'||/novelai|nai-diffusion/i.test(useModel));
     const personaAvatarId=String(post.personaAvatarId||user_avatar||'');
     const personaTags=isShop&&post.tryOn?personaImageTags(sourceSettings,personaAvatarId,post.author||getUserName()):'';
@@ -3060,7 +3067,7 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
     if(isShop&&post.tryOn&&!tryOnAvatar&&!personaTags)throw new Error('Для примерки нужны теги внешности персоны в картинкорасширении или её аватарка и модель с поддержкой референсов.');
     const isUserPost = post.ak === 'user';
     const isContactPost = typeof post.ak === 'string' && post.ak.startsWith('contact:');
-    const contactSubjects=isShop?[]:contactImageSubjects(post,getContactAvatar);
+    const contactSubjects=isShop?[]:contactImageSubjects({...post,imgDesc:imageSubjects.matchText},getContactAvatar);
     const contactRefsSupported=contactSubjects.some(item=>item.src)&&await imageProviderSupportsReferences(mod,sourceSettings);
     const contactBooru=contactSubjects.length>0&&(st.imgTagMode||/novelai|nai-diffusion/i.test(sourceSettings.apiType+' '+useModel));
     const contactOverrides=contactSubjects.filter(item=>contactRefsSupported||item.appearance||item.tags);
@@ -3073,14 +3080,14 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
     const userAliasMention = st.imageGenExtensionContext !== false && (sourceSettings.novelaiPresets || []).some(preset =>
         preset?.enabled !== false && containsPresetName(getUserName(), preset?.name) && containsPresetName(selfDesc, preset?.name));
     const SELF_RE = /(^|[^а-яёa-z0-9])(я|мы|меня|себя|себе|собой|селфи|selfie|me|myself|we)(?=$|[^а-яёa-z0-9])/i;
-    const userInFrame = !!(isShop&&post.tryOn) || isUserPost && (
+    const userInFrame = !imageSubjects.excludedUser && (imageSubjects.user || !!(isShop&&post.tryOn) || isUserPost && (
         !post.imgDesc || post.kind === 'of' || !!post.stream
         || textMentionsName(selfDesc, getUserName()) || userAliasMention || SELF_RE.test(selfDesc)
-    );
+    ));
     // Канал ведёт человек, но его посты — не селфи: мишень, инструктаж, стакан
     // на столе. В кадре он только если описание кадра его называет.
     const blogAuthorOut = !isUserPost && !!post.blog && !!post.author && !!selfDesc
-        && !textMentionsName(selfDesc, post.author);
+        && !textMentionsName(selfDesc, post.author) && !imageSubjects.subjects.some(subject=>matchesImageIdentity(post.author,subject));
     post._behindCamera = (isUserPost && !userInFrame) || blogAuthorOut; // для buildImagePrompt/booru
     if(isContactPost&&!isShop&&getContactAvatar(post.ak.slice(8)))post._behindCamera=!contactSubjects.some(item=>item.key===resolveContactKey(post.ak.slice(8)));
     post._cameraName = isUserPost ? getUserName() : (post.author || '');
@@ -3094,14 +3101,15 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
     // сам по себе тянул его реф в каждый кадр
     const mentionsChar = !!charName && textMentionsName(
         `${post.imgDesc || post.caption || ''} ${post._behindCamera ? '' : (post.author || '')}`, charName);
-    const wantChar = !isShop&&(isCharPost&&!post._behindCamera || mentionsChar)&&!contactSubjects.some(item=>item.key===resolveContactKey(charName));
+    const charInFrame = !isShop&&!imageSubjects.excludedChar&&(imageSubjects.char||isCharPost&&!post._behindCamera||mentionsChar);
+    const wantChar = charInFrame&&!contactSubjects.some(item=>item.key===resolveContactKey(charName));
     // Анонимный рандом-аккаунт = НЕ юзер, НЕ контакт (НПС), НЕ главный персонаж.
     // Только для него ставим запрет на персону/главперсонажей.
-    const anonymous = !isUserPost && !isContactPost && !isCharPost && !contactSubjects.length;
+    const anonymous = !isUserPost && !isContactPost && !isCharPost && !contactSubjects.length && !imageSubjects.subjects.length;
 
     // Match on the original scene before translation drops Cyrillic names.
     // The author is a subject hint only when they are actually in the frame.
-    const referenceMatchPrompt = [post.imgDesc || post.caption,
+    const referenceMatchPrompt = [isShop?post.imgDesc||post.caption:imageSubjects.matchText,
         !post._behindCamera && !anonymous ? post.author : ''].filter(Boolean).join('\n');
     const imageContext = isShop ? {hints:personaTags,presetTags:personaTags?[personaTags]:[],lorebookDescriptions:[],references:[]} : st.imageGenExtensionContext !== false
         ? buildPhoneImageContext(referenceMatchPrompt, contextSettings, mod.parser)
@@ -3116,10 +3124,32 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
         if(appearance)imageContext.hints=[imageContext.hints,`${getUserName()}: ${appearance}`].filter(Boolean).join('\n');
     }
 
+    if(!isShop){
+        const details=[imageSubjects.hints];
+        if(st.imageGenExtensionContext!==false)imageContext.lorebookDescriptions.push(...(imageContext.references||[]).map(ref=>ref.description).filter(Boolean));
+        for(const [role,pictured] of [['user',userInFrame],['char',charInFrame]]){
+            if(!pictured)continue;
+            const name=role==='user'?getUserName():charName;
+            if(st.imageGenExtensionContext!==false&&identityLibrary[role]?.description)details.push(`${name} — established physical appearance: ${identityLibrary[role].description}`);
+            const outfit=identityLibrary[role==='user'?'outfitUser':'outfitChar'];
+            if(outfit)details.push(`${name} — CURRENT OUTFIT: ${outfit}. Apply these clothes to this person; preserve face, hair and body identity. Explicit clothing changes in the requested scene take precedence.`);
+        }
+        if(st.imageGenExtensionContext!==false)for(const subject of imageSubjects.subjects.filter(item=>item.npc)){
+            const npc=subject.npc,appearance=npc.appearance||npc.description||npc.tags;
+            if(appearance)details.push(`${subject.name} — appearance: ${appearance}`);
+            const image=npc.imagePath||npc.avatarData||npc.imageBase64||npc.imageData;
+            if(image){imageContext.references||=[];imageContext.references.push({name:subject.name,imagePath:/^(data:|https?:|\/)/.test(image)?image:`data:image/png;base64,${image}`,description:appearance||''});}
+        }
+        imageContext.hints=[imageContext.hints,...details].filter(Boolean).join('\n');
+        imageContext.lorebookDescriptions.push(...details.filter(Boolean));
+    }
+    scenePost._behindCamera=post._behindCamera;scenePost._cameraName=post._cameraName;
+    const cachePost={...post,imageSubjectSignature:JSON.stringify([imageSubjects.matchText,imageContext.hints])};
     let prompt;
     let externalInstruction = null;
     if (getMeta() !== owner || signal?.aborted) throw new ImageGenCancelled();
-    const cached = options.regeneratePrompt ? null : options.preparedPrompt || savedImagePrompt(post, cancelKey, blockKey);
+    const prepared=options.preparedPrompt?.subjectSignature===cachePost.imageSubjectSignature?options.preparedPrompt:null;
+    const cached = options.regeneratePrompt ? null : prepared || savedImagePrompt(cachePost, cancelKey, blockKey);
     if (cached) {
         prompt = cached.prompt;
         externalInstruction = cached.instruction ? { ...cached.instruction } : null;
@@ -3127,19 +3157,19 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
     } else {
     if (blockKey) {
         const framing = post.framing || (post.kind === 'of' ? st.imgPromptOf : st.imgPromptIg) || '';
-        externalInstruction = await generatePhoneBlockPrompt({ ...post, framing }, {
+        externalInstruction = await generatePhoneBlockPrompt({ ...scenePost, framing }, {
             imageContext: imageContext.hints, parser: mod.parser, onStatus, signal, blockKey, descriptionOnly:!!options.descriptionOnly,
         });
         prompt = externalInstruction.prompt;
     } else if (st.imgTagMode || shopBooru || contactBooru) {
         // Booru-режим: стиль/кадр из настроек (может быть тег-строкой) + сцена в теги
         if (onStatus) onStatus('Составляю теги...');
-        const tags = post.kind==='avatar'&&post.preparedImageTags?post.preparedImageTags:await sceneToBooruTags(post, { anonymous, imageContext: imageContext.hints });
+        const tags = post.kind==='avatar'&&post.preparedImageTags?post.preparedImageTags:await sceneToBooruTags(scenePost, { anonymous, imageContext: imageContext.hints });
         const framing = isShop?'':(post.framing || (post.kind === 'of' ? (st.imgPromptOf || '') : (st.imgPromptIg || ''))).trim();
         if(shopBooru&&!tags)throw new Error('Не удалось собрать Danbooru-теги товара. Нажми перерисовку, чтобы повторить; запрос картинки не отправлен.');
         prompt = tags
             ? [framing, tags].filter(Boolean).join(', ')
-            : buildImagePrompt(post, { anonymous, allowChar: wantChar });
+            : buildImagePrompt(scenePost, { anonymous, allowChar: wantChar });
         // Теги — англоязычные, имён в них не остаётся: без этого NPC-реф
         // в booru-режиме не подцепился бы никогда
         if (prompt && !anonymous && !isShop && !contactSubjects.length) {
@@ -3147,7 +3177,7 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
                 `${post.imgDesc || post.caption || ''} ${post._behindCamera ? '' : (post.author || '')}`, prompt);
         }
     } else {
-        prompt = buildImagePrompt(post, { anonymous, allowChar: wantChar });
+        prompt = buildImagePrompt(scenePost, { anonymous, allowChar: wantChar });
     }
     // Deterministic preset values survive conversion even if the text model
     // omits a trait. Text-only lorebook entries also work without an image.
@@ -3161,7 +3191,7 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
     }else if(isShop)prompt+='\n\n'+(post.tryOn?'CLOTHING FITTING: only the specified persona wears the exact catalog garment; preserve face/hair/body traits, replace the previous outfit, and show the garment clearly. No isolated face portrait.':'CATALOG ITEM ONLY: no humans, no faces, no portraits, no body parts. Depict the exact product and its material, color and shape.');
     if(getMeta()!==owner)throw new ImageGenCancelled();
     if (signal?.aborted) throw new ImageGenCancelled();
-    saveImagePrompt(post, cancelKey, prompt, externalInstruction, blockKey);
+    saveImagePrompt(cachePost, cancelKey, prompt, externalInstruction, blockKey);
     }
     if (getMeta() !== owner || signal?.aborted) throw new ImageGenCancelled();
 
@@ -3178,7 +3208,7 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
     Object.assign(requestSettings, {
         sendCharAvatar: !!wantChar, sendUserAvatar: isShop?!!tryOnAvatar:!!userInFrame,
         naisteraSendCharAvatar:!!wantChar,naisteraSendUserAvatar:isShop?!!tryOnAvatar:!!userInFrame,
-        swSendOutfitImageBot: !!wantChar, swSendOutfitImageUser: !isShop&&!!userInFrame,
+        swSendOutfitImageBot: !!charInFrame, swSendOutfitImageUser: !isShop&&!!userInFrame,
         imageContextEnabled: false,
     });
     if (post.aspect || st.imageGenSquare !== false) {
@@ -3186,6 +3216,13 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
         requestSettings.overrideImageSize = false;
     }
     const genOptions = { providerSettings: requestSettings };
+    if(!isShop){
+        requestSettings.optionalAvatarSending=false;
+        requestSettings.optionalWardrobeSending=false;
+        requestSettings.autoDetectNames=false;
+        genOptions.includeReferencePromptBlocks=false;
+        genOptions.referencePolicy='subjects';
+    }
     if(options.descriptionOnly){
         genOptions.referencePolicy='description';
         genOptions.includeReferencePromptBlocks=false;
