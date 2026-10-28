@@ -1,4 +1,6 @@
 import { normalizePhoneSpaces, parsePhoneJson } from './phone-text.js';
+import { deviceActions } from './device-actions.js';
+import { chatMedia, chatMediaKey } from './chat-media.js';
 import { PHONE_APPS, phoneAppId, phoneAppInstalled, phoneTagApp } from './phone-apps.js';
 
 import { chat_metadata } from '../../../../script.js';
@@ -11,7 +13,7 @@ import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.55.0';
+export const GP_VERSION = '2.57.4';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -530,16 +532,32 @@ function currentChatLength() {
 }
 
 export function isSmsBlocked(key) {
-    const ranges = getMeta().smsBlocks[resolveContactKey(key)];
-    return Array.isArray(ranges) && ranges.some(r => r && r.to == null);
+    return wasSmsBlockedAt(key,currentChatLength());
 }
+
+let deviceEventSnapshot=null;
+export function getDeviceEvents(){
+    if(deviceEventSnapshot)return deviceEventSnapshot;
+    const chat=SillyTavern.getContext()?.chat||[],events=[];
+    for(let i=0;i<chat.length;i++){const message=chat[i];if(!message||message.is_user||message.is_system)continue;
+        for(const event of deviceActions(stripThink(getPhoneActivityText(message,i))))if(!isUserName(event.actor))events.push({...event,index:i});}
+    return events;
+}
+export function isDeviceContactBlocked(app,key,index=currentChatLength()){
+    const k=resolveContactKey(key),events=[];
+    for(const event of getDeviceEvents())if(event.index<=index&&event.app===app&&resolveContactKey(event.to)===k&&event.action!=='send')events.push({index:event.index,blocked:event.action==='block'});
+    events.push(...(getMeta().deviceBlockOverrides?.[app]?.[k]||[]));events.sort((a,b)=>a.index-b.index);
+    return events.filter(event=>event.index<=index).at(-1)?.blocked===true;
+}
+export function overrideDeviceContactBlock(app,key,blocked){const meta=getMeta();meta.deviceBlockOverrides||={};meta.deviceBlockOverrides[app]||={};(meta.deviceBlockOverrides[app][resolveContactKey(key)]||=[]).push({index:currentChatLength(),blocked:!!blocked});saveMeta();}
 
 export function blockSmsContact(key) {
     const k = resolveContactKey(key);
     if (!k || k.startsWith('group:')) return false;
     const meta = getMeta();
+    if(isSmsBlocked(k))return false;
+    meta.smsBlockManual||={};(meta.smsBlockManual[k]||=[]).push({index:currentChatLength(),blocked:true});
     if (!Array.isArray(meta.smsBlocks[k])) meta.smsBlocks[k] = [];
-    if (meta.smsBlocks[k].some(r => r && r.to == null)) return false;
     meta.smsBlocks[k].push({ from: currentChatLength(), to: null });
     saveMeta();
     return true;
@@ -548,10 +566,12 @@ export function blockSmsContact(key) {
 export function unblockSmsContact(key) {
     const k = resolveContactKey(key);
     const meta = getMeta();
+    if(!isSmsBlocked(k))return false;
+    meta.smsBlockManual||={};(meta.smsBlockManual[k]||=[]).push({index:currentChatLength(),blocked:false});
     const ranges = meta.smsBlocks[k];
-    if (!Array.isArray(ranges)) return false;
+    if (!Array.isArray(ranges)){saveMeta();return true;}
     const open = [...ranges].reverse().find(r => r && r.to == null);
-    if (!open) return false;
+    if (!open){saveMeta();return true;}
     open.to = currentChatLength() - 1;
     saveMeta();
     return true;
@@ -559,18 +579,15 @@ export function unblockSmsContact(key) {
 
 export function getBlockedSmsKeys() {
     const meta = getMeta();
-    return Object.keys(meta.smsBlocks).filter(k => isSmsBlocked(k));
+    return [...new Set([...Object.keys(meta.smsBlocks),...getDeviceEvents().filter(event=>event.app==='sms').map(event=>resolveContactKey(event.to))])].filter(k => isSmsBlocked(k));
 }
 
 function wasSmsBlockedAt(key, chatIndex) {
-    const ranges = getMeta().smsBlocks[resolveContactKey(key)];
-    if (!Array.isArray(ranges)) return false;
-    return ranges.some(r => {
-        if (!r || !Number.isFinite(Number(r.from))) return false;
-        const from = Number(r.from);
-        const to = r.to == null ? Number.POSITIVE_INFINITY : Number(r.to);
-        return chatIndex >= from && chatIndex <= to;
-    });
+    const meta=getMeta(),k=resolveContactKey(key),events=[];
+    for(const range of meta.smsBlocks[k]||[]){events.push({index:Number(range.from),blocked:true});if(range.to!=null)events.push({index:Number(range.to)+1,blocked:false});}
+    for(const event of getDeviceEvents())if(event.app==='sms'&&resolveContactKey(event.to)===k&&event.action!=='send')events.push({index:event.index,blocked:event.action==='block'});
+    events.push(...(meta.smsBlockManual?.[k]||[]));events.sort((a,b)=>a.index-b.index);
+    return events.filter(event=>event.index<=chatIndex).at(-1)?.blocked===true;
 }
 
 // ── Группы ──
@@ -1294,7 +1311,8 @@ export function getRpDateTime() {
 export function scanChat() {
     const sig = chatSignature();
     if (_scanSig === sig && _scanCache) return _scanCache;
-    const res = scanChatUncached();
+    const previous=deviceEventSnapshot;deviceEventSnapshot=getDeviceEvents();
+    let res;try{res=scanChatUncached();}finally{deviceEventSnapshot=previous;}
     _scanSig = sig; _scanCache = res;
     return res;
 }
@@ -1380,7 +1398,9 @@ function scanChatUncached() {
         // Системные сообщения пропускаем, НО наши SMS-ответы (is_system с tel: тегами) — парсим
         if (msg.is_system && !ANY_TEL_RE.test(sourceText)) continue;
         // Теги внутри CoT-блоков не считаются (иначе дубли сообщений)
-        const text = stripThink(sourceText);
+        let text = stripThink(sourceText);
+        const deviceSends=!msg.is_user?deviceActions(text).filter(event=>event.action==='send'&&event.app==='sms'&&!isUserName(event.actor)):[];
+        for(const event of deviceSends)text+='\n<!--tel:out:'+JSON.stringify({to:event.to,...(event.chat?{group:event.chat}:{}),text:event.text,mixed:true,actor:event.actor,deviceTag:event.tag}).replace(/</g,'\\u003c').replace(/>/g,'\\u003e')+'-->';
 
         let time = null;
         const realDate = parseRealDate(msg.send_date);
@@ -1388,7 +1408,7 @@ function scanChatUncached() {
             time = new Date(realDate.getTime() + (offsets[i] || 0));
         }
 
-        if (msg.is_user) {
+        if (msg.is_user || deviceSends.length) {
             // Исходящая смс юзера
             const rpQuotes = extractRoleplaySms(text, getRoleplaySmsOptions());
             for (const om of text.matchAll(OUT_ALL_RE)) {
@@ -1407,6 +1427,10 @@ function scanChatUncached() {
                 const displayBody = normalizePhoneSpaces(body.replace(/\*(?:фото|photo):[^*]*\*\s*/i, '').replace(/\*(?:фото|photo)\*\s*/i, '').replace(/\*(?:переслано|forwarded):[^*]*\*\s*/i, '').trim());
                 const tagStart = text.indexOf(om[0]);
                 const entry = { dir: 'out', text: displayBody, idx: i, time, tagStart, tagEnd: tagStart + om[0].length, tagText: om[0] };
+                if(j.actor){entry.actor=String(j.actor);entry.tagText=j.deviceTag||entry.tagText;}
+                if(j.mediaKind)entry.mediaKind=j.mediaKind;
+                if(j.stickerId)entry.stickerId=j.stickerId;
+                if(j.stickerCaption)entry.stickerCaption=j.stickerCaption;
                 if (isVoice) entry.voice = true;
                 if (j.react) entry.react = String(j.react);
                 // Фото: путь из маркера (надёжно — часть текста) ИЛИ из extra.media (ST-нативно)
@@ -1416,6 +1440,8 @@ function scanChatUncached() {
                     if (ei) entry.img = ei;
                 }
                 if (j.photo) entry.photoDesc = String(j.photo).slice(0, 200);
+                const savedSticker=entry.img&&getMeta().stickers?.find(item=>item.image===entry.img);
+                if(savedSticker&&!entry.mediaKind){entry.mediaKind='sticker';entry.stickerId=savedSticker.id;entry.stickerCaption=savedSticker.caption||'';}
                 if (j.shot) entry.shot = j.shot;
                 if (groupName) {
                     if (body || entry.img) pushMsg(`group:${keyOf(groupName)}`, entry, groupName);
@@ -1442,7 +1468,7 @@ function scanChatUncached() {
             if (!j) continue;
             if (kind === 'contact' && j.name) {
                 addContact(j.name, j.number || '', 'tag');
-            } else if (kind === 'sms' && j.from && (j.text || j.photo || j.shot)) {
+            } else if (kind === 'sms' && j.from && (j.text || j.photo || j.shot || j.sticker || j.meme)) {
                 // Явные теги = наш протокол, модель ставит их осознанно — доверяем.
                 // Исключение первое: тег явно адресован боту (j.to = имя бота).
                 if (j.to && !msg.is_user && keyOf(j.to) === keyOf(msg.name)) {
@@ -1480,10 +1506,20 @@ function scanChatUncached() {
                 if (j.voice) entry.voice = true;
                 // Сгенерированное фото ММС (кнопка на заглушке пишет img в тег)
                 if (j.img) entry.img = String(j.img);
+                if(j.mediaKind)entry.mediaKind=j.mediaKind;
+                if(j.stickerId)entry.stickerId=j.stickerId;
+                if(j.stickerCaption)entry.stickerCaption=j.stickerCaption;
+                const generated=getMeta().generatedChatMedia?.[chatMediaKey(i,tm[0])];
+                const descriptor=chatMedia(j);
+                if(generated?.img){entry.img=generated.img;entry.mediaKind=generated.mediaKind;entry.stickerId=generated.stickerId;entry.stickerCaption=generated.stickerCaption;entry.photoDesc=generated.photo;}
+                else if(descriptor&&generated?.status!=='skipped'){entry.photoDesc=descriptor.description||'Стикер';entry.mediaKind=descriptor.kind;}
+                const savedSticker=entry.img&&getMeta().stickers?.find(item=>item.image===entry.img);
+                if(savedSticker&&!entry.mediaKind){entry.mediaKind='sticker';entry.stickerId=savedSticker.id;entry.stickerCaption=savedSticker.caption||'';}
                 // Реакция юзера на сообщение (пишется в тег из UI)
                 if (j.react) entry.react = String(j.react);
                 // Скрин поста из соцсети или канала: карточку рисует телефон
                 if (j.shot) entry.shot = j.shot;
+                if(!entry.text&&!entry.img&&!entry.photoDesc&&!entry.shot)continue;
                 if (j.chat) {
                     // Сообщение в групповой чат
                     pushMsg(`group:${keyOf(j.chat)}`, entry, String(j.chat));

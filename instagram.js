@@ -1,4 +1,5 @@
 import { isPhoneAppInstalled } from './state.js';
+import { getDeviceEvents } from './state.js';
 import { parsePhoneJson } from './phone-text.js';
 import { getMeta, saveMeta, getPhoneActivityText as getPhoneMessageText, stripThink, isUserName, isBanned, getSettings, phoneActivityAllowed } from './state.js';
 import { generateInstagramDmReply, logSocialToChat, getUserName, getStories, addIgComment, resolveAuthorKey } from './social.js';
@@ -83,6 +84,9 @@ function incomingShare(value){
 export function harvestInstagramTags(){
     if (!isPhoneAppInstalled('ig')) return 0;
     const data=getInstagram(),seen=new Set(data.seenTags);let added=0,changed=false;
+    for(const event of getDeviceEvents())if(event.app==='ig'&&event.action==='send'&&!event.chat){
+        if(addIgDm(event.to,{dir:'out',text:event.text,actor:event.actor,source:'device:'+event.index+':'+hash(event.tag)}))added++;
+    }
     const chat=SillyTavern.getContext()?.chat||[];
     for(let i=0;i<chat.length;i++){
         const message=chat[i];if(!message||message.is_user||message.is_system)continue;

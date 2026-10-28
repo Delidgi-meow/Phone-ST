@@ -1,4 +1,5 @@
 import { cancelPhoneImageGenerations } from './social.js';
+import { saveSticker } from './chat-media.js';
 import { renderAppStore } from './app-store.js';
 import { syncAppNotifications, markAppNotificationsRead } from './app-notifications.js';
 import { isPhoneAppInstalled, phoneAppForThread } from './state.js';
@@ -2171,7 +2172,8 @@ function renderThread(screen) {
         // (тот же хэш, что у аватара-градиента → цвет ника совпадает с аватаром)
         const senderLabel = t.isGroup && m.dir === 'in' && m.from
             ? `<div class="gp-bubble-sender" style="color:${senderColor(m.from)}">${esc(m.from)}</div>` : '';
-        const body = m.voice ? voiceBubbleHtml(m) : esc(m.text);
+        if(m.mediaKind==='sticker')media=media.replace('gp-bubble-img','gp-bubble-img gp-chat-sticker');
+        const body = (m.actor?`<small class="gp-device-actor">С телефона отправил(а): ${esc(m.actor)}</small>`:'')+(m.voice ? voiceBubbleHtml(m) : esc(m.text));
         const reaction = m.react ? REACTIONS.find(r => r.id === m.react) : null;
         const reactChip = reaction ? `<span class="gp-react-chip">${ic(reaction.icon)}</span>` : '';
         const picker = (_reactPickerFor === mi && _reactPickerKey === t.key)
@@ -2179,7 +2181,7 @@ function renderThread(screen) {
         bubbles += `
         <div class="gp-bubble-wrap ${m.dir === 'out' ? 'gp-out' : 'gp-in'}${reaction ? ' gp-has-react' : ''}">
             ${picker}
-            <div class="gp-bubble${m.voice ? ' gp-bubble-voice' : ''}" data-bmi="${mi}">${senderLabel}${media}${shotHtml(m)}${body}<button class="gp-sms-del" data-smsdel="${mi}" title="Удалить">${ic('fa-xmark')}</button>${reactChip}</div>
+            <div class="gp-bubble${m.voice ? ' gp-bubble-voice' : ''}${m.mediaKind==='sticker'?' gp-sticker-bubble':''}" data-bmi="${mi}">${senderLabel}${media}${shotHtml(m)}${body}<button class="gp-sms-del" data-smsdel="${mi}" title="Удалить">${ic('fa-xmark')}</button>${reactChip}</div>
             ${tm || mi===t.messages.length-1 ? `<div class="gp-bubble-time gp-sms-message-foot">${tm?`<span>${esc(tm)}</span>`:''}${mi===t.messages.length-1?`<button type="button" class="gp-sms-inline-regen" id="gp-regen" title="${m.dir==='in'?'Другой ответ':'Получить ответ'}" aria-label="${m.dir==='in'?'Другой ответ':'Получить ответ'}" ${sending?'disabled':''}>${ic('fa-rotate-right')}</button>`:''}</div>` : ''}
         </div>`;
     }
@@ -2417,7 +2419,7 @@ function renderThread(screen) {
             const mine = m.dir === 'out';
             const author = mine ? getUserName() : (m.from || t.name);
             const src = await generatePostImage(
-                { imgDesc: m.photoDesc, author, ak: mine ? 'user' : `contact:${keyOf(author)}`, kind: 'ig', mms: !mine },
+                { imgDesc: m.photoDesc, author, ak: mine ? 'user' : `contact:${keyOf(author)}`, kind: 'ig', mms: !mine,mediaKind:m.mediaKind,stickerCaption:m.stickerCaption||'',framing:m.mediaKind==='sticker'?'Single chibi sticker, expressive gesture, plain background, no photo framing, no phone UI':undefined,aspect:m.mediaKind==='sticker'?'1:1':undefined },
                 (status) => {
                     const el = document.querySelector(`[data-mmsdesc="${CSS.escape(genKey)}"]`);
                     if (el) el.textContent = status;
@@ -2428,7 +2430,8 @@ function renderThread(screen) {
             // (Раньше здесь была своя копия логики, резавшая по индексам —
             // а они посчитаны по stripThink-версии и съезжают, если модель
             // писала в <think>: картинка генерилась, но молча терялась.)
-            const saved = await rewriteSmsTag(m, t, (j) => { j.img = src; });
+            const sticker=m.mediaKind==='sticker'?saveSticker(getMeta(),{image:src,description:m.photoDesc,caption:m.stickerCaption||''}):null;if(sticker)saveMeta();
+            const saved = await rewriteSmsTag(m, t, (j) => { j.img = src;if(sticker){j.mediaKind='sticker';j.stickerId=sticker.id;j.stickerCaption=sticker.caption;} });
             if (saved) {
                 m.img = src;              // мгновенно, до пересканирования
                 toast('Фото готово', 'fa-image');
@@ -6804,7 +6807,7 @@ function privateSmsReplyTags(thread, result) {
         const sender = thread.isGroup ? reply.from : name;
         const sms = { from:sender, text:reply.text,
             ...(thread.isGroup ? {chat:name} : {}), ...(reply.forward ? {shot:reply.forward} : {}),
-            ...(reply.voice ? {voice:true} : {}), ...(reply.photo ? {photo:reply.photo} : {}) };
+            ...(reply.voice ? {voice:true} : {}), ...(reply.photo ? {photo:reply.photo} : {}),...(reply.img?{img:reply.img,mediaKind:reply.mediaKind,stickerId:reply.stickerId,stickerCaption:reply.stickerCaption}:{}) };
         const payer = contactOriginalName(resolveContactKey(sender), sender);
         const payments = (reply.bank || []).map(value => bankEvent({...value, payer}, getUserName())).filter(event => event && event.payer !== 'user');
         const plans = (reply.plans || []).filter(value => value && typeof value.text === 'string').map(value => ({
@@ -6844,6 +6847,9 @@ async function doSend(key, opts = {}) {
     // Сообщение чата: скрытый маркер + видимый текст (модель и без инжекции поймёт формат)
     const markerBase = isGroup ? { to: `группа:${name}` } : { to: name, contactKey:key };
     if(attachment?.description)markerBase.photo=attachment.description;
+    if(attachment?.mediaKind)markerBase.mediaKind=attachment.mediaKind;
+    if(attachment?.stickerId)markerBase.stickerId=attachment.stickerId;
+    if(attachment?.stickerCaption)markerBase.stickerCaption=attachment.stickerCaption;
     if (asVoice) markerBase.voice = true;
     if (shot) markerBase.shot = shot;
     const marker = `<!--tel:out:${JSON.stringify(markerBase)}-->`;

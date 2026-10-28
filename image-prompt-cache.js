@@ -8,7 +8,7 @@ function identity(post, cancelKey, blockKey = getSettings().imageGenBlockKey || 
         post.kind || 'ig', post.ak || '', post.author || '', post.imgDesc || '',
         post.caption || '', post.framing || '', post.aspect || '', !!post.mms,
         !!post.stream, !!post.tryOn, post.personaAvatarId || '',
-        post.contactAppearance || null, post.preparedImageTags || '',
+        post.contactAppearance || null, post.preparedImageTags || '',post.mediaKind||'',post.stickerCaption||'',
     ]);
     const key = JSON.stringify([post.kind || 'ig', cancelKey || post.id || input]);
     return { key, input };

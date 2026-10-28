@@ -5686,6 +5686,22 @@ img[data-zoom] { cursor: zoom-in; }
 #gp-phone :is(.gp-cal-birthdays-button,.gp-birthday-book button,.gp-birthday-book input):focus-visible{outline:2px solid var(--gp-accent-a);outline-offset:3px}
 
 /* Profile setup, channel polls and opt-in anonymous story questions. */
+#gp-phone .gp-device-actor{display:block;font-size:10px;line-height:1.5;opacity:.65;margin-bottom:6px}
+#gp-phone .gp-sticker-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:10px 0 22px}
+#gp-phone .gp-sticker-grid>p{grid-column:1/-1;color:var(--gp-text-dim);font-size:12px;line-height:1.6}
+#gp-phone .gp-sticker-item{position:relative;min-width:0}
+#gp-phone .gp-sticker-item>button:first-child{width:100%;aspect-ratio:1;border:0;background:transparent;padding:4px;cursor:pointer;border-radius:12px}
+#gp-phone .gp-sticker-item img{width:100%;height:100%;object-fit:contain;border-radius:50%}
+#gp-phone .gp-sticker-item>button:last-child{position:absolute;top:0;right:0;width:26px;height:26px;border:0;border-radius:50%;background:var(--gp-glass-strong);color:var(--gp-text-dim);font-size:18px;cursor:pointer}
+#gp-phone .gp-sticker-library form button{min-height:44px;width:100%}
+#gp-phone .gp-sticker-upload{display:block;width:100%;min-height:44px;margin:0 0 14px;border:1px solid var(--gp-border-soft);border-radius:12px;background:transparent;color:var(--gp-text);font:inherit;cursor:pointer}
+#gp-phone .gp-chat-sticker{width:170px;max-width:100%;aspect-ratio:1;border-radius:50%;overflow:hidden;background:transparent;border:0;box-shadow:none}
+#gp-phone .gp-chat-sticker img{display:block;object-fit:contain;max-height:none;width:100%;height:100%;border-radius:50%}
+#gp-phone .gp-chat-sticker .gp-mms-gen{display:none}
+#gp-phone .gp-insta-shared.gp-chat-sticker>span{display:none}
+#gp-phone .gp-bubble:has(.gp-chat-sticker){background:transparent!important;border:0!important;box-shadow:none!important;padding:0}
+#gp-phone .gp-insta-compose .gp-insta-sticker-button{flex:0 0 36px;width:36px;background:transparent;color:var(--gp-text-dim);border:0;box-shadow:none}
+#gp-phone .gp-sticker-library button:focus-visible{outline:2px solid var(--gp-accent-a);outline-offset:3px}
 #gp-phone .gp-story-questions-setting{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:20px 14px;cursor:pointer;text-align:left}
 #gp-phone .gp-story-questions-copy{display:flex;flex-direction:column;gap:5px;min-width:0}
 #gp-phone .gp-story-questions-copy b{color:var(--gp-text);font-size:14px;line-height:1.4;font-weight:500}
@@ -5804,3 +5820,4 @@ img[data-zoom] { cursor: zoom-in; }
 #gp-phone .gp-thread-float button,#gp-phone:has(.gp-thread-float) .gp-inputbar button,#gp-phone .gp-sms-inline-regen,#gp-phone .gp-sms-photo-actions button{-webkit-tap-highlight-color:transparent}
 #gp-phone:has(.gp-thread-float) #gp-input{border:0;box-shadow:none;outline:0}
 #gp-phone:has(.gp-thread-float) #gp-input:focus-visible{outline:1px solid rgba(var(--gp-accent-a-rgb),.45);outline-offset:2px}
+#gp-phone #gp-msgs .gp-bubble-wrap.gp-out>.gp-bubble.gp-sticker-bubble,#gp-phone #gp-msgs .gp-bubble-wrap.gp-in>.gp-bubble.gp-sticker-bubble{background:transparent!important;background-image:none!important;border:0!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;padding:0!important}

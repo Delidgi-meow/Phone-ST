@@ -52,6 +52,8 @@ export function privateThreadTurns(messages, { user, peer, limit = 24 } = {}) {
         return {
             role: message.dir === 'out' ? 'user' : 'contact',
             speaker: normalizePhoneSpaces(message.dir === 'out' ? user : message.from || peer),
+              ...(message.actor?{accountActor:normalizePhoneSpaces(message.actor),accountOwner:user}:{}),
+              ...(message.mediaKind?{mediaKind:message.mediaKind}:{}),
             text: normalizePhoneSpaces(message.text).slice(0, index === rows.length - 1 ? 8000 : 2400),
             ...(message.voice ? { voice: true } : {}),
             ...(message.photoDesc ? { photo: message.photoDesc } : message.img ? { photo: 'Attached photo; details unavailable unless included in this request.' } : {}),

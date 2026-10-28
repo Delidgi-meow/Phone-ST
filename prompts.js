@@ -1,4 +1,6 @@
 import { isPhoneAppInstalled } from './state.js';
+import { DEVICE_DIRECTIVE } from './device-actions.js';
+import { CHAT_MEDIA_DIRECTIVE } from './chat-media.js';
 import { smsRoleplayMemory } from './sms-context.js';
 
 import { setExtensionPrompt, extension_prompt_types, extension_prompt_roles } from '../../../../script.js';
@@ -102,6 +104,7 @@ function buildPrompt() {
     ];
     if (messaging || isPhoneAppInstalled('ig')) parts.push('FORWARDED MESSAGES: when a character actually forwards a private chat excerpt, put "shot":{"app":"msg","messages":[{"author":"OriginalSpeaker","text":"exact shared message"}]} in '+[messaging?'tel:sms':'',isPhoneAppInstalled('ig')?'tel:igdm':''].filter(Boolean).join(' or ')+'. The sender must have participated in or been shown that exchange. Recipients learn only the attached excerpts, never the rest of another phone/chat. Do not turn a forward into a new message from its original author.');
     if (sms && isPhoneAppInstalled('ig')) parts.push('MESSAGE CHANNEL: preserve an explicitly established delivery app. For ordinary personal messages from people who have the user\u2019s phone number, default to tel:sms. Use tel:igdm for a story reply, an explicitly Instagram message, or a reply to an ongoing Direct exchange. An Instagram account, old Direct history, or a recent post alone does not move ordinary texts into Direct. Reply to SMS with SMS. Never duplicate one message across both apps.');
+    if(messaging||isPhoneAppInstalled('ig'))parts.push(DEVICE_DIRECTIVE,CHAT_MEDIA_DIRECTIVE+' For RP incoming messages put these optional fields in tel:sms or tel:igdm. Saved sticker ids: '+JSON.stringify((getMeta().stickers||[]).slice(0,12).map(item=>({id:item.id,description:item.description}))));
     if (settings.timeTag !== false) parts.push('CLOCK: last line of every reply: <!--tel:time:HH:MM DD.MM.YYYY-->. Use story time and date; advance by elapsed scene time.');
     if (phoneTurn === 'now' && !messaging) parts.push('Return <!--tel:silent--> for app messages while messaging is unavailable.');
     else if (phoneTurn === 'now') {

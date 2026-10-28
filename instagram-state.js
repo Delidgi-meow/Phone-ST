@@ -1,4 +1,5 @@
 import { isPhoneAppInstalled } from './state.js';
+import { isDeviceContactBlocked } from './state.js';
 import { normalizePhoneSpaces } from './phone-text.js';
 import { getMeta, saveMeta, getThreadList, displayName, getSettings } from './state.js';
 import { instagramIdentity, instagramIdentitySignature, repairInstagramIdentity, redirectedIgThreadId, canonicalIgSource } from './instagram-identity.js';
@@ -50,16 +51,17 @@ export function igUnreadTotal(){return igThreads().reduce((sum,thread)=>sum+igUn
 export function markIgRead(id){const thread=igThread(id);let changed=false;for(const message of thread?.messages||[])if(message.dir==='in'&&!message.read){message.read=true;changed=true;}if(changed)saveMeta();}
 export function safeIgShare(value){
     if (value?.app === 'msg') return messageForward(value);
-    if(!value||!['tw','ig','st','ch','of','web','map'].includes(value.app))return null;
+    if(!value||!['tw','ig','st','ch','of','web','map','sticker','meme'].includes(value.app))return null;
     return {app:value.app,id:clean(value.id,100),author:clean(value.author,100),text:clean(value.text,600),...(value.imgDesc?{imgDesc:clean(value.imgDesc,4000)}:{}),...(value.replyTo?{replyTo:true}:{}),...(typeof value.image==='string'&&value.image.length<2048?{image:value.image}:{}),...(value.chan?{chan:clean(value.chan,100)}:{})};
 }
-export function addIgDm(value,{dir='in',text='',share=null,source='' }={}){
+export function addIgDm(value,{dir='in',text='',share=null,source='',actor='' }={}){
     if (!isPhoneAppInstalled('ig') || (dir !== 'out' && getSettings().quietMode)) return null;
     text=clean(text,2000);share=safeIgShare(share);if(!text&&!share)return null;
     const thread=ensureIgThread(value);if(!thread)return null;
+    if(dir!=='out'&&isDeviceContactBlocked('ig',thread.contactKey||thread.author))return null;
     const data=getInstagram(),sourceKey=canonicalIgSource(source,data);
     if(source&&thread.messages.some(message=>canonicalIgSource(message.source,data)===sourceKey))return null;
-    const message={id:uid(),dir:dir==='out'?'out':'in',text,share,at:Date.now(),read:dir==='out',...(source?{source:clean(source,200)}:{})};
+    const message={id:uid(),dir:dir==='out'?'out':'in',text,share,at:Date.now(),read:dir==='out',...(actor?{actor:clean(actor,100)}:{}),...(source?{source:clean(source,200)}:{})};
     thread.messages.push(message);thread.messages=thread.messages.slice(-Math.max(200,Number(thread.historyLimit)||200));saveMeta();
     if(message.dir==='in')addIgActivity({kind:'dm',author:thread.author,ak:thread.ak,target:'dm',targetId:thread.id,text:share?(share.replyTo?'Ответ на историю: ':'Переслано: ')+(text||share.text):text,dedupe:'dm:'+message.id});
     return {thread,message};

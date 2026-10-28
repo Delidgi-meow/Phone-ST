@@ -3,6 +3,7 @@ import { getUserName, isImageGenAvailable, generatePostImage, cancelImageGen } f
 import { preparePhotoUpload, persistPhoto } from './photo-upload.js';
 import { openPhoneSheet, closePhoneSheet } from './phone-modal.js';
 import { lang } from './i18n.js';
+import { openStickerPicker } from './sticker-picker.js';
 const drafts=new WeakMap();
 const L=(ru,en)=>lang()==='en'?en:ru;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -14,6 +15,8 @@ export function openSmsAttachments(host,thread,api) {
     const current=shade=>getMeta()===owner&&shade.isConnected&&isPhoneAppInstalled(phoneApp);
     const shade=openPhoneSheet(host,L('Прикрепить фото','Attach photo'),'<div class="gp-sms-photo-menu"><button type="button" data-photo-pick><i class="fa-solid fa-image"></i><span>'+L('Выбрать фото','Choose photo')+'</span></button><button type="button" data-photo-create><i class="gp-event-sparkles"></i><span>'+L('Создать по описанию','Create from description')+'</span></button><input type="file" data-photo-file accept="image/*" hidden><p role="status" data-photo-status></p></div>',view);
     const input=shade.querySelector('[data-photo-file]');
+    const stickers=document.createElement('button');stickers.type='button';stickers.innerHTML='<i class="fa-regular fa-face-smile"></i><span>'+L('Стикеры','Stickers')+'</span>';shade.querySelector('.gp-sms-photo-menu').insertBefore(stickers,input);
+    stickers.onclick=()=>{if(!current(shade))return;openStickerPicker(host,{phoneApp,view,selected:attachment=>{if(getMeta()!==owner)return;setSmsAttachment(thread.key,attachment);api.attached();}});};
     shade.querySelector('[data-photo-pick]').onclick=()=>input.click();
     input.onchange=async()=>{
         const file=input.files?.[0];if(!file)return;shade.querySelectorAll('button:not([data-sheet-close])').forEach(b=>b.disabled=true);

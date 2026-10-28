@@ -1,4 +1,5 @@
 import { registerPhoneSettings } from './phone-settings.js';
+import { generateRoleplayMedia } from './roleplay-media.js';
 
 import { eventSource, event_types, saveSettingsDebounced, saveChatConditional } from '../../../../script.js';
 import { getSettings, getMeta, GP_VERSION, invalidateChatCache, factoryReset, wipePhoneTraces, captureRoleplayOutgoing, setPhoneQuietMode } from './state.js';
@@ -530,6 +531,7 @@ jQuery(async () => {
             try { stripFakeJournal(); } catch (e) { /* ignore */ }
             checkNewIncoming();
             try { harvestInstagramTags(); } catch(error) { console.warn('[GlassPhone] Instagram:',error); }
+            generateRoleplayMedia().then(()=>{invalidateChatCache();if(isPhoneOpen())render();}).catch(error=>console.warn('[GlassPhone] Media:',error));
             // Персонаж запостил из ролевой (теги tel:tweet / tel:insta) → в ленты + тост
             try {
                 const { tweets, posts } = harvestSocialTags();

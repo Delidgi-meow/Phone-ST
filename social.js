@@ -17,6 +17,7 @@ import { contactImageSubjects, contactImageSettings, contactReferenceHints, cont
 import { generatePhoneBlockPrompt } from './external-image-blocks.js';
 import { requireCompleteImagePrompt } from './image-prompt-completion.js';
 import { resolveImageSubjects, loadImageIdentityContext, matchesImageIdentity } from './image-subjects.js';
+import { chatMedia, saveSticker, stickerPromptRules, CHAT_MEDIA_DIRECTIVE } from './chat-media.js';
 import { savedImagePrompt, saveImagePrompt } from './image-prompt-cache.js';
 import { getPhoneActivityText, phoneActivityAllowed, getThread } from './state.js';
 import { messageForward } from './message-forward.js';
@@ -1477,6 +1478,7 @@ export async function generatePrivateSmsReply({ threadKey, contactName, isGroup 
     if (getMeta() !== owner || !phoneActivityAllowed(activityVersion)) throw Object.assign(new Error('Запрос отменён'), { name: 'AbortError' });
     const prompt = `${header}
 OWN SMS HISTORY (chronological; this is the only private conversation available): ${JSON.stringify(turns)}
+If a record has accountActor, that person physically sent it using the user's account. Do not attribute their choices to the persona. The recipient knows this only if disclosed or observable.
 ${SMS_CONTINUITY}
 These app messages supplement the roleplay history above. Remember this participant's own story scenes and established relationship when answering. Forwarded messages disclose ONLY the excerpts in "shared.messages". Do not assume omitted lines, quote unshared wording, or read the source conversation. A plausible inference must remain an inference. Background story guides the author; each speaker only knows what they witnessed or were told.
 ${image ? 'The current photo is ATTACHED. Describe visible contents in "photo_description" and react to what you see.' : 'No current photo is attached. Keep "photo_description" empty; do not invent its contents.'}
@@ -1485,21 +1487,28 @@ Optional "voice":true marks a spoken transcript; "photo":"visible scene" describ
 ${regenerate ? 'This replaces wording of an existing reply. Do not repeat or create financial/calendar actions.' : privateBankPrompt(isGroup ? 'the named sender of each reply (an established group member)' : contactName) + (isPhoneAppInstalled('bank') ? ' Put payments in that sender\'s reply object.' : '') + (isPhoneAppInstalled('calendar') ? ' Optional "plans" in that reply records only a newly confirmed agreement from this conversation: {"date":"DD.MM.YYYY","time":"HH:MM","text":"specific plan","who":"user|char|both"}. To explicitly cancel/complete/reschedule a plan already discussed here, use its exact text with "status":"cancelled|done|open" and date/time when known. Suggestions and time passing are not completion; never invent user actions or repeat recorded plans.' : '')}
 ${uiLangLine()}
 Return JSON only: {"photo_description":"","replies":[{"from":"canonical sender","text":"message"${isPhoneAppInstalled('bank')?',"bank":[]':''}${isPhoneAppInstalled('calendar')?',"plans":[]':''}}]}.`;
-    const raw = await socialGen(prompt, { app: phoneAppForThread(threadKey || contactName), maxTokens: 2200, image, prefill: '{"photo_description":"' });
+    const stickerIds=(owner.stickers||[]).slice(0,12).map(item=>({id:item.id,description:item.description,caption:item.caption}));
+    const raw = await socialGen(prompt+'\n'+CHAT_MEDIA_DIRECTIVE+'\nSaved stickers: '+JSON.stringify(stickerIds), { app: phoneAppForThread(threadKey || contactName), maxTokens: 2200, image, prefill: '{"photo_description":"' });
     if (getMeta() !== owner || !phoneActivityAllowed(activityVersion)) throw Object.assign(new Error('Запрос отменён'), { name: 'AbortError' });
     const obj = parseJsonObject(raw);
     if (!obj || !Array.isArray(obj.replies)) throw new Error('Не удалось прочитать ответ SMS');
     const replies = obj.replies.filter(reply => reply && typeof reply === 'object').map(reply => {
         const from = isGroup ? members.find(member => resolveContactKey(member) === resolveContactKey(reply.from)) : contactName;
         return {
-            from, text: String(reply.text || '').trim().slice(0, 1800),
+            from, text: String(reply.text || '').trim().slice(0, 1800), media:chatMedia(reply),
             forward: messageForward(reply.forward),
             ...(reply.voice ? { voice: true } : {}),
             ...(reply.photo ? { photo: String(reply.photo).slice(0, 1000) } : {}),
             bank: isPhoneAppInstalled('bank') && !regenerate && Array.isArray(reply.bank) ? reply.bank.slice(0, 5) : [],
             plans: isPhoneAppInstalled('calendar') && !regenerate && Array.isArray(reply.plans) ? reply.plans.slice(0, 5) : [],
         };
-    }).filter(reply => reply.from && (reply.text || reply.forward || reply.photo)).slice(0, 5);
+    }).filter(reply => reply.from && (reply.text || reply.forward || reply.photo || reply.media)).slice(0, 5);
+    for(const mediaReply of replies.filter(reply=>reply.media)){
+        try{Object.assign(mediaReply,await generateChatAttachment(mediaReply.media,{speaker:mediaReply.from,phoneApp:phoneAppForThread(threadKey||contactName)}));}
+        catch(error){if(getMeta()!==owner)throw error;console.warn('[GlassPhone] Reply attachment:',error);mediaReply.text+='\n['+(mediaReply.media.kind==='sticker'?'Стикер':'Мем')+' не удалось создать. Проверь подключение для картинок.]';}
+    }
+    for(const reply of replies)delete reply.media;
+    for(let i=replies.length-1;i>=0;i--)if(!replies[i].text&&!replies[i].img&&!replies[i].photo&&!replies[i].forward)replies.splice(i,1);
     return { desc: String(obj.photo_description || '').trim().replace(/\s*\n+\s*/g, ' ').slice(0, 3000), replies };
 }
 
@@ -3006,6 +3015,20 @@ export function cancelPhoneImageGenerations() {
     for (const controller of phoneImageControllers) controller.abort();
 }
 
+export async function generateChatAttachment(descriptor,{speaker=getUserName(),phoneApp='list',onStatus=null,cancelKey=null}={}){
+    const owner=getMeta();
+    if(descriptor.id){const saved=owner.stickers?.find(item=>item.id===descriptor.id);if(!saved)throw new Error('Стикер не найден');return {img:saved.image,photo:saved.description,mediaKind:'sticker',stickerId:saved.id,stickerCaption:saved.caption||''};}
+    if(!await isImageGenAvailable())throw new Error('Настрой подключение для картинок');
+    if(getMeta()!==owner)throw new ImageGenCancelled();
+    const sticker=descriptor.kind==='sticker',description=descriptor.description;
+    const caption=descriptor.caption?` Include only this exact short text: ${JSON.stringify(descriptor.caption)}.`:' No lettering.';
+    const framing=sticker?'Single expressive chibi sticker, cute simplified proportions, bold clean contour, isolated subject, plain neutral background, no scene panels, no phone UI, no photorealism.':'A single readable internet meme: a funny image plus the supplied funny caption. Style can range from photorealism to chibi; '+(descriptor.style?'use this visual style: '+descriptor.style+'. ':'choose a visual style that fits the joke. ')+'No phone UI or social-media frame.';
+    const img=await generatePostImage({ak:resolveAuthorKey(speaker),author:speaker,kind:'ig',imgDesc:description,framing:sticker?framing+' '+stickerPromptRules(descriptor.caption):framing+caption,mediaKind:descriptor.kind,mediaStyle:descriptor.style||'',stickerCaption:sticker?descriptor.caption||'':'',aspect:'1:1'},onStatus,cancelKey||'chat-media-'+Date.now(),{phoneApp,regeneratePrompt:true,descriptionOnly:true});
+    if(getMeta()!==owner)throw new ImageGenCancelled();
+    const saved=sticker?saveSticker(owner,{image:img,description,caption:descriptor.caption}):null;saveMeta();
+    return {img,photo:description,mediaKind:descriptor.kind,...(saved?{stickerId:saved.id,stickerCaption:saved.caption||''}:{})};
+}
+
 export function generatePostImage(post, onStatus = null, cancelKey = null, options = {}) {
     const owner=getMeta(), activityVersion=getSettings().phoneActivityVersion;
     const app=options.phoneApp || post.phoneApp || (post.kind==='avatar'?null:post.stream?'twitch':phonePlatformApp(post.kind || 'ig'));
@@ -3191,13 +3214,14 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
     }else if(isShop)prompt+='\n\n'+(post.tryOn?'CLOTHING FITTING: only the specified persona wears the exact catalog garment; preserve face/hair/body traits, replace the previous outfit, and show the garment clearly. No isolated face portrait.':'CATALOG ITEM ONLY: no humans, no faces, no portraits, no body parts. Depict the exact product and its material, color and shape.');
     if(getMeta()!==owner)throw new ImageGenCancelled();
     if (signal?.aborted) throw new ImageGenCancelled();
+    if(post.mediaKind==='sticker')prompt=stickerPromptRules(post.stickerCaption)+'\n\nDRAWING DIRECTIONS — NOT TEXT TO PRINT:\n'+prompt+'\n\n'+stickerPromptRules(post.stickerCaption);
     saveImagePrompt(cachePost, cancelKey, prompt, externalInstruction, blockKey);
     }
     if (getMeta() !== owner || signal?.aborted) throw new ImageGenCancelled();
 
     // Встроенный драйвер (форки без экспортов)
     if (mod.builtin) {
-        return _generateViaBuiltin(post, { prompt, wantChar, isUserPost: userInFrame&&(!isShop||tryOnAvatar), onStatus, signal, instruction: externalInstruction,contactReferences:contactRefsSupported?contactSubjects.filter(item=>item.src):[] });
+        return _generateViaBuiltin(post, { prompt, wantChar, isUserPost: userInFrame&&(!isShop||tryOnAvatar), onStatus, signal, instruction:post.mediaKind==='sticker'?{...externalInstruction,style:'chibi sticker illustration, cute expressive character, clean bold outline, flat colors, no photorealism'}:post.mediaKind==='meme'&&post.mediaStyle?{...externalInstruction,style:post.mediaStyle}:externalInstruction,contactReferences:contactRefsSupported?contactSubjects.filter(item=>item.src):[] });
     }
 
     // Settings belong to this request; never overwrite the image extension's state.
@@ -3247,7 +3271,7 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
 
     try {
         // style = null → расширение подставит СВОЙ активный стиль (resolveEffectiveStyle)
-        const dataUrl = await generateIsolatedImage(mod, prompt, externalInstruction?.style || null, onStatus, genOptions, imageContext.references);
+        const dataUrl = await generateIsolatedImage(mod, prompt, post.mediaKind==='sticker'?'chibi sticker illustration, cute expressive character, clean bold outline, flat colors, no photorealism':post.mediaKind==='meme'&&post.mediaStyle?post.mediaStyle:externalInstruction?.style || null, onStatus, genOptions, imageContext.references);
         if(getMeta()!==owner)throw new ImageGenCancelled();
         if (signal?.aborted) throw new ImageGenCancelled();
         if (!dataUrl || typeof dataUrl !== 'string') throw new Error('Пустой результат генерации');
@@ -3815,6 +3839,7 @@ export async function generateInstagramDmReply(thread) {
     const prompt=`${header}
 DIRECT PARTICIPANTS: YOU WRITE AS ${JSON.stringify(original)}. The human user is ${JSON.stringify(user)}. Incoming role="contact" messages below are YOUR OWN previous words. Outgoing role="user" messages are the human's words to you. Keep that direction fixed.
 DIRECT HISTORY (chronological, private to these participants): ${JSON.stringify(turns)}
+If a record has accountActor, that person physically sent it using the user's account. Do not attribute their choices to the persona. The recipient knows this only if disclosed or observable.
 SHARED MEDIA: "shared.author" names the media creator, NOT the speaker of the message. "replyTo":true means this message replied to that person's story. A caption is overlay text; "photo" describes the image. ${media.image?'The most recent shared image is ATTACHED for visual context: '+JSON.stringify(media.imageContext):'Use the supplied visual descriptions. Do not invent unavailable image details.'}
 ${privateBankPrompt(original)}
 Reply to the latest user entry as ${JSON.stringify(original)}, remembering your own story scenes, relationship and previous messages. A user asking for clarification does not erase your previous message or reverse the speakers. The USER PERSONA describes ${JSON.stringify(user)} only. Never write their reply, first-person statements, thoughts or actions. Background cards and lore define established facts; preserve what this speaker personally knows. Do not treat private conversations of other people as accessible.
@@ -3824,10 +3849,14 @@ Return JSON only: {"from":${JSON.stringify(original)},"to":${JSON.stringify(user
     let result;
     for(let attempt=0;attempt<2;attempt++){
         const correction=attempt?'\nROLE CORRECTION: '+directReplyRoleError(result,{speaker:original,user})+' Repeat only the required JSON as '+JSON.stringify(original)+' to '+JSON.stringify(user)+'.':'';
-        result=parseJsonObject(await socialGen(prompt+correction,{app:'ig',maxTokens:1000,image:media.image,prefill}));
+        result=parseJsonObject(await socialGen(prompt+correction+'\n'+CHAT_MEDIA_DIRECTIVE+'\nSaved stickers: '+JSON.stringify((owner.stickers||[]).slice(0,12).map(item=>({id:item.id,description:item.description}))),{app:'ig',maxTokens:1400,image:media.image,prefill}));
         if(getMeta()!==owner)throw new Error('Чат изменился');
         const error=directReplyRoleError(result,{speaker:original,user});
-        if(!error)return {from:original,to:user,text:result.text.trim().slice(0,1000),share:messageForward(result.forward),bank:isPhoneAppInstalled('bank')&&Array.isArray(result.bank)?result.bank.slice(0,5):[]};
+        if(!error){
+            let share=messageForward(result.forward);const descriptor=chatMedia(result);
+            if(descriptor)try{const attachment=await generateChatAttachment(descriptor,{speaker:original,phoneApp:'ig'});share={app:attachment.mediaKind,id:attachment.stickerId||'',author:original,text:attachment.photo,image:attachment.img};}catch(error){if(getMeta()!==owner)throw error;console.warn('[GlassPhone] Direct attachment:',error);result.text+='\n['+(descriptor.kind==='sticker'?'Стикер':'Мем')+' не удалось создать. Проверь подключение для картинок.]';}
+            return {from:original,to:user,text:result.text.trim().slice(0,1000),share,bank:isPhoneAppInstalled('bank')&&Array.isArray(result.bank)?result.bank.slice(0,5):[]};
+        }
         logFail('роль Direct',error);
     }
     throw new Error('Direct перепутал участников. Ответ не сохранён — нажми «Повторить».');

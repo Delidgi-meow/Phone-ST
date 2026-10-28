@@ -1,4 +1,6 @@
 import { getMeta, getThreadList } from './state.js';
+import { isDeviceContactBlocked, overrideDeviceContactBlock } from './state.js';
+import { openStickerPicker } from './sticker-picker.js';
 import { getInstagram, igThreads, igThread, igParty, igPerson, igUnread, igUnreadTotal, markIgRead, igActivityUnread, markIgActivityRead, ensureIgThread, igEventText, canonicalIgThreadId } from './instagram-state.js';
 import { sendIgDm, igDmBusy, igDmRetryMessage, retryIgDm } from './instagram.js';
 import { getUserName, avatarForAuthor, handleFor, timeAgo } from './social.js';
@@ -68,9 +70,17 @@ export function renderInstagramThread(host,id,api){
     }
     scroll.scrollTop=scroll.scrollHeight;
     host.querySelector('[data-insta-back]').onclick=api.back;
+    if(isDeviceContactBlocked('ig',thread.contactKey||thread.author)){const unblock=document.createElement('button');unblock.type='button';unblock.className='gp-insta-unblock';unblock.textContent=L('Разблокировать','Unblock');unblock.onclick=()=>{overrideDeviceContactBlock('ig',thread.contactKey||thread.author,false);api.render();};host.querySelector('.gp-insta-subheader').appendChild(unblock);}
+    host.querySelectorAll('.gp-insta-dm-message').forEach((row,index)=>{if(thread.messages[index]?.actor){const actor=document.createElement('small');actor.className='gp-device-actor';actor.textContent=L('С телефона отправил(а): ','Sent using this phone by: ')+thread.messages[index].actor;row.prepend(actor);}});
+    const stickerButton=document.createElement('button');stickerButton.type='button';stickerButton.className='gp-insta-sticker-button';stickerButton.setAttribute('aria-label',L('Стикеры','Stickers'));stickerButton.innerHTML=icon('Smile');
+    host.querySelector('.gp-insta-compose').prepend(stickerButton);
+    stickerButton.onclick=()=>{if(igDmBusy(thread))return;openStickerPicker(host,{phoneApp:'ig',view:'igdm:'+id,selected:async attachment=>{
+        if(getMeta()!==owner)return;const pending=sendIgDm(id,'',{app:'sticker',id:attachment.stickerId,author:getUserName(),text:attachment.description,image:attachment.image});api.render();try{await pending;}catch(error){if(getMeta()===owner)api.toast(String(error.message||error),'fa-circle-exclamation');}finally{if(getMeta()===owner)api.render();}
+    }});};
     const send=async()=>{const text=input.value.trim();if(!text||igDmBusy(thread))return;map.delete(id);const pending=sendIgDm(id,text);api.render();try{await pending;}catch(error){if(getMeta()===owner)api.toast(String(error.message||error),'fa-circle-exclamation');}finally{if(getMeta()===owner)api.render();}};
     host.querySelector('form').onsubmit=event=>{event.preventDefault();send();};input.onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send();}};
-    host.querySelectorAll('[data-insta-shared]').forEach(button=>button.onclick=()=>{const share=thread.messages.find(message=>message.id===button.dataset.instaShared)?.share;if(share)api.openShare(share);});
+    host.querySelectorAll('[data-insta-shared]').forEach(button=>button.onclick=()=>{const share=thread.messages.find(message=>message.id===button.dataset.instaShared)?.share;if(share&&!['sticker','meme'].includes(share.app))api.openShare(share);});
+    host.querySelectorAll('[data-insta-shared]').forEach(button=>{const share=thread.messages.find(message=>message.id===button.dataset.instaShared)?.share;if(['sticker','meme'].includes(share?.app)){button.classList.add('gp-chat-'+share.app);const label=button.querySelector('small');if(label)label.textContent=share.app==='sticker'?L('Стикер','Sticker'):L('Мем','Meme');}});
     bindMessageForwarding(host, {
         view: 'igdm:' + id, header: host.querySelector('.gp-insta-subheader'), composer: host.querySelector('.gp-insta-compose'),
         rows: host.querySelectorAll('.gp-insta-dm-message'), messages: thread.messages, key: message => message.id,
