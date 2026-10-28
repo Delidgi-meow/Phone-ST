@@ -15,6 +15,7 @@ import { generateIsolatedImage, imageProviderSupportsReferences } from './image-
 import { personaImageTags, isolateShopImageSettings, shopProductTags, shopBooruPrompt } from './shop-image.js';
 import { contactImageSubjects, contactImageSettings, contactReferenceHints, contactReferenceMatches } from './contact-images.js';
 import { generatePhoneBlockPrompt } from './external-image-blocks.js';
+import { slayActiveRefs, slayNames, slayRefSrc, slayStyleText, slayOutfit, slayIdentityLibrary } from './slay-refs.js';
 import { requireCompleteImagePrompt } from './image-prompt-completion.js';
 import { resolveImageSubjects, loadImageIdentityContext, matchesImageIdentity } from './image-subjects.js';
 import { chatMedia, saveSticker, stickerPromptRules, CHAT_MEDIA_DIRECTIVE } from './chat-media.js';
@@ -2591,6 +2592,11 @@ export function userAvatarUrl() {
 function npcEntries() {
     const b = imgBucket();
     if (!b) return [];
+    // SLAY: NPC текущего персонажа, имена слота — «Mike, Майк» → имя + алиасы
+    const slay = slayActiveRefs(b);
+    if (slay) return slay.npcReferences
+        .filter(n => n && slayNames(n.name).length && slayRefSrc(n))
+        .map(n => { const [name, ...aliases] = slayNames(n.name); return { ...n, name, aliases }; });
     const list = Array.isArray(b.npcList) ? b.npcList
         : (Array.isArray(b.npcReferences) ? b.npcReferences : []);
     return list.filter(n => n && n.name && n.enabled !== false);
@@ -3077,11 +3083,13 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
     const sourceSettings=structuredClone(nvSettings||imgBucket()||{}),phoneProfile=_imgProfile(st.imageGenProfileId);
     if(phoneProfile)for(const [key,value]of Object.entries(phoneProfile))if(key!=='id'&&key!=='name'&&key in sourceSettings)sourceSettings[key]=value;
     const useModel=effectiveModel(sourceSettings);if(useModel)sourceSettings.model=useModel;
-    const identityLibrary=isShop?{}:await loadImageIdentityContext(mod,sourceSettings);
+    // SLAY: имена юзерки/персонажа и NPC — из его слотов (по персонажу или группе), а не из старых общих рефов
+    const slayRefs=isShop?null:slayActiveRefs(sourceSettings,post.author);
+    const identityLibrary=isShop?{}:slayRefs?slayIdentityLibrary(slayRefs):await loadImageIdentityContext(mod,sourceSettings);
     if(getMeta()!==owner||signal?.aborted)throw new ImageGenCancelled();
     const identityContext=SillyTavern.getContext();
     const imageSubjects=resolveImageSubjects(post.imgDesc||post.caption||'',{userName:getUserName(),charName:mainCharName(),
-        cardName:identityContext.characters?.[identityContext.characterId]?.name||'',settings:sourceSettings,meta:owner,library:identityLibrary});
+        cardName:identityContext.characters?.[identityContext.characterId]?.name||'',settings:slayRefs?{...sourceSettings,npcList:slayRefs.npcReferences.filter(n=>n?.name),npcReferences:[]}:sourceSettings,meta:owner,library:identityLibrary});
     const scenePost={...post,imgDesc:post.imgDesc?imageSubjects.scene:post.imgDesc,imageSubjects};
     const shopBooru=isShop&&(st.imgTagMode||sourceSettings.apiType==='novelai'||/novelai|nai-diffusion/i.test(useModel));
     const personaAvatarId=String(post.personaAvatarId||user_avatar||'');
@@ -3125,7 +3133,9 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
     const mentionsChar = !!charName && textMentionsName(
         `${post.imgDesc || post.caption || ''} ${post._behindCamera ? '' : (post.author || '')}`, charName);
     const charInFrame = !isShop&&!imageSubjects.excludedChar&&(imageSubjects.char||isCharPost&&!post._behindCamera||mentionsChar);
-    const wantChar = charInFrame&&!contactSubjects.some(item=>item.key===resolveContactKey(charName));
+    // Карточка «Mike_RP», а в слоте персонажа SLAY — «Майк, Mike»: контакт с любым из этих имён — тот же человек
+    const charNames = [charName, ...slayNames(slayRefs?.charRef?.name)].filter(Boolean);
+    const wantChar = charInFrame&&!contactSubjects.some(item=>charNames.some(n=>item.key===resolveContactKey(n)));
     // Анонимный рандом-аккаунт = НЕ юзер, НЕ контакт (НПС), НЕ главный персонаж.
     // Только для него ставим запрет на персону/главперсонажей.
     const anonymous = !isUserPost && !isContactPost && !isCharPost && !contactSubjects.length && !imageSubjects.subjects.length;
@@ -3221,7 +3231,7 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
 
     // Встроенный драйвер (форки без экспортов)
     if (mod.builtin) {
-        return _generateViaBuiltin(post, { prompt, wantChar, isUserPost: userInFrame&&(!isShop||tryOnAvatar), onStatus, signal, instruction:post.mediaKind==='sticker'?{...externalInstruction,style:'chibi sticker illustration, cute expressive character, clean bold outline, flat colors, no photorealism'}:post.mediaKind==='meme'&&post.mediaStyle?{...externalInstruction,style:post.mediaStyle}:externalInstruction,contactReferences:contactRefsSupported?contactSubjects.filter(item=>item.src):[] });
+        return _generateViaBuiltin(post, { prompt, wantChar, isUserPost: userInFrame&&(!isShop||tryOnAvatar), scene: imageSubjects.matchText||post.caption||"", slayRefs: await imageProviderSupportsReferences(mod,sourceSettings)?slayRefs:null, onStatus, signal, instruction:post.mediaKind==='sticker'?{...externalInstruction,style:'chibi sticker illustration, cute expressive character, clean bold outline, flat colors, no photorealism'}:post.mediaKind==='meme'&&post.mediaStyle?{...externalInstruction,style:post.mediaStyle}:externalInstruction,contactReferences:contactRefsSupported?contactSubjects.filter(item=>item.src):[] });
     }
 
     // Settings belong to this request; never overwrite the image extension's state.
@@ -3392,7 +3402,7 @@ async function _fetchB64(url) {
     } catch (e) { return null; }
 }
 
-async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, onStatus, signal = null, instruction = null,contactReferences=[] }) {
+async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, scene = '', slayRefs = null, onStatus, signal = null, instruction = null,contactReferences=[] }) {
     const owner=getMeta(),check=()=>{if(getMeta()!==owner||signal?.aborted)throw new ImageGenCancelled();};
     const cfgBase = imgBucket() || {};
     const st = getSettings();
@@ -3407,39 +3417,97 @@ async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, onStatu
     const aspect = post.aspect || instruction?.aspectRatio || (st.imageGenSquare !== false ? '1:1' : (imgCfg.aspectRatio || '1:1'));
 
     // Стиль форка: телефонный (если выбран) или активный
+    // SLAY: его выбранный стиль
     let style = '';
     try {
         const styleId = st.imageGenStyleId || imgCfg.activeStyleId;
         const s = (imgCfg.styles || []).find(x => x && x.id === styleId)
             || (imgCfg.styles || []).find(x => x && x.id === imgCfg.activeStyleId);
-        style = String(s?.value ?? s?.style ?? '').trim();
+        style = String(s?.value ?? s?.style ?? '').trim() || slayStyleText(cfgBase);
     } catch (e) { /* ignore */ }
     if (instruction?.style) style = instruction.style;
     let fullPrompt = style ? `[STYLE: ${style}]\n\n${prompt}` : prompt;
 
     // Рефы: телефон сам решает, чей реф нужен (галочки форка не смотрим —
     // наш гейт wantChar/isUserPost уже отфильтровал, кому реф положен)
-    const refs = [];
-    for(const reference of contactReferences){const image=await _fetchB64(reference.src);check();if(image)refs.push(image);}
+    // С SLAY лица берём из его слотов текущего персонажа, аватарки — запасной вариант.
+    const isSlay = !!slayActiveRefs(cfgBase);
+    const MAX_REFS = isSlay ? 8 : Infinity;
+    const refs = [], labels = [], outfitLines = [];
+    const push = (image, label) => { if (image && refs.length < MAX_REFS) { refs.push(image); labels.push(label); return true; } return false; };
+    const taken = name => labels.some(label => keyOf(label) === keyOf(name));
+    // Контакт, у которого есть слот в SLAY (персонаж, юзерка, NPC): лицо из слота.
+    // Аватарка контакта в телефоне бывает чем угодно (котик, мем), слот — это лицо.
+    const slotOf = item => {
+        if (!slayRefs) return null;
+        const names = [item.name, ...(item.names || [])].map(keyOf);
+        const hit = ref => !!ref && !!slayRefSrc(ref) && slayNames(ref.name).some(n => names.includes(keyOf(n)));
+        if (hit(slayRefs.charRef)) return { src: slayRefSrc(slayRefs.charRef), outfit: 'bot', member: slayRefs.member };
+        if (hit(slayRefs.userRef)) return { src: slayRefSrc(slayRefs.userRef), outfit: 'user', member: slayRefs.member };
+        const npc = slayRefs.npcReferences.find(hit);
+        // Другой участник группы — со своим образом из гардероба
+        return npc ? { src: slayRefSrc(npc), outfit: npc._member ? 'bot' : '', member: npc._member || '' } : null;
+    };
+    const contactOutfits = [];
+    for(const reference of contactReferences){
+        const slot=slotOf(reference);
+        const image=(slot?await _fetchB64(slot.src):null)||await _fetchB64(reference.src);check();
+        if(push(image,reference.name)&&slot?.outfit)contactOutfits.push([slot.outfit,reference.name,slot.member]);
+    }
     if(contactReferences.length&&!refs.length)throw new Error('Не удалось загрузить аватарку контакта для референса.');
     try {
         const ctx = SillyTavern.getContext();
+        for (const [who, name, member] of contactOutfits) {
+            const outfit = await slayOutfit(who, member);
+            push(outfit.image, `${name} — outfit`);
+            if (outfit.desc) outfitLines.push(`${name} wears: ${outfit.desc}`);
+        }
         if (wantChar) {
             const ch = ctx?.characters?.[ctx.characterId];
-            if (ch?.avatar && ch.avatar !== 'none') {
-                const b = await _fetchB64(`/characters/${encodeURIComponent(ch.avatar)}`);
-                if (b) refs.push(b);
+            const name = slayNames(slayRefs?.charRef?.name)[0] || ch?.name || 'character';
+            // В группе с SLAY открытая карточка — не обязательно автор поста: без слота автора лица нет
+            const cardOk = !(isSlay && ctx.groupId) && ch?.avatar && ch.avatar !== 'none';
+            const src = slayRefSrc(slayRefs?.charRef) || (cardOk ? `/characters/${encodeURIComponent(ch.avatar)}` : '');
+            if (src && (!isSlay || !taken(name))) push(await _fetchB64(src), name);
+            if (isSlay) {
+                const outfit = await slayOutfit('bot', slayRefs?.member);
+                if (slayRefs) push(outfit.image, `${name} — outfit`);
+                if (outfit.desc) outfitLines.push(`${name} wears: ${outfit.desc}`);
             }
         }
         const personaAvatar=post.kind==='shop'?post.personaAvatarId:user_avatar;
-        if (isUserPost && typeof personaAvatar === 'string' && personaAvatar) {
-            const b = await _fetchB64(`/User Avatars/${encodeURIComponent(personaAvatar)}`);
-            if (b) refs.push(b);
+        const userName = getUserName();
+        if (isUserPost && (!isSlay || !taken(userName))) {
+            const slaySrc = post.kind === 'shop' ? '' : slayRefSrc(slayRefs?.userRef);
+            const src = slaySrc || (typeof personaAvatar === 'string' && personaAvatar ? `/User Avatars/${encodeURIComponent(personaAvatar)}` : '');
+            if (src) push(await _fetchB64(src), userName);
+            if (isSlay && post.kind !== 'shop') {
+                const outfit = await slayOutfit('user', slayRefs?.member);
+                if (slayRefs) push(outfit.image, `${userName} — outfit`);
+                if (outfit.desc) outfitLines.push(`${userName} wears: ${outfit.desc}`);
+            }
+        }
+        // NPC-слоты SLAY, названные в описании кадра (с падежами), кроме уже взятых
+        if (slayRefs && scene) {
+            for (const npc of slayRefs.npcReferences) {
+                const names = slayNames(npc?.name), src = slayRefSrc(npc);
+                if (!names.length || !src || names.some(taken)) continue;
+                if (!names.some(n => textMentionsName(scene, n))) continue;
+                push(await _fetchB64(src), names[0]);
+                check();
+                if (npc._member) {
+                    const outfit = await slayOutfit('bot', npc._member);
+                    push(outfit.image, `${names[0]} — outfit`);
+                    if (outfit.desc) outfitLines.push(`${names[0]} wears: ${outfit.desc}`);
+                }
+            }
         }
     } catch (e) { /* без рефов */ }
     check();
+    if (outfitLines.length) fullPrompt += '\n\n' + outfitLines.join('\n');
     if (refs.length > 0) {
-        fullPrompt = (post.kind==='avatar'?'[References show this person’s identity. Preserve their face while applying the requested appearance preferences.]':'[The reference image(s) show the EXACT appearance of the character(s) — copy face, hair, body precisely.]')+'\n'+(contactReferences.length?'Contact reference order: '+contactReferences.map((item,index)=>(index+1)+' = '+item.name).join('; ')+'.\n':'')+'\n'+fullPrompt;
+        const hasOutfit = labels.some(label => label.endsWith('— outfit'));
+        fullPrompt = (post.kind==='avatar'?'[References show this person’s identity. Preserve their face while applying the requested appearance preferences.]':'[The reference image(s) show the EXACT appearance of the character(s) — copy face, hair, body precisely.'+(hasOutfit?' Images marked "outfit" show the clothing that person wears.':'')+']')+'\n'+(isSlay?'Reference order: '+labels.map((label,index)=>(index+1)+' = '+label).join('; ')+'.\n':contactReferences.length?'Contact reference order: '+contactReferences.map((item,index)=>(index+1)+' = '+item.name).join('; ')+'.\n':'')+'\n'+fullPrompt;
     }
 
     onStatus?.('Генерация...');
