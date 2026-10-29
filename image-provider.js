@@ -1,3 +1,5 @@
+import { resolvePhoneImageAspect } from './image-aspect.js';
+
 // Request-local adapter for modular image extensions. Never mutates their settings.
 function throwIfAborted(signal) {
     if (signal?.aborted) throw signal.reason || new DOMException('Генерация отменена', 'AbortError');
@@ -31,6 +33,8 @@ export async function imageProviderSupportsReferences(mod,settings){
 
 export async function generateIsolatedImage(mod, prompt, style, onStatus, options, sceneReferences = null) {
     const settings = options.providerSettings;
+    // Also cover forks that expose only pipeline.generateImageWithRetry.
+    if(options.aspectRatio)options={...options,aspectRatio:resolvePhoneImageAspect(options.aspectRatio,settings)};
     throwIfAborted(options.signal);
     let providers;
     try {

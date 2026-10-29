@@ -6041,7 +6041,7 @@ function renderChannel(screen) {
         }
         await chanBusyRun(async () => {
             _chanDraftImage = await generatePostImage(
-                { ak: 'user', kind: 'ig', author: getUserName(), imgDesc: desc, aspect: '4:3' }, null, 'chan-draft');
+                { ak: 'user', kind: 'ig', author: getUserName(), imgDesc: desc, aspect: '3:2' }, null, 'chan-draft');
             toast('Фото готово', 'fa-image');
         });
     });
@@ -6156,7 +6156,7 @@ function bindChanPostActions(root, ch) {
                     caption: post.text,
                     // Канал — не лента селфи: автор в кадре, только если описан
                     blog: true,
-                    aspect: '4:3',
+                    aspect: '3:2',
                 },
                 null, post.id);
             saveMeta();

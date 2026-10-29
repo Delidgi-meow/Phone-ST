@@ -13,13 +13,17 @@ export function descriptionBlockMessages(block, post, imageContext = '', identit
         (_match, key) => values[key.trim()] ?? '');
     const mentions = (text, name) => String(name || '').split(',').map(alias => alias.trim()).filter(Boolean)
         .some(alias => new RegExp(`(^|[^\\p{L}\\p{N}_])${alias.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=$|[^\\p{L}\\p{N}_])`, 'iu').test(text));
-    if (post.imageSubjects?.char || mentions(scene, identities.charName)) values.char = identities.charName;
+    const picturedChar=post.imageSubjects?.subjects?.find(subject=>subject.role==='char');
+    if (post.imageSubjects?.char || mentions(scene, identities.charName)) values.char = picturedChar?.name||identities.charName;
     const appearances = [];
     for (const item of block.context || []) {
         // Read only literal identity specifications. Do not call ContextService:
         // history and previous blocks must remain absent from a manual photo.
         if (item?.disabled || item?.type !== 'text' || !item.text) continue;
         const rawName = String(item.name || '').trim();
+        // In a group, the pictured author can differ from the active ST card.
+        // Never relabel that active card's appearance as another participant.
+        if(/^\{\{\s*char\s*\}\}$/i.test(rawName)&&picturedChar&&identities.charName&&!matchesImageIdentity(identities.charName,picturedChar))continue;
         const name = formatText(rawName).trim();
         const isUser = /^\{\{\s*user\s*\}\}$/i.test(rawName)
             || (name && mentions(post.author || '', name));
