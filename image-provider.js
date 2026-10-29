@@ -31,6 +31,15 @@ export async function imageProviderSupportsReferences(mod,settings){
 
 export async function generateIsolatedImage(mod, prompt, style, onStatus, options, sceneReferences = null) {
     const settings = options.providerSettings;
+    // Channels request 4:3, but NovelAI's resolution presets do not support it.
+    // Keep supported phone formats; otherwise use this request's profile ratio.
+    if (settings.apiType === 'novelai' && options.aspectRatio) {
+        const supportedAspects = ['1:1', '2:3', '3:2', '9:16', '16:9'];
+        if (!supportedAspects.includes(options.aspectRatio)) {
+            options = { ...options, aspectRatio: supportedAspects.includes(settings.novelaiAspectRatio)
+                ? settings.novelaiAspectRatio : '1:1' };
+        }
+    }
     throwIfAborted(options.signal);
     let providers;
     try {
