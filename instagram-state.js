@@ -1,3 +1,4 @@
+import { getRpNow, phoneRecordDate } from './state.js';
 import { isPhoneAppInstalled } from './state.js';
 import { isDeviceContactBlocked } from './state.js';
 import { normalizePhoneSpaces } from './phone-text.js';
@@ -13,6 +14,14 @@ function instagramContext(){
     if(!root.social.instagram||typeof root.social.instagram!=='object')root.social.instagram={};
     const data=root.social.instagram;
     for(const key of ['threads','activity','seenTags'])if(!Array.isArray(data[key]))data[key]=[];
+    let clockChanged=false;
+    for(const record of [...data.threads.flatMap(thread=>thread.messages||[]),...data.activity]) {
+        if(!Number.isFinite(record.rpAt)) {
+            const date=phoneRecordDate(record);
+            if(date){record.rpAt=date.getTime();clockChanged=true;}
+        }
+    }
+    if(clockChanged)saveMeta();
     const contacts=getThreadList().filter(item=>!item.isGroup);
     const signature=instagramIdentitySignature(root,contacts,data);
     let cached=identities.get(root);
@@ -61,7 +70,7 @@ export function addIgDm(value,{dir='in',text='',share=null,source='',actor='' }=
     if(dir!=='out'&&isDeviceContactBlocked('ig',thread.contactKey||thread.author))return null;
     const data=getInstagram(),sourceKey=canonicalIgSource(source,data);
     if(source&&thread.messages.some(message=>canonicalIgSource(message.source,data)===sourceKey))return null;
-    const message={id:uid(),dir:dir==='out'?'out':'in',text,share,at:Date.now(),read:dir==='out',...(actor?{actor:clean(actor,100)}:{}),...(source?{source:clean(source,200)}:{})};
+    const message={id:uid(),dir:dir==='out'?'out':'in',text,share,at:Date.now(),rpAt:getRpNow().getTime(),read:dir==='out',...(actor?{actor:clean(actor,100)}:{}),...(source?{source:clean(source,200)}:{})};
     thread.messages.push(message);thread.messages=thread.messages.slice(-Math.max(200,Number(thread.historyLimit)||200));saveMeta();
     if(message.dir==='in')addIgActivity({kind:'dm',author:thread.author,ak:thread.ak,target:'dm',targetId:thread.id,text:share?(share.replyTo?'Ответ на историю: ':'Переслано: ')+(text||share.text):text,dedupe:'dm:'+message.id});
     return {thread,message};
@@ -71,7 +80,7 @@ export function addIgActivity({kind='comment',author='',ak='random',target='post
     const data=getInstagram();if(dedupe&&data.activity.some(item=>item.kind===kind&&canonicalIgSource(item.dedupe,data)===canonicalIgSource(dedupe,data)))return null;
     if(kind!=='likes'){const person=igParty({author,ak});if(person.contactKey){author=person.author;ak=person.ak;}}
     if(target==='dm')targetId=redirectedIgThreadId(data,targetId);
-    const event={id:uid(),kind,author:clean(author,100),ak,target,targetId:clean(targetId,100),text:clean(text,700),at:Date.now(),read:false,journaled:false,dedupe:clean(dedupe,220)};
+    const event={id:uid(),kind,author:clean(author,100),ak,target,targetId:clean(targetId,100),text:clean(text,700),at:Date.now(),rpAt:getRpNow().getTime(),read:false,journaled:false,dedupe:clean(dedupe,220)};
     data.activity.unshift(event);data.activity=data.activity.slice(0,160);saveMeta();
     if(typeof window!=='undefined')window.dispatchEvent(new CustomEvent('gp:instagram',{detail:{event,owner:getMeta()}}));
     return event;

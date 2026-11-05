@@ -1,3 +1,5 @@
+import { smsReactions } from './sms-reactions.js';
+import { storyDate, storyTimeline, storyClockText } from './rp-time.js';
 import { normalizePhoneSpaces, parsePhoneJson } from './phone-text.js';
 import { deviceActions } from './device-actions.js';
 import { chatMedia, chatMediaKey } from './chat-media.js';
@@ -13,7 +15,7 @@ import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.57.6';
+export const GP_VERSION = '2.57.7';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -743,6 +745,7 @@ let _hiddenCache = null, _hiddenSig = null;
 // Принудительный сброс (правки сообщений, смена чата)
 export function invalidateChatCache() {
     _scanSig = null; _hiddenSig = null;
+    storyTimesSignature = null;
 }
 
 // ── Ключ треда/контакта: нормализованное имя ──
@@ -991,35 +994,46 @@ function detectProseNumber(text) {
     return null;
 }
 
-// ── Маппинг реальных дат на RP-шкалу ──
-// Вычисляет offset между реальным «сейчас» и RP «сейчас», сдвигает все даты.
-// Кэшируется на тот же цикл, что и getRpDateTime.
-let _rpOffsetMs = null;
-let _rpOffsetSig = null;
-
-function getRpOffsetMs() {
-    const rpDt = getRpDateTime();
-    if (!rpDt) return 0; // нет RP — offset 0, показываем реальные даты
-    const sig = `${rpDt.day}|${rpDt.month}|${rpDt.year}|${rpDt.hours}|${rpDt.minutes}`;
-    if (sig === _rpOffsetSig && _rpOffsetMs !== null) return _rpOffsetMs;
-    _rpOffsetSig = sig;
-    const realNow = new Date();
-    const rpNow = new Date(
-        rpDt.year, rpDt.month - 1, rpDt.day,
-        rpDt.hours ?? realNow.getHours(),
-        rpDt.minutes ?? realNow.getMinutes(),
-        0, 0,
-    );
-    _rpOffsetMs = rpNow.getTime() - realNow.getTime();
-    return _rpOffsetMs;
+// Story clock stays frozen until the RP advances. Real timestamps remain
+// available for IDs, sorting and network timers, but never advance story time.
+export function getRpNow() { return storyDate(getRpDateTime()) || new Date(); }
+let storyTimesCache = null, storyTimesSignature = null;
+export function getRpMessageTimes() {
+    const chat = SillyTavern.getContext()?.chat || [];
+    if (!getRpDateTime()) return chat.map(message => parseRealDate(message?.send_date));
+    const current = getRpNow();
+    const signature = chatSignature() + '|' + current.getTime();
+    if (signature !== storyTimesSignature) {
+        storyTimesCache = storyTimeline(chat, { current, tag: text => parseTimeTag(stripThink(text)),
+            prose: parseAnyDateTime, text: (message) => stripThink(getPhoneMessageText(message)) });
+        storyTimesSignature = signature;
+    }
+    return storyTimesCache;
 }
 
-/** Преобразует реальную дату в RP-дату (сдвиг на offset) */
+/** Resolve a legacy real timestamp to its surrounding story turn, with no wall-time delta. */
 export function realToRpDate(realDate) {
-    if (!realDate) return null;
-    const off = getRpOffsetMs();
-    if (off === 0) return realDate;
-    return new Date(realDate.getTime() + off);
+    if (!realDate || !Number.isFinite(realDate.getTime())) return null;
+    if (!getRpDateTime()) return realDate;
+    const chat = SillyTavern.getContext()?.chat || [];
+    const times = getRpMessageTimes();
+    for (let i = chat.length - 1; i >= 0; i--) {
+        const sent = parseRealDate(chat[i]?.send_date);
+        if (sent && sent <= realDate) return i === chat.length - 1 ? getRpNow() : times[i];
+    }
+    return times.find(Boolean) || getRpNow();
+}
+
+/** Persisted app timestamps take precedence over legacy reconstruction. */
+export function phoneRecordDate(record) {
+    return Number.isFinite(record?.rpAt) ? new Date(record.rpAt)
+        : record?.time instanceof Date ? record.time
+        : realToRpDate(parseRealDate(record?.at ?? record?.ts ?? record?.time));
+}
+
+export function rpElapsedMs(timestamp) {
+    const date=realToRpDate(parseRealDate(timestamp));
+    return date ? Math.max(0,getRpNow()-date) : 0;
 }
 
 function parseRealDate(sd) {
@@ -1047,7 +1061,7 @@ export function fmtTime(date) {
     if (sameDay) {
         return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
     }
-    return `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}`;
+    return `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
 // ── RP-дата/время: из ЛЮБОГО источника ──
@@ -1258,7 +1272,7 @@ export function getRpDateTime() {
 
         // Метка времени бьёт все остальные источники: её ставит сама модель,
         // зная, сколько времени прошло в сюжете.
-        for (let i = chat.length - 1; i >= 0 && i >= chat.length - 8; i--) {
+        for (let i = chat.length - 1; i >= 0; i--) {
             const mes = chat[i]?.mes;
             if (!mes) continue;
             const tagged = parseTimeTag(stripThink(mes));
@@ -1273,13 +1287,13 @@ export function getRpDateTime() {
         // календаря/предыдущей реплики, а не подставить сегодняшнюю реальную дату.
         const parsed = [];
         for (let i = chat.length - 1; i >= 0 && i >= chat.length - 3; i--) {
-            const mes = chat[i]?.mes;
-            if (mes && !chat[i].is_system) parsed.push(parseAnyDateTime(mes));
+            const mes = storyClockText(chat[i]);
+            if (mes) parsed.push(parseAnyDateTime(mes));
         }
         parsed.push(parseAnyDateTime(calText));
-        for (let i = chat.length - 4; i >= 0 && i >= chat.length - 20; i--) {
-            const mes = chat[i]?.mes;
-            if (mes && !chat[i].is_system) parsed.push(parseAnyDateTime(mes));
+        for (let i = chat.length - 4; i >= 0; i--) {
+            const mes = storyClockText(chat[i]);
+            if (mes) parsed.push(parseAnyDateTime(mes));
         }
 
         const full = parsed.find(r => r && !r.timeOnly) || null;
@@ -1351,45 +1365,7 @@ function scanChatUncached() {
     let chat = [];
     try { chat = SillyTavern.getContext()?.chat || []; } catch (e) { /* ignore */ }
 
-    const currentGlobalOffset = getRpOffsetMs();
-    const offsets = new Array(chat.length).fill(null);
-    let lastKnownOffset = null;
-
-    for (let i = 0; i < chat.length; i++) {
-        const msg = chat[i];
-        if (msg && msg.mes) {
-            // Метка времени точнее прозы: берём её, не разбирая текст дальше
-            const tagged = parseTimeTag(stripThink(msg.mes));
-            if (tagged) {
-                const realDate = parseRealDate(msg.send_date) || new Date();
-                const rpDate = new Date(tagged.year, tagged.month - 1, tagged.day, tagged.hours, tagged.minutes, 0, 0);
-                lastKnownOffset = rpDate.getTime() - realDate.getTime();
-                offsets[i] = lastKnownOffset;
-                continue;
-            }
-        }
-        if (msg && msg.mes && !msg.is_system) {
-            const r = parseAnyDateTime(msg.mes);
-            if (r && !r.timeOnly) {
-                const realDate = parseRealDate(msg.send_date) || new Date();
-                const rpDate = new Date(
-                    r.year, r.month - 1, r.day,
-                    r.hours ?? realDate.getHours(),
-                    r.minutes ?? realDate.getMinutes(),
-                    0, 0
-                );
-                lastKnownOffset = rpDate.getTime() - realDate.getTime();
-            }
-        }
-        offsets[i] = lastKnownOffset;
-    }
-
-    let firstKnown = offsets.find(o => o !== null);
-    if (firstKnown === undefined) firstKnown = currentGlobalOffset;
-
-    for (let i = 0; i < chat.length; i++) {
-        if (offsets[i] === null) offsets[i] = firstKnown;
-    }
+    const storyTimes = getRpMessageTimes();
 
     for (let i = 0; i < chat.length; i++) {
         const msg = chat[i];
@@ -1402,11 +1378,7 @@ function scanChatUncached() {
         const deviceSends=!msg.is_user?deviceActions(text).filter(event=>event.action==='send'&&event.app==='sms'&&!isUserName(event.actor)):[];
         for(const event of deviceSends)text+='\n<!--tel:out:'+JSON.stringify({to:event.to,...(event.chat?{group:event.chat}:{}),text:event.text,mixed:true,actor:event.actor,deviceTag:event.tag}).replace(/</g,'\\u003c').replace(/>/g,'\\u003e')+'-->';
 
-        let time = null;
-        const realDate = parseRealDate(msg.send_date);
-        if (realDate) {
-            time = new Date(realDate.getTime() + (offsets[i] || 0));
-        }
+        const time = storyTimes[i];
 
         if (msg.is_user || deviceSends.length) {
             // Исходящая смс юзера
@@ -1432,7 +1404,7 @@ function scanChatUncached() {
                 if(j.stickerId)entry.stickerId=j.stickerId;
                 if(j.stickerCaption)entry.stickerCaption=j.stickerCaption;
                 if (isVoice) entry.voice = true;
-                if (j.react) entry.react = String(j.react);
+                entry.reactions = smsReactions(j);
                 // Фото: путь из маркера (надёжно — часть текста) ИЛИ из extra.media (ST-нативно)
                 if (j.img) entry.img = j.img;
                 else {
@@ -1516,7 +1488,7 @@ function scanChatUncached() {
                 const savedSticker=entry.img&&getMeta().stickers?.find(item=>item.image===entry.img);
                 if(savedSticker&&!entry.mediaKind){entry.mediaKind='sticker';entry.stickerId=savedSticker.id;entry.stickerCaption=savedSticker.caption||'';}
                 // Реакция юзера на сообщение (пишется в тег из UI)
-                if (j.react) entry.react = String(j.react);
+                entry.reactions = smsReactions(j);
                 // Скрин поста из соцсети или канала: карточку рисует телефон
                 if (j.shot) entry.shot = j.shot;
                 if(!entry.text&&!entry.img&&!entry.photoDesc&&!entry.shot)continue;

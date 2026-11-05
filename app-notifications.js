@@ -1,3 +1,4 @@
+import { rpElapsedMs } from './state.js';
 import { PHONE_APPS, phoneAppInstalled } from './phone-apps.js';
 import { normalizePhoneSpaces } from './phone-text.js';
 import { formatCurrency } from './currencies.js';
@@ -30,7 +31,7 @@ function candidates(root,{user='',date=null,english=false}={}){
                 add(app,post.id+'/'+comment.id,'comment',comment.author,comment.text,{screen,postId:post.id});
         }
     }
-    for(const story of rows(social.stories))if(foreign(story)&&Date.now()-Number(story.time||0)<86400000)
+    for(const story of rows(social.stories))if(foreign(story)&&rpElapsedMs(story.time)<86400000)
         add('ig',story.id,'story',story.author,L('Новая история','New story')+(story.caption?': '+story.caption:''),{screen:'igstory',storyId:story.id,author:story.author});
     for(const channel of [...rows(root.channels?.list),root.channels?.mine,root.channels?.anon].filter(Boolean)){
         if(!channel.mine&&!channel.subscribed)continue;

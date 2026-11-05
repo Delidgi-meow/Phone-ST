@@ -5821,3 +5821,16 @@ img[data-zoom] { cursor: zoom-in; }
 #gp-phone:has(.gp-thread-float) #gp-input{border:0;box-shadow:none;outline:0}
 #gp-phone:has(.gp-thread-float) #gp-input:focus-visible{outline:1px solid rgba(var(--gp-accent-a-rgb),.45);outline-offset:2px}
 #gp-phone #gp-msgs .gp-bubble-wrap.gp-out>.gp-bubble.gp-sticker-bubble,#gp-phone #gp-msgs .gp-bubble-wrap.gp-in>.gp-bubble.gp-sticker-bubble{background:transparent!important;background-image:none!important;border:0!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;padding:0!important}
+
+/* Native emoji reactions: several choices can coexist on one message. */
+#gp-phone .gp-react-picker{display:grid;grid-template-columns:repeat(5,36px);gap:3px;padding:7px;border-radius:18px;max-width:100%;width:max-content}
+#gp-phone .gp-react-picker button{width:36px;height:36px;font-family:"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif;font-size:23px}
+#gp-phone .gp-react-picker button.gp-selected{background:rgba(var(--gp-accent-a-rgb),.2);outline:1px solid rgba(var(--gp-accent-a-rgb),.4)}
+#gp-phone .gp-react-chip{width:auto;max-width:100%;height:auto;min-height:25px;gap:4px;padding:2px 7px;flex-wrap:wrap;border-radius:14px;font-size:18px;line-height:1.25}
+#gp-phone .gp-bubble-wrap.gp-has-react{margin-bottom:20px}
+#gp-phone .gp-video{display:block;width:100%;max-width:100%;max-height:65vh;object-fit:contain;background:#000;border-radius:inherit}
+#gp-phone .gp-sms-attach>.gp-video{width:90px;height:72px;object-fit:contain}
+#gp-phone .gp-bubble-img>.gp-video{max-height:360px;border-radius:12px}
+#gp-phone .gp-ig-pick>.gp-video{height:100%;max-height:340px}
+#gp-phone .gp-igst-viewer.gp-has-video .gp-igst-nav{bottom:130px}
+#gp-phone .gp-igst-viewer .gp-igst-media.gp-video{max-height:none;min-height:0;border-radius:0}

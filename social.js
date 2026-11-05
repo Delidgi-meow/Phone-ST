@@ -1,3 +1,5 @@
+import { phoneMediaVisionData } from './phone-media.js';
+import { getRpNow, realToRpDate, rpElapsedMs } from './state.js';
 import { directConversationMedia, directReplyRoleError } from './direct-context.js';
 import { smsConversationHistory, SMS_CONTINUITY } from './sms-context.js';
 import { parseBirthdayDate, birthdayEvidenceMatches, resolveBirthdayYear } from './birthday-dates.js';
@@ -19,7 +21,7 @@ import { generatePhoneBlockPrompt } from './external-image-blocks.js';
 import { slayActiveRefs, slayNames, slayRefSrc, slayStyleText, slayOutfit, slayIdentityLibrary } from './slay-refs.js';
 import { requireCompleteImagePrompt } from './image-prompt-completion.js';
 import { resolveImageSubjects, loadImageIdentityContext, matchesImageIdentity } from './image-subjects.js';
-import { chatMedia, saveSticker, stickerPromptRules, CHAT_MEDIA_DIRECTIVE } from './chat-media.js';
+import { chatMedia, saveSticker, stickerPromptRules, CHAT_MEDIA_DIRECTIVE, DIRECT_MEDIA_DIRECTIVE } from './chat-media.js';
 import { savedImagePrompt, saveImagePrompt } from './image-prompt-cache.js';
 import { getPhoneActivityText, phoneActivityAllowed, getThread } from './state.js';
 import { messageForward } from './message-forward.js';
@@ -103,15 +105,14 @@ export async function judgePostingTaskEvidence(tasks,posts) {
     return Array.isArray(result?.matches)?result.matches:[];
 }
 
-// ── Инста-сторис: живут 24 часа реального времени, потом гаснут ──
+// ── Инста-сторис: живут 24 часа времени РП, потом гаснут ──
 export function getStories() {
     const s = getSocial();
     if (!Array.isArray(s.stories)) s.stories = [];
     return s.stories;
 }
 export function activeStories() {
-    const now = Date.now();
-    return getStories().filter(st => st && now - (st.time || 0) < 24 * 3600 * 1000);
+    return getStories().filter(st => st && rpElapsedMs(st.time) < 24 * 3600 * 1000);
 }
 export function addStory({ image = null, imgDesc = '', caption = '', questionPrompt = '', questionAnswer = null }) {
     const stories = getStories();
@@ -252,7 +253,7 @@ export function toggleStoryLike(story) {
 export function bumpStoryViews(story) {
     if (!story) return 0;
     const followers = getSocial().socialProfiles?.instagram?.followers || 40;
-    const ageMin = (Date.now() - (story.time || Date.now())) / 60000;
+    const ageMin = rpElapsedMs(story.time) / 60000;
     const target = Math.round(Math.min(followers * 0.65, 2 + followers * 0.65 * Math.min(1, ageMin / 240)));
     if (target > (story.views || 0)) {
         story.views = target;
@@ -334,9 +335,10 @@ export function getUserHandle() {
     return getMeta().userHandle || makeHandle(getUserName());
 }
 
-export function timeAgo(ts) {
+export function timeAgo(ts, rpAt) {
     if (!ts) return '';
-    const mins = Math.floor((Date.now() - ts) / 60000);
+    const date = Number.isFinite(rpAt) ? new Date(rpAt) : realToRpDate(new Date(ts));
+    const mins = Math.floor((getRpNow() - date) / 60000);
     if (mins < 1) return 'сейчас';
     if (mins < 60) return `${mins}м`;
     const hrs = Math.floor(mins / 60);
@@ -1028,23 +1030,9 @@ export function rpContextBlock(count = 12, { publicOnly = false } = {}) {
 // Любой источник картинки → dataURL (бэкенды вижна не умеют относительные пути
 // вроде /user/images/... — картинки картинко-расширения хранятся файлами)
 async function toDataUrl(src) {
-    const s = String(src || '');
-    if (!s) return null;
-    if (s.startsWith('data:')) return s;
-    try {
-        const resp = await fetch(s);
-        if (!resp.ok) return null;
-        const blob = await resp.blob();
-        return await new Promise((resolve) => {
-            const r = new FileReader();
-            r.onloadend = () => resolve(String(r.result));
-            r.onerror = () => resolve(null);
-            r.readAsDataURL(blob);
-        });
-    } catch (e) {
-        console.warn('[GlassPhone] toDataUrl failed:', e);
-        return null;
-    }
+    if(!src)return null;
+    try{const response=await fetch(String(src));if(!response.ok)return null;return await phoneMediaVisionData(src,await response.blob());}
+    catch(error){console.warn('[GlassPhone] Media vision:',error);return null;}
 }
 
 // ── Прямой запрос ТЕКУЩИМ chat-completion подключением (без профиля/пресета) ──
@@ -1100,6 +1088,7 @@ function attachImageToMessages(messages, dataUrl) {
         : [{ type: 'text', text: String(original ?? '') }];
     out[userIndex].content = [
         ...textPart,
+        { type: 'text', text: 'VISUAL INPUT: If the attachment is a labeled contact sheet, its frames are samples in chronological order, not simultaneous people or separate messages. Labels are sampling metadata, not text in the original media. Only describe visible sampled frames. Audio is not supplied; never invent speech, music or unseen motion.' },
         { type: 'image_url', image_url: { url: dataUrl, detail: 'auto' } },
     ];
     return out;
@@ -1292,7 +1281,7 @@ async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '',
             if (dataUrl) {
                 requestMessages = attachImageToMessages(messages, dataUrl);
             } else {
-                console.warn('[GlassPhone] vision: не удалось прочитать картинку — запрос без фото');
+                throw new Error('Не удалось прочитать медиа для вижна. Проверь формат файла или добавь текстовое описание.');
             }
         }
         try {
@@ -1353,7 +1342,7 @@ async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '',
         checkActivity();
         const vis = await currentApiVision(messages, image, maxTokens, checkActivity);
         if (vis !== null) return finish(vis);
-        console.warn('[GlassPhone] vision: прямой канал не сработал — запрос уйдёт БЕЗ фото');
+        throw new Error('Вижн-запрос не прошёл. Проверь, поддерживает ли выбранная модель картинки, или добавь описание медиа.');
     }
 
     // Путь 3: текущий chat-completion API. При включённом префилле сначала
@@ -3924,11 +3913,11 @@ Return JSON only: {"from":${JSON.stringify(original)},"to":${JSON.stringify(user
     let result;
     for(let attempt=0;attempt<2;attempt++){
         const correction=attempt?'\nROLE CORRECTION: '+directReplyRoleError(result,{speaker:original,user})+' Repeat only the required JSON as '+JSON.stringify(original)+' to '+JSON.stringify(user)+'.':'';
-        result=parseJsonObject(await socialGen(prompt+correction+'\n'+CHAT_MEDIA_DIRECTIVE+'\nSaved stickers: '+JSON.stringify((owner.stickers||[]).slice(0,12).map(item=>({id:item.id,description:item.description}))),{app:'ig',maxTokens:1400,image:media.image,prefill}));
+        result=parseJsonObject(await socialGen(prompt+correction+'\n'+DIRECT_MEDIA_DIRECTIVE,{app:'ig',maxTokens:1400,image:media.image,prefill}));
         if(getMeta()!==owner)throw new Error('Чат изменился');
         const error=directReplyRoleError(result,{speaker:original,user});
         if(!error){
-            let share=messageForward(result.forward);const descriptor=chatMedia(result);
+            let share=messageForward(result.forward);const descriptor=chatMedia({meme:result.meme});
             if(descriptor)try{const attachment=await generateChatAttachment(descriptor,{speaker:original,phoneApp:'ig'});share={app:attachment.mediaKind,id:attachment.stickerId||'',author:original,text:attachment.photo,image:attachment.img};}catch(error){if(getMeta()!==owner)throw error;console.warn('[GlassPhone] Direct attachment:',error);result.text+='\n['+(descriptor.kind==='sticker'?'Стикер':'Мем')+' не удалось создать. Проверь подключение для картинок.]';}
             return {from:original,to:user,text:result.text.trim().slice(0,1000),share,bank:isPhoneAppInstalled('bank')&&Array.isArray(result.bank)?result.bank.slice(0,5):[]};
         }

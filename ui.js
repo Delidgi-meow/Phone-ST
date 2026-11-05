@@ -1,3 +1,7 @@
+import { SMS_REACTIONS as REACTIONS, smsReactions, toggleSmsReaction, preserveSmsMedia } from './sms-reactions.js';
+import { uploadPhoneMedia, phoneMediaHtml, isVideoMedia } from './phone-media.js';
+import { chatMediaKey } from './chat-media.js';
+import { getRpNow, realToRpDate } from './state.js';
 import { cancelPhoneImageGenerations } from './social.js';
 import { saveSticker } from './chat-media.js';
 import { renderAppStore } from './app-store.js';
@@ -838,6 +842,8 @@ export function render() {
         const story=allStoriesOrdered()[_storyIdx];
         if(story){const holder=document.createElement('div');holder.className='gp-story-question-holder';holder.innerHTML=storyQuestionHtml(story,story.ak==='user');screen.querySelector('.gp-insta-story-footer')?.prepend(holder);holder.querySelector('[data-story-questions]')?.addEventListener('click',e=>{e.stopPropagation();openStoryQuestions(screen,story,{render,toast,changed:updatePhoneInjection});});}
     }
+    screen.querySelectorAll('video').forEach(video=>video.addEventListener('click',event=>event.stopPropagation()));
+    if(screen.querySelector('.gp-igst-media.gp-video'))screen.querySelector('.gp-igst-viewer')?.classList.add('gp-has-video');
     restoreDrafts(screen);
     applyAppSurface(screen,currentScreen);
     acknowledgeVisibleAppNotifications(appNotices);
@@ -2029,16 +2035,6 @@ function renderList(screen) {
 }
 
 // ── Экран треда ──
-// ── Реакции на сообщения (как в ТГ, но FontAwesome — без стандартных эмодзи) ──
-const REACTIONS = [
-    { id: 'heart', icon: 'fa-heart', ru: 'сердечко' },
-    { id: 'like', icon: 'fa-thumbs-up', ru: 'лайк' },
-    { id: 'laugh', icon: 'fa-face-laugh-squint', ru: 'смех' },
-    { id: 'wow', icon: 'fa-face-surprise', ru: 'вау' },
-    { id: 'sad', icon: 'fa-face-sad-tear', ru: 'грусть' },
-    { id: 'angry', icon: 'fa-face-angry', ru: 'злость' },
-    { id: 'fire', icon: 'fa-fire', ru: 'огонь' },
-];
 let _reactPickerFor = null; // mi сообщения с открытым пикером
 let _reactPickerKey = null; // тред пикера (чтобы mi не «переехал» в другой чат)
 
@@ -2083,9 +2079,13 @@ async function rewriteSmsTag(m, t, mutate) {
             if (m.img) j.img = m.img;
             if (m.shot) j.shot = m.shot;
         }
+        preserveSmsMedia(j,m);
         mutate(j);
         const kind = m.dir === 'out' ? 'out' : 'sms';
         if (!replacePhoneMessageTag(chatMsg, tag, `<!--tel:${kind}:${JSON.stringify(j)}-->`)) return false;
+        const cached=getMeta().generatedChatMedia;
+        const oldKey=chatMediaKey(m.idx,tag),newKey=chatMediaKey(m.idx,`<!--tel:${kind}:${JSON.stringify(j)}-->`);
+        if(cached?.[oldKey]&&oldKey!==newKey){cached[newKey]={...cached[oldKey],...(j.img?{img:j.img}:{})};delete cached[oldKey];saveMeta();}
         // Подпись чата считается по длине и хвосту последнего сообщения:
         // правка в середине её не меняет, и кэш отдал бы дорисованное фото
         // как «ещё не готово». Сбрасываем явно.
@@ -2160,9 +2160,9 @@ function renderThread(screen) {
             // Переген доступен только для ММС с описанием (без описания нечего рисовать)
             const genKey = m.eventId || `${m.idx}:${m.tagStart}`;
             const busy = _mmsGenBusy.has(genKey);
-            const regenBtn = m.photoDesc
+            const regenBtn = m.photoDesc && !isVideoMedia(m.img)
                 ? `<button class="gp-mms-gen" data-mmsgen="${mi}" title="Перегенерировать фото" ${busy ? 'disabled' : ''}>${ic(busy ? 'fa-spinner fa-spin' : 'fa-rotate-right')}</button>` : '';
-            media = `<div class="gp-bubble-img"><img src="${esc(m.img)}" alt="" data-zoom>${regenBtn}</div>`;
+            media = `<div class="gp-bubble-img">${phoneMediaHtml(m.img)}${regenBtn}</div>`;
         } else if (m.photoDesc) {
             const genKey = m.eventId || `${m.idx}:${m.tagStart}`;
             const busy = _mmsGenBusy.has(genKey);
@@ -2174,12 +2174,12 @@ function renderThread(screen) {
             ? `<div class="gp-bubble-sender" style="color:${senderColor(m.from)}">${esc(m.from)}</div>` : '';
         if(m.mediaKind==='sticker')media=media.replace('gp-bubble-img','gp-bubble-img gp-chat-sticker');
         const body = (m.actor?`<small class="gp-device-actor">С телефона отправил(а): ${esc(m.actor)}</small>`:'')+(m.voice ? voiceBubbleHtml(m) : esc(m.text));
-        const reaction = m.react ? REACTIONS.find(r => r.id === m.react) : null;
-        const reactChip = reaction ? `<span class="gp-react-chip">${ic(reaction.icon)}</span>` : '';
+        const reactions = smsReactions(m);
+        const reactChip = reactions.length ? '<span class="gp-react-chip">'+reactions.map(id=>'<span>'+REACTIONS.find(r=>r.id===id).emoji+'</span>').join('')+'</span>' : '';
         const picker = (_reactPickerFor === mi && _reactPickerKey === t.key)
-            ? `<div class="gp-react-picker">${REACTIONS.map(r => `<button data-react="${r.id}" data-react-mi="${mi}" class="${m.react === r.id ? 'gp-selected' : ''}" title="${r.ru}">${ic(r.icon)}</button>`).join('')}</div>` : '';
+            ? `<div class="gp-react-picker">${REACTIONS.map(r => `<button data-react="${r.id}" data-react-mi="${mi}" aria-label="${r.ru}" aria-pressed="${reactions.includes(r.id)}" class="${reactions.includes(r.id) ? 'gp-selected' : ''}" title="${r.ru}">${r.emoji}</button>`).join('')}</div>` : '';
         bubbles += `
-        <div class="gp-bubble-wrap ${m.dir === 'out' ? 'gp-out' : 'gp-in'}${reaction ? ' gp-has-react' : ''}">
+        <div class="gp-bubble-wrap ${m.dir === 'out' ? 'gp-out' : 'gp-in'}${reactions.length ? ' gp-has-react' : ''}">
             ${picker}
             <div class="gp-bubble${m.voice ? ' gp-bubble-voice' : ''}${m.mediaKind==='sticker'?' gp-sticker-bubble':''}" data-bmi="${mi}">${senderLabel}${media}${shotHtml(m)}${body}<button class="gp-sms-del" data-smsdel="${mi}" title="Удалить">${ic('fa-xmark')}</button>${reactChip}</div>
             ${tm || mi===t.messages.length-1 ? `<div class="gp-bubble-time gp-sms-message-foot">${tm?`<span>${esc(tm)}</span>`:''}${mi===t.messages.length-1?`<button type="button" class="gp-sms-inline-regen" id="gp-regen" title="${m.dir==='in'?'Другой ответ':'Получить ответ'}" aria-label="${m.dir==='in'?'Другой ответ':'Получить ответ'}" ${sending?'disabled':''}>${ic('fa-rotate-right')}</button>`:''}</div>` : ''}
@@ -2225,7 +2225,7 @@ function renderThread(screen) {
             ${bubbles || `<div class="gp-empty gp-empty-thread"><div class="gp-empty-icon">${ic('fa-message')}</div><div class="gp-empty-text">Начни переписку — сообщение попадёт<br>прямо в ролевую</div></div>`}
             ${typing}
         </div>
-        ${_smsDraftImage ? `<div class="gp-sms-attach"><img src="${esc(_smsDraftImage)}" alt=""><span>Фото приложено</span><button class="gp-iconbtn gp-danger" id="gp-attach-clear">${ic('fa-xmark')}</button></div>` : ''}
+        ${_smsDraftImage ? `<div class="gp-sms-attach">${phoneMediaHtml(_smsDraftImage,{zoom:false})}<span>Медиа приложено</span><button class="gp-iconbtn gp-danger" id="gp-attach-clear">${ic('fa-xmark')}</button></div>` : ''}
         <div class="gp-inputbar">
             <button class="gp-iconbtn" id="gp-attach" title="Приложить фото">${ic('fa-paperclip')}</button>
             <button class="gp-iconbtn${_smsDraftVoice ? ' gp-voice-armed' : ''}" id="gp-voice-toggle" title="Голосовое сообщение">${ic('fa-microphone')}</button>
@@ -2360,7 +2360,8 @@ function renderThread(screen) {
     sendBtn?.addEventListener('click', () => doSend(t.key));
     screen.querySelector('#gp-regen')?.addEventListener('click', () => doRegen(t.key));
     // Реакции: тап по пузырю → пикер; выбор пишет react в тег + журнал
-    screen.querySelectorAll('[data-bmi]').forEach(b => b.addEventListener('click', () => {
+    screen.querySelectorAll('[data-bmi]').forEach(b => b.addEventListener('click', (event) => {
+        if(event.target.closest('video'))return;
         const mi = parseInt(b.getAttribute('data-bmi'));
         const wasOpen = _reactPickerFor === mi && _reactPickerKey === t.key;
         _reactPickerFor = wasOpen ? null : mi;
@@ -2373,19 +2374,19 @@ function renderThread(screen) {
         const m = t.messages[mi];
         const r = REACTIONS.find(x => x.id === b.getAttribute('data-react'));
         if (!m || !r) return;
-        const removing = m.react === r.id;
-        _reactPickerFor = null;
+        const removing = smsReactions(m).includes(r.id);
+        const selectedReactions=toggleSmsReaction(m,r.id);
         logAct('реакция', `${removing ? 'снять' : r.id} · ${m.dir === 'in' ? 'входящее' : 'своё'} #${m.idx}`);
         const ok = await rewriteSmsTag(m, t, (j) => {
-            if (removing) delete j.react;
-            else j.react = r.id;
+            delete j.react;
+            j.reactions = selectedReactions;
         });
         if (!ok) {
             toast('Не получилось', 'fa-circle-exclamation');
             render();
             return;
         }
-        m.react = removing ? null : r.id; // мгновенно, до перескана
+        m.reactions = selectedReactions; delete m.react; // мгновенно, до перескана
         // В журнал — только НОВАЯ реакция на чужое сообщение (снятие — шум)
         if (!removing && m.dir === 'in') {
             logSocialToChat(`${getUserName()} ставит реакцию «${r.ru}» на сообщение ${m.from || t.name}: «${String(m.text || (m.photoDesc ? 'фото' : m.voice ? 'голосовое' : '')).slice(0, 80)}»`, { priv: true });
@@ -2941,8 +2942,8 @@ function igImageHtml(p) {
         // Cache-busting: если URL не data:, добавляем ?t= для принудительной перезагрузки
         const src = p.image.startsWith('data:') ? p.image : p.image + (p.image.includes('?') ? '&' : '?') + 't=' + (p._imgTs || '0');
         return `<div class="gp-ig-img gp-ig-img-has">
-            <img src="${esc(src)}" alt="" data-zoom>
-            ${busy
+            ${phoneMediaHtml(src)}
+            ${isVideoMedia(p.image) ? '' : busy
                 ? `<div class="gp-ig-regen-overlay">${ic('fa-spinner fa-spin')}<div class="gp-ig-genstatus" data-genstatus="${esc(p.id)}">Перегенерация...</div>${stopGenBtn(p.id)}</div>`
                 : `<button class="gp-ig-regenbtn" data-regenimg="${esc(p.id)}" title="Перегенерировать">${ic('fa-rotate-right')}</button>`}
         </div>`;
@@ -2996,7 +2997,7 @@ function bindIgCardActions(root) {
     root.querySelectorAll('[data-ig-save]').forEach(button=>button.onclick=()=>{const post=getIgPosts().find(item=>item.id===button.dataset.igSave);if(post){post.saved=!post.saved;saveMeta();render();}});
     root.querySelectorAll('[data-ig-menu]').forEach(button=>button.onclick=()=>{
         const post=getIgPosts().find(item=>item.id===button.dataset.igMenu);if(!post)return;
-        const own=post.ak==='user',shade=openPhoneSheet(root,'Публикация',`<div class="gp-insta-menu">${own?'':`<button type="button" data-post-dm>${bankIcon('Send')}Написать автору</button>`}<button type="button" data-post-action>${bankIcon(own?'Trash2':'RotateCw')}${own?'Удалить публикацию':'Переписать публикацию'}</button><button type="button" data-post-image-pick>${bankIcon('Image')}${tr('Выбрать готовое фото')}</button><input type="file" data-post-image-file accept="image/*" hidden>${own?'':`<button type="button" data-post-ban>${bankIcon('Ban')}Заблокировать аккаунт</button>`}</div>`,currentScreen);shade.classList.add('gp-insta-sheet');
+        const own=post.ak==='user',shade=openPhoneSheet(root,'Публикация',`<div class="gp-insta-menu">${own?'':`<button type="button" data-post-dm>${bankIcon('Send')}Написать автору</button>`}<button type="button" data-post-action>${bankIcon(own?'Trash2':'RotateCw')}${own?'Удалить публикацию':'Переписать публикацию'}</button><button type="button" data-post-image-pick>${bankIcon('Image')}${tr('Выбрать готовое фото')}</button><input type="file" data-post-image-file accept="image/*,video/mp4,video/webm,video/quicktime" hidden>${own?'':`<button type="button" data-post-ban>${bankIcon('Ban')}Заблокировать аккаунт</button>`}</div>`,currentScreen);shade.classList.add('gp-insta-sheet');
         const imageOwner=getMeta(),imageInput=shade.querySelector('[data-post-image-file]'),imageButton=shade.querySelector('[data-post-image-pick]');
         imageButton.onclick=()=>imageInput.click();
         imageInput.onchange=async()=>{
@@ -3004,9 +3005,9 @@ function bindIgCardActions(root) {
             imageButton.disabled=true;
             const current=()=>getMeta()===imageOwner&&isPhoneAppInstalled('ig')&&getIgPosts().includes(post);
             try{
-                const data=await compressImage(file,1600,.92);
+                const data=await uploadPhoneMedia(file,'igpost');
                 if(!current())return;
-                const src=await saveBase64AsFile(data.replace(/^data:image\/[a-z0-9.+-]+;base64,/i,''),'glassphone',`igpost_${Date.now()}`,'jpeg');
+                const src=data;
                 if(!current())return;
                 if(typeof src!=='string'||!src)throw new Error('Не удалось сохранить фото');
                 post.image=src;post._imgTs=Date.now();saveMeta();
@@ -3390,9 +3391,9 @@ function renderIgNewStory(screen) {
         </div>
         <div class="gp-add-form">
             <div class="gp-ig-pick gp-igst-pick${_storyDraftImage ? ' gp-ig-pick-has' : ''}" id="gp-st-pick">
-                ${_storyDraftImage ? `<img src="${esc(_storyDraftImage)}" alt="">` : `${ic('fa-camera')}<span>Выбрать фото</span>`}
+                ${_storyDraftImage ? `${phoneMediaHtml(_storyDraftImage,{zoom:false})}` : `${ic('fa-camera')}<span>Выбрать фото</span>`}
             </div>
-            <input type="file" id="gp-st-file" accept="image/*" style="display:none">
+            <input type="file" id="gp-st-file" accept="image/*,video/mp4,video/webm,video/quicktime" style="display:none">
             <label class="gp-field">
                 <span>Что на фото</span>
                 <input type="text" id="gp-st-desc" maxlength="300" placeholder="Для генерации и реакций в ролевой">
@@ -3413,9 +3414,9 @@ function renderIgNewStory(screen) {
         if (!f) return;
         const owner=getMeta();
         try {
-            const prepared=await preparePhotoUpload(f);
+            const prepared=await uploadPhoneMedia(f,'story');
             if(getMeta()!==owner||currentScreen!=='ignewstory'||!isPhoneAppInstalled('ig'))return;
-            const image=await persistPhoto(prepared,'story');
+            const image=prepared;
             if(getMeta()!==owner||currentScreen!=='ignewstory'||!isPhoneAppInstalled('ig'))return;
             _storyDraftImage = image;
             render();
@@ -3524,10 +3525,10 @@ function renderIgStory(screen) {
     const authorName = isMine ? getUserName() : (st.author || '?');
     const authorAva = avatarHtml(authorName, avatarForAuthor(isMine ? 'user' : st.ak), 'gp-avatar gp-avatar-sm');
     const views = isMine ? bumpStoryViews(st) : 0;
-    const ageMin = Math.max(1, Math.round((Date.now() - st.time) / 60000));
+    const ageMin = Math.max(1, Math.round((getRpNow() - realToRpDate(new Date(st.time))) / 60000));
     const ageLabel = ageMin < 60 ? `${ageMin} м` : `${Math.round(ageMin / 60)} ч`;
     const media = st.image
-        ? `<img class="gp-igst-media" src="${esc(st.image)}" alt="" data-zoom>`
+        ? `${phoneMediaHtml(st.image,{className:"gp-igst-media"})}`
         : `<div class="gp-igst-media gp-igst-media-gen" style="${avatarStyle('story' + st.imgDesc)}"><span>${ic('fa-image')}</span><i>${esc(st.imgDesc)}</i></div>`;
     screen.innerHTML = `
         <div class="gp-igst-viewer">
@@ -3626,9 +3627,9 @@ function renderIgNew(screen) {
         </div>
         <div class="gp-add-form">
             <div class="gp-ig-pick${_igDraftImage ? ' gp-ig-pick-has' : ''}" id="gp-ig-pick">
-                ${_igDraftImage ? `<img src="${esc(_igDraftImage)}" alt="">` : `${ic('fa-camera')}<span>Выбрать фото</span>`}
+                ${_igDraftImage ? `${phoneMediaHtml(_igDraftImage,{zoom:false})}` : `${ic('fa-camera')}<span>Выбрать фото</span>`}
             </div>
-            <input type="file" id="gp-ig-file" accept="image/*" style="display:none">
+            <input type="file" id="gp-ig-file" accept="image/*,video/mp4,video/webm,video/quicktime" style="display:none">
             <label class="gp-field">
                 <span>Что на фото <i style="opacity:0.5;text-transform:none;letter-spacing:0">(необязательно)</i></span>
                 <input type="text" id="gp-ig-desc" maxlength="200" placeholder="Модели с виженом увидят фото сами">
@@ -3638,7 +3639,7 @@ function renderIgNew(screen) {
                 <input type="text" id="gp-ig-caption" maxlength="400" placeholder="Подпись к посту">
             </label>
             <button class="gp-primary" id="gp-ig-publish">${ic('fa-check')} Опубликовать</button>
-            <div class="gp-add-hint">Фото прикладывается к запросу — vision-модели смотрят на него сами. Описание нужно только для моделей без вижена (и для реакций в самой ролевой).</div>
+            <div class="gp-add-hint">Вижн-модель увидит фото или несколько кадров видео/GIF. Звук не передаётся. Описание поможет модели без вижна.</div>
         </div></div>`;
 
     screen.querySelector('#gp-back')?.addEventListener('click', () => { _igDraftImage = null; goto('ig'); });
@@ -3650,7 +3651,9 @@ function renderIgNew(screen) {
         const f = file.files?.[0];
         if (!f) return;
         try {
-            _igDraftImage = await compressImage(f, 720, 0.82);
+            const owner=getMeta(),image=await uploadPhoneMedia(f,'igpost');
+            if(getMeta()!==owner||currentScreen!=='ignew'||!isPhoneAppInstalled('ig'))return;
+            _igDraftImage = image;
             render();
         } catch (e) {
             toast('Не удалось загрузить фото', 'fa-circle-exclamation');
@@ -3869,9 +3872,9 @@ function renderOfNew(screen) {
         </div>
         <div class="gp-add-form">
             <div class="gp-ig-pick${_ofDraftImage ? ' gp-ig-pick-has' : ''}" id="gp-of-pick">
-                ${_ofDraftImage ? `<img src="${esc(_ofDraftImage)}" alt="">` : `${ic('fa-camera')}<span>Выбрать фото</span>`}
+                ${_ofDraftImage ? `${phoneMediaHtml(_ofDraftImage,{zoom:false})}` : `${ic('fa-camera')}<span>Выбрать фото</span>`}
             </div>
-            <input type="file" id="gp-of-file" accept="image/*" style="display:none">
+            <input type="file" id="gp-of-file" accept="image/*,video/mp4,video/webm,video/quicktime" style="display:none">
             <label class="gp-field">
                 <span>Что на фото <i style="opacity:0.5;text-transform:none;letter-spacing:0">(необязательно)</i></span>
                 <input type="text" id="gp-of-desc" maxlength="200" placeholder="Или нажми «Нарисовать» после публикации">
@@ -3897,7 +3900,9 @@ function renderOfNew(screen) {
         const f = file.files?.[0];
         if (!f) return;
         try {
-            _ofDraftImage = await compressImage(f, 720, 0.82);
+            const owner=getMeta(),image=await uploadPhoneMedia(f,'ofpost');
+            if(getMeta()!==owner||currentScreen!=='ofnew'||!isPhoneAppInstalled('of'))return;
+            _ofDraftImage = image;
             render();
         } catch (e) {
             toast('Не удалось загрузить фото', 'fa-circle-exclamation');
@@ -5780,7 +5785,7 @@ function chanPostHtml(ch, post) {
     const busy = _imgGenBusy.has(post.id);
     let media = '';
     if (post.image) {
-        media = `<div class="gp-chan-img"><img src="${esc(post.image)}" alt="" data-zoom>
+        media = `<div class="gp-chan-img">${phoneMediaHtml(post.image)}
             <button class="gp-img-regen" data-chanimg="${esc(post.id)}" title="Перегенерировать фото" ${busy ? 'disabled' : ''}>${ic(busy ? 'fa-spinner fa-spin' : 'fa-rotate-right')}</button>
             ${busy ? stopGenBtn(post.id) : ''}</div>`;
     } else if (post.imgDesc) {
@@ -5940,10 +5945,10 @@ function renderChannel(screen) {
             <button class="gp-primary" id="gp-anon-new">${ic('fa-feather')} Написать анонимно</button>
         </div>` : ch.mine ? `
         <div class="gp-chan-composer">
-            ${_chanDraftImage ? `<div class="gp-sms-attach"><img src="${esc(_chanDraftImage)}" alt=""><span>Фото приложено</span><button class="gp-iconbtn gp-danger" id="gp-chan-imgclear">${ic('fa-xmark')}</button></div>` : ''}
+            ${_chanDraftImage ? `<div class="gp-sms-attach">${phoneMediaHtml(_chanDraftImage,{zoom:false})}<span>Медиа приложено</span><button class="gp-iconbtn gp-danger" id="gp-chan-imgclear">${ic('fa-xmark')}</button></div>` : ''}
             <textarea id="gp-chan-text" rows="2" placeholder="Написать в канал…"></textarea>
             <div class="gp-chan-composer-row">
-                <input type="file" id="gp-chan-file" accept="image/*" style="display:none">
+                <input type="file" id="gp-chan-file" accept="image/*,video/mp4,video/webm,video/quicktime" style="display:none">
                 <button class="gp-iconbtn" id="gp-chan-pick" title="Приложить фото">${ic('fa-image')}</button>
                 <button class="gp-iconbtn" id="gp-chan-draw" title="Нарисовать по описанию">${ic('fa-wand-magic-sparkles')}</button>
                 <button class="gp-primary" id="gp-chan-post" ${_chanBusy ? 'disabled' : ''}>${_chanBusy ? ic('fa-spinner fa-spin') : ic('fa-paper-plane')} Опубликовать</button>
@@ -6026,7 +6031,9 @@ function renderChannel(screen) {
         const f = file.files?.[0];
         if (!f) return;
         try {
-            _chanDraftImage = await compressImage(f, 900, 0.82);
+            const owner=getMeta(),image=await uploadPhoneMedia(f,'channel');
+            if(getMeta()!==owner||!screen.contains(file)||!isPhoneAppInstalled('chans'))return;
+            _chanDraftImage = image;
             render();
         } catch (e) { toast('Не удалось загрузить фото', 'fa-circle-exclamation'); }
     });
@@ -6336,7 +6343,7 @@ function renderChanPost(screen) {
         const quote = c.replyTo
             ? `<div class="gp-chan-quote"><b>${esc(c.replyTo)}</b><span>${esc(String(quoted?.text || 'комментарий').slice(0, 70))}</span></div>`
             : '';
-        const foot = `${esc(fmtTime(new Date(c.ts)))}${mine ? '' : `<button data-chanreply="${esc(c.author)}">Ответить</button>`}<button class="gp-danger" data-chancdel="${esc(c.id)}">Удалить</button>`;
+        const foot = `${esc(fmtTime(realToRpDate(new Date(c.ts))))}${mine ? '' : `<button data-chanreply="${esc(c.author)}">Ответить</button>`}<button class="gp-danger" data-chancdel="${esc(c.id)}">Удалить</button>`;
         return `
         <div class="gp-bubble-wrap ${mine ? 'gp-out' : 'gp-in'}">
             <div class="gp-bubble">${sender}${quote}${esc(c.text)}</div>
@@ -6611,7 +6618,7 @@ function shotHtml(m) {
     // Карточка живёт внутри пузыря с white-space: pre-wrap — собираем её одной
     // строкой, иначе отступы разметки станут пустыми строками в сообщении
     const head = `<div class="gp-shot-head">${ic(meta.icon)} ${esc(meta.label)}${author ? ` · ${esc(author)}` : ''}</div>`;
-    const pic = img ? `<div class="gp-shot-img"><img src="${esc(img)}" alt="" data-zoom></div>` : '';
+    const pic = img ? `<div class="gp-shot-img">${phoneMediaHtml(img)}</div>` : '';
     const body = text ? `<div class="gp-shot-text">${esc(text)}</div>` : '';
     const dead = found ? '' : `<div class="gp-shot-dead">${ic('fa-link-slash')} поста нет в телефоне</div>`;
     const link = found ? ` data-shot="${esc(JSON.stringify({ app: shot.app, id: found.id, chan: found._chanId || '' }))}"` : '';
@@ -6779,7 +6786,7 @@ async function insertGhostReply(name, mesText) {
         is_system: true,
         send_date: Date.now(),
         mes: mesText.trim(),
-        extra: { isSmsSilent: true },
+        extra: { isSmsSilent: true, phoneRpTime: getRpNow().getTime() },
     };
     chat.push(replyMsg);
     invalidateChatCache();
@@ -6863,6 +6870,7 @@ async function doSend(key, opts = {}) {
     // Скрин виден и модели: она должна понимать, ЧТО именно переслали
     const shotTok = shot ? `*${shot.app === 'msg' ? (en ? 'forwarded' : 'переслано') : (en ? 'screenshot' : 'скрин')}: ${shotLabel(shot)}*` : '';
     const mes = `${marker}\n${visible} ${draftImg ? photoTok + ' ' : ''}${shotTok ? shotTok + ' ' : ''}${text}`;
+    const outgoingRpTime=getRpNow().getTime();
     let outgoingSent=false;
     try {
         await sendMessageAsUser(mes);
@@ -6871,6 +6879,7 @@ async function doSend(key, opts = {}) {
 
         const ctx = SillyTavern.getContext();
         const outgoing = ctx.chat?.findLast(message => message.is_user && message.mes === mes);
+        if(outgoing){outgoing.extra ||= {};outgoing.extra.phoneRpTime=outgoingRpTime;invalidateChatCache();await saveChatConditional();}
         if (draftImg && outgoing) {
             let src = draftImg;
             try {

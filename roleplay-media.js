@@ -18,6 +18,7 @@ export async function generateRoleplayMedia(){
             const descriptor=chatMedia(event);if(!descriptor)continue;
             const key=chatMediaKey(index,match[0]);if(owner.generatedChatMedia[key])continue;
             const app=match[1].toLowerCase()==='igdm'?'ig':'list';
+            if(app==='ig'&&descriptor.kind==='sticker')continue;
             if(!event.from||isUserName(event.from)||event.to&&!event.chat&&!isUserName(event.to)||!isPhoneAppInstalled(app)||isDeviceContactBlocked(app==='ig'?'ig':'sms',event.from)||app==='list'&&!event.chat&&isSmsBlocked(event.from))continue;
             owner.generatedChatMedia[key]={status:'pending'};saveMeta();
             try{

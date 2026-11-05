@@ -6,10 +6,7 @@ export const SMS_CONTINUITY = 'SMS CONTINUITY: The records below are already del
 // Preserve order from scanChat, rather than sorting by unreliable display clocks.
 export function smsConversationHistory(messages, {user, peer, limit = 100, maxCharacters = 30000} = {}) {
     const source = (messages || []).slice(-limit);
-    const turns = privateThreadTurns(source, {user, peer, limit}).map((turn, index) => {
-        const message = source[index];
-        return {...turn, ...(message?.time ? {sentAt: message.time} : {})};
-    });
+    const turns = privateThreadTurns(source, {user, peer, limit});
     // Discard oldest complete entries, never the latest user message.
     while (turns.length > 1 && JSON.stringify(turns).length > maxCharacters) turns.shift();
     return turns;

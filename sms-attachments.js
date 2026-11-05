@@ -1,3 +1,4 @@
+import { uploadPhoneMedia } from './phone-media.js';
 import { getMeta, isPhoneAppInstalled, phoneAppForThread } from './state.js';
 import { getUserName, isImageGenAvailable, generatePostImage, cancelImageGen } from './social.js';
 import { preparePhotoUpload, persistPhoto } from './photo-upload.js';
@@ -13,14 +14,14 @@ export function setSmsAttachment(key,value){const owner=getMeta();if(!drafts.has
 export function openSmsAttachments(host,thread,api) {
     const owner=getMeta(),phoneApp=phoneAppForThread(thread.key),view='thread:'+thread.key;
     const current=shade=>getMeta()===owner&&shade.isConnected&&isPhoneAppInstalled(phoneApp);
-    const shade=openPhoneSheet(host,L('Прикрепить фото','Attach photo'),'<div class="gp-sms-photo-menu"><button type="button" data-photo-pick><i class="fa-solid fa-image"></i><span>'+L('Выбрать фото','Choose photo')+'</span></button><button type="button" data-photo-create><i class="gp-event-sparkles"></i><span>'+L('Создать по описанию','Create from description')+'</span></button><input type="file" data-photo-file accept="image/*" hidden><p role="status" data-photo-status></p></div>',view);
+    const shade=openPhoneSheet(host,L('Прикрепить','Attach'),'<div class="gp-sms-photo-menu"><button type="button" data-photo-pick><i class="fa-solid fa-image"></i><span>'+L('Фото, видео или GIF','Photo, video or GIF')+'</span></button><button type="button" data-photo-create><i class="gp-event-sparkles"></i><span>'+L('Создать по описанию','Create from description')+'</span></button><input type="file" data-photo-file accept="image/*,video/mp4,video/webm,video/quicktime" hidden><p role="status" data-photo-status></p></div>',view);
     const input=shade.querySelector('[data-photo-file]');
     const stickers=document.createElement('button');stickers.type='button';stickers.innerHTML='<i class="fa-regular fa-face-smile"></i><span>'+L('Стикеры','Stickers')+'</span>';shade.querySelector('.gp-sms-photo-menu').insertBefore(stickers,input);
     stickers.onclick=()=>{if(!current(shade))return;openStickerPicker(host,{phoneApp,view,selected:attachment=>{if(getMeta()!==owner)return;setSmsAttachment(thread.key,attachment);api.attached();}});};
     shade.querySelector('[data-photo-pick]').onclick=()=>input.click();
     input.onchange=async()=>{
         const file=input.files?.[0];if(!file)return;shade.querySelectorAll('button:not([data-sheet-close])').forEach(b=>b.disabled=true);
-        try{const prepared=await preparePhotoUpload(file);if(!current(shade))return;const image=await persistPhoto(prepared,'sms');if(!current(shade))return;setSmsAttachment(thread.key,{image,description:''});closePhoneSheet(shade);api.attached();}
+        try{const image=await uploadPhoneMedia(file,'sms');if(!current(shade))return;setSmsAttachment(thread.key,{image,description:''});closePhoneSheet(shade);api.attached();}
         catch(error){if(current(shade))shade.querySelector('[data-photo-status]').textContent=error.message;}
         finally{if(shade.isConnected)shade.querySelectorAll('button').forEach(b=>b.disabled=false);}
     };

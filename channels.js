@@ -1,3 +1,4 @@
+import { rpElapsedMs } from './state.js';
 import { isPhoneAppInstalled } from './state.js';
 import { parsePhoneJson } from './phone-text.js';
 // Каналы: свой и чужие, посты с реакциями, просмотрами и обсуждением.
@@ -542,7 +543,7 @@ export function deleteComment(post, id) {
 export function bumpViews(channel, post) {
     if (!channel || !post) return 0;
     const reach = Math.max(10, Math.round((channel.subs || 50) * 0.72));
-    const ageMin = (Date.now() - (post.time || Date.now())) / 60000;
+    const ageMin = rpElapsedMs(post.time) / 60000;
     const target = Math.round(reach * Math.min(1, 0.15 + ageMin / 600));
     if (target > (post.views || 0)) {
         post.views = target;
