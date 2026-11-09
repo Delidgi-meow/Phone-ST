@@ -104,7 +104,7 @@ import {
     getPlans, getBirthdays, addPlan, togglePlan, deletePlan, groupedPlans, plansBadgeCount,
     fmtPlanDate, rpToday, PLAN_WHO, monthGrid, monthOf, shiftMonth, plansByDate, daysBetween, harvestPlanTags,
 } from './plans.js';
-import { tr, trDom, lang, DAYS_I18N, MONTHS_I18N } from './i18n.js';
+import { tr, trDom, watchPhoneTranslations, lang, DAYS_I18N, MONTHS_I18N } from './i18n.js';
 import { logAct, logOk, logFail } from './debug-log.js';
 
 // Все confirm/prompt модуля идут через перевод (шэдоуинг браузерных диалогов)
@@ -435,6 +435,7 @@ function createPhone() {
             <div class="gp-homebar" title="Закрыть"></div>
         </div>`;
     document.body.appendChild(ov);
+    watchPhoneTranslations(ov);
     ov.addEventListener('pointerdown', (e) => {
         if (e.target === ov) closePhone();
     });

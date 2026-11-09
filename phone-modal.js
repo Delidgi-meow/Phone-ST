@@ -10,7 +10,7 @@ export function closePhoneSheet(shade){
 export function openPhoneSheet(host,title,body,view=''){
     host.querySelectorAll('.gp-phone-sheet-shade').forEach(closePhoneSheet);
     const shade=document.createElement('div');shade.className='gp-phone-sheet-shade gp-web-sheet-shade';shade.dataset.phoneView=view;shade.returnFocus=document.activeElement;shade.ownerRoot=getMeta();
-    shade.innerHTML='<section class="gp-web-sheet" role="dialog" aria-modal="true" aria-label="'+esc(title)+'"><header><b>'+esc(title)+'</b><button type="button" class="gp-web-icon" data-sheet-close aria-label="Close">×</button></header>'+body+'</section>';
+    shade.innerHTML='<section class="gp-web-sheet" role="dialog" aria-modal="true" aria-label="'+esc(title)+'"><header><b>'+esc(title)+'</b><button type="button" class="gp-web-icon" data-sheet-close aria-label="Закрыть">×</button></header>'+body+'</section>';
     host.classList.add('gp-phone-modal-host','gp-phone-modal-open');host.appendChild(shade);
     [...host.children].forEach(el=>el.inert=el!==shade);
     shade.querySelector('[data-sheet-close]').onclick=()=>closePhoneSheet(shade);

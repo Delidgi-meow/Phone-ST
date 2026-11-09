@@ -1,5 +1,6 @@
 
 import { getSettings } from './state.js';
+import { EXTRA_TRANSLATIONS, EXTRA_TRANSLATION_RULES } from './i18n-extra.js';
 
 export function lang() {
     return getSettings().lang === 'en' ? 'en' : 'ru';
@@ -16,6 +17,7 @@ export const MONTHS_I18N = {
 
 // ── Точный словарь (ключ = русская строка после trim) ──
 const DICT = {
+    ...EXTRA_TRANSLATIONS,
     'День рождения': 'Birthday', 'Дни рождения': 'Birthdays', 'Каждый год': 'Every year',
     'Соцсеть перепутала участников. Ответ не сохранён — повтори генерацию.': 'The social app mixed up the participants. The reply was not saved — generate it again.',
     'Direct перепутал участников. Ответ не сохранён — нажми «Повторить».': 'Direct mixed up the participants. The reply was not saved — tap Retry.',
@@ -528,6 +530,7 @@ const DICT = {
 
 // ── Regex-правила для строк с числами/динамикой (порядок важен) ──
 const RULES = [
+    ...EXTRA_TRANSLATION_RULES,
     [/^(\d+)\s*м$/, '$1m'], [/^(\d+)\s*ч$/, '$1h'], [/^(\d+)\s*д$/, '$1d'],
     [/^(\d+) участ\.$/, '$1 members'], [/^(\d+) канал\.$/, '$1 channels'],
     [/^Выйти с сервера «(.+)»\?$/, 'Leave the server "$1"?'],
@@ -677,7 +680,7 @@ export function tr(s) {
     const key = String(s ?? '');
     const trimmed = key.trim();
     if (!trimmed) return s;
-    const res = trPiece(trimmed);
+    const res = trPiece(trimmed) ?? trPiece(trimmed.replace(/\s+/g,' '));
     if (res !== null) return key.replace(trimmed, res);
     return s;
 }
@@ -693,27 +696,48 @@ export function trDom(root) {
     let node;
     while ((node = walker.nextNode())) {
         const parent = node.parentElement;
-        if (!parent || parent.tagName === 'SCRIPT' || parent.tagName === 'STYLE' || parent.tagName === 'TEXTAREA') continue;
+        if (!parent || parent.tagName === 'SCRIPT' || parent.tagName === 'STYLE' || parent.tagName === 'TEXTAREA'||parent.closest('[data-gp-content],[translate="no"]')) continue;
+        if(node.__gpOut!==undefined&&node.nodeValue!==node.__gpOut){delete node.__gpRu;delete node.__gpOut;}
         if (node.__gpRu === undefined) {
             if (!en) continue;
             if (!/[А-ЯЁа-яё]/.test(node.nodeValue)) continue;
             node.__gpRu = node.nodeValue;
         }
-        node.nodeValue = en ? tr(node.__gpRu) : node.__gpRu;
+        const output=en ? tr(node.__gpRu) : node.__gpRu;
+        if(node.nodeValue!==output)node.nodeValue=output;
+        node.__gpOut=output;
     }
     const els = [root, ...root.querySelectorAll('*')];
     for (const el of els) {
-        if (!el.getAttribute) continue;
+        if (!el.getAttribute||el.closest('[data-gp-content],[translate="no"]')) continue;
         for (const attr of ATTRS) {
             const cur = el.getAttribute(attr);
-            const saved = el.dataset ? el.dataset[`gpRu${attr.replace(/[^a-z]/g, '')}`] : undefined;
+            const storage=attr.replace(/[^a-z]/g, '');
+            let saved = el.dataset ? el.dataset[`gpRu${storage}`] : undefined;
+            const last=el.dataset?.[`gpOut${storage}`];
+            if(last!==undefined&&cur!==last){delete el.dataset[`gpRu${storage}`];delete el.dataset[`gpOut${storage}`];saved=undefined;}
             if (saved === undefined) {
                 if (!en || !cur || !/[А-ЯЁа-яё]/.test(cur)) continue;
                 el.dataset[`gpRu${attr.replace(/[^a-z]/g, '')}`] = cur;
-                el.setAttribute(attr, tr(cur));
+                const output=tr(cur);if(cur!==output)el.setAttribute(attr, output);el.dataset[`gpOut${storage}`]=output;
             } else {
-                el.setAttribute(attr, en ? tr(saved) : saved);
+                const output=en ? tr(saved) : saved;if(cur!==output)el.setAttribute(attr,output);el.dataset[`gpOut${storage}`]=output;
             }
         }
     }
+}
+
+const translationObservers=new WeakMap();
+export function watchPhoneTranslations(root){
+    if(!root||translationObservers.has(root))return;
+    let queued=false;
+    const config={subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:ATTRS};
+    const observer=new MutationObserver(()=>{
+        if(queued)return;queued=true;
+        queueMicrotask(()=>{
+            queued=false;observer.disconnect();
+            try{trDom(root);}finally{if(root.isConnected)observer.observe(root,config);}
+        });
+    });
+    translationObservers.set(root,observer);trDom(root);observer.observe(root,config);
 }

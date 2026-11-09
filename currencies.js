@@ -1,6 +1,7 @@
 // ISO 4217, SIX List One, published 2026-09-17.
 // https://www.six-group.com/dam/download/financial-information/data-center/iso-currrency/lists/list-one.xml
 // XTS (test) and XXX (no currency) are excluded. No exchange-rate data.
+import { lang } from './i18n.js';
 export const CURRENCY_SOURCE_DATE = '2026-09-17';
 const SPECIAL_CODES = new Set('BOV CHE CHW CLF COU MXV USN UYI UYW XAD XAG XAU XBA XBB XBC XBD XDR XPD XPT XSU XUA'.split(' '));
 const LEGACY = { '₽':'RUB', 'р':'RUB', 'руб':'RUB', '$':'USD', '€':'EUR', '£':'GBP', '¥':'JPY', '￥':'JPY', 'yen':'JPY', '₩':'KRW', '元':'CNY', 'юань':'CNY', 'иена':'JPY', 'вона':'KRW' };
@@ -12,17 +13,19 @@ export function normalizeCurrency(value) {
     return LEGACY[text.toLowerCase()] || (/^[a-z]{3}$/i.test(text) ? text.toUpperCase() : text) || 'RUB';
 }
 
-let catalog;
+const catalogs=new Map();
 export function getCurrencies() {
-    if (catalog) return catalog;
+    const locale=lang();
+    if (catalogs.has(locale)) return catalogs.get(locale);
     let names;
     try { names = new Intl.DisplayNames(['ru'], { type:'currency' }); } catch { /* English fallback below. */ }
-    catalog = ISO_CURRENCIES.map(([code, minor, englishName]) => {
+    const catalog = ISO_CURRENCIES.map(([code, minor, englishName]) => {
         let localized;
         try { localized = names?.of(code); } catch { /* Unknown code in an older browser. */ }
-        const name = RU_NAMES[code] || (localized && localized !== code ? localized : englishName);
+        const name = locale==='en'?englishName:RU_NAMES[code] || (localized && localized !== code ? localized : englishName);
         return { code, minor, name:name.charAt(0).toUpperCase() + name.slice(1), englishName, symbol:SYMBOLS[code] || code, special:SPECIAL_CODES.has(code) };
-    }).sort((a,b) => Number(a.special) - Number(b.special) || a.name.localeCompare(b.name, 'ru'));
+    }).sort((a,b) => Number(a.special) - Number(b.special) || a.name.localeCompare(b.name, locale));
+    catalogs.set(locale,catalog);
     return catalog;
 }
 
@@ -46,8 +49,9 @@ const formatters = new Map();
 export function formatCurrency(value, currency) {
     const info = currencyInfo(currency), amount = roundCurrency(value, info.code);
     const digits = info.minor ?? 2;
-    if (!formatters.has(digits)) formatters.set(digits, new Intl.NumberFormat('ru-RU', { maximumFractionDigits:digits }));
-    const number = formatters.get(digits).format(Math.abs(amount));
+    const key=lang()+':'+digits;
+    if (!formatters.has(key)) formatters.set(key, new Intl.NumberFormat(lang()==='en'?'en-US':'ru-RU', { maximumFractionDigits:digits }));
+    const number = formatters.get(key).format(Math.abs(amount));
     return `${amount < 0 ? '−' : ''}${number} ${info.symbol}`;
 }
 const ISO_CURRENCIES = [

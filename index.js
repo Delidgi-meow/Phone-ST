@@ -17,7 +17,7 @@ import { harvestInstagramTags, flushInstagramJournal } from './instagram.js';
 import { igEventText } from './instagram-state.js';
 import { harvestChannelTags, harvestAnonTags, harvestAnonBust, ANON_NAME } from './channels.js';
 import { maybeScamSms } from './scam.js';
-import { trDom } from './i18n.js';
+import { trDom, watchPhoneTranslations } from './i18n.js';
 import { buildReport, clearLog } from './debug-log.js';
 import { listPhoneImageBlocks } from './external-image-blocks.js';
 
@@ -206,7 +206,7 @@ function setupSettingsPanel() {
     });
     $('#gp-imgblock-refresh').on('click', refreshPhoneImageBlocks);
     // Перевод панели (en) — оригиналы хранятся на нодах, переключение обратимо
-    const translatePanel = () => { try { trDom(document.getElementById('gp-settings-drawer')); } catch (e) { /* ignore */ } };
+    const translatePanel = () => { try { const panel=document.getElementById('gp-settings-drawer');watchPhoneTranslations(panel);trDom(panel); } catch (e) { /* ignore */ } };
     const updatePanelStatus = () => {
         const enabled = getSettings().isEnabled;
         const status = document.getElementById('gp-settings-status');

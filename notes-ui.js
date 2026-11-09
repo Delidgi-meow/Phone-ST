@@ -12,7 +12,7 @@ export function renderNotesApp(screen,{onHome,onChange,icon}){
         const list=screen.querySelector('.gp-ios-note-list');
         function filter(query=''){
             const found=notes.filter(n=>n.text.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
-            list.innerHTML=found.map(n=>{const lines=n.text.split('\n').filter(Boolean);return `<button class="gp-ios-note-row" data-note="${esc(n.id)}"><strong>${esc(lines[0]||'Рисунок')}</strong><span>${n.shared?icon('fa-eye')+' ':''}${esc(lines.slice(1).join(' ').slice(0,100)||(n.drawing?.strokes?.length?'Рисунок':'Нет дополнительного текста'))}</span></button>`;}).join('')||'<div class="gp-ios-note-empty">'+(query?'Ничего не найдено':'Нет заметок')+'</div>';
+            list.innerHTML=found.map(n=>{const lines=n.text.split('\n').filter(Boolean);return `<button class="gp-ios-note-row" data-note="${esc(n.id)}"><strong ${lines[0]?'data-gp-content':''}>${esc(lines[0]||'Рисунок')}</strong><span ${lines.slice(1).length?'data-gp-content':''}>${n.shared?icon('fa-eye')+' ':''}${esc(lines.slice(1).join(' ').slice(0,100)||(n.drawing?.strokes?.length?'Рисунок':'Нет дополнительного текста'))}</span></button>`;}).join('')||'<div class="gp-ios-note-empty">'+(query?'Ничего не найдено':'Нет заметок')+'</div>';
             list.querySelectorAll('[data-note]').forEach(b=>b.onclick=()=>{const n=notes.find(n=>n.id===b.dataset.note);active={id:n.id,text:n.text,drawing:structuredClone(n.drawing||{strokes:[]}),shared:n.shared,owner:notes};renderNotesApp(screen,{onHome,onChange,icon});});
         }
         filter();screen.querySelector('input').oninput=e=>filter(e.target.value);
