@@ -1,6 +1,7 @@
+import { bindSmsReactions, disposeSmsReactions, smsReactionChips, rememberSmsScroll, restoreSmsScroll } from './sms-reaction-ui.js';
 import { stampPhoneText, phoneEventTime, phoneTimeTag } from './phone-clock.js';
 import { smsQueue, enqueueSms, takeSmsQueue } from './sms-batch.js';
-import { SMS_REACTIONS as REACTIONS, smsReactions, toggleSmsReaction, preserveSmsMedia, appleReaction } from './sms-reactions.js';
+import { smsReactions, preserveSmsMedia, appleReaction } from './sms-reactions.js';
 import { uploadPhoneMedia, phoneMediaHtml, isVideoMedia } from './phone-media.js';
 import { chatMediaKey } from './chat-media.js';
 import { getRpNow, realToRpDate } from './state.js';
@@ -755,7 +756,7 @@ export function render() {
     if(modal)closePhoneSheet(modal);
     if (currentScreen === 'home' && homeInteractionBusy()) return;
     if (currentScreen !== 'home') disposePhoneHome(screen);
-    if(currentScreen!=='thread')clearThreadAppearance();
+    if(currentScreen!=='thread'){clearThreadAppearance();disposeSmsReactions(screen);}
     if(currentScreen!=='lock')clearLockAppearance();
     if(currentScreen!=='settings')parkPhoneSettings();
     if (!['phone', 'contacts'].includes(currentScreen)) stopPhoneCallTimer();
@@ -2023,9 +2024,6 @@ function renderList(screen) {
 }
 
 // ── Экран треда ──
-let _reactPickerFor = null; // mi сообщения с открытым пикером
-let _reactPickerKey = null; // тред пикера (чтобы mi не «переехал» в другой чат)
-let _reactPickerExpanded = false;
 
 // Перезапись JSON-тега сообщения по позиции (tel:sms или tel:out маркер юзера).
 // После записи позиции соседних тегов устаревают — но render() пересканирует чат.
@@ -2072,6 +2070,7 @@ async function rewriteSmsTag(m, t, mutate) {
         mutate(j);
         const kind = m.dir === 'out' ? 'out' : 'sms';
         if (!replacePhoneMessageTag(chatMsg, tag, `<!--tel:${kind}:${JSON.stringify(j)}-->`)) return false;
+        m.tagText=`<!--tel:${kind}:${JSON.stringify(j)}-->`;m.tagStart=start;m.tagEnd=start+m.tagText.length;
         const cached=getMeta().generatedChatMedia;
         const oldKey=chatMediaKey(m.idx,tag),newKey=chatMediaKey(m.idx,`<!--tel:${kind}:${JSON.stringify(j)}-->`);
         if(cached?.[oldKey]&&oldKey!==newKey){cached[newKey]={...cached[oldKey],...(j.img?{img:j.img}:{})};delete cached[oldKey];saveMeta();}
@@ -2120,6 +2119,9 @@ function voiceBubbleHtml(m) {
 function renderThread(screen) {
     const t = getThread(currentThreadKey);
     if (!t) { currentScreen = 'list'; renderList(screen); return; }
+    const previousList=screen.querySelector('#gp-msgs');
+    const scrollState=previousList?.dataset.threadKey===t.key?rememberSmsScroll(previousList):null;
+    const reactionAvatar=avatarForAuthor('user');
     const _smsDraftImage=getSmsAttachment(t.key)?.image;
     const queued=smsQueue(t.key);
     markRead(t.key);
@@ -2166,13 +2168,9 @@ function renderThread(screen) {
         const stickerWithText=m.mediaKind==='sticker'&&m.img&&!!m.text?.trim();
         const body = (m.actor?`<small class="gp-device-actor">С телефона отправил(а): ${esc(m.actor)}</small>`:'')+(m.voice ? voiceBubbleHtml(m) : esc(m.text));
         const reactions = smsReactions(m);
-        const reactionAvatar=avatarForAuthor('user');
-        const reactChip = reactions.length ? '<span class="gp-react-chip">'+reactions.map(id=>'<span>'+appleReaction(REACTIONS.find(r=>r.id===id))+(reactionAvatar?'<img class="gp-reaction-avatar" src="'+esc(reactionAvatar)+'" alt="Вы">':'<small class="gp-reaction-avatar">'+esc(getUserName().slice(0,1))+'</small>')+'</span>').join('')+'</span>' : '';
-        const picker = (_reactPickerFor === mi && _reactPickerKey === t.key)
-            ? `<div class="gp-react-picker">${(_reactPickerExpanded?REACTIONS:REACTIONS.slice(0,5)).map(r => `<button data-react="${r.id}" data-react-mi="${mi}" aria-label="${r.ru}" aria-pressed="${reactions.includes(r.id)}" class="${reactions.includes(r.id) ? 'gp-selected' : ''}" title="${r.ru}">${appleReaction(r)}</button>`).join('')}<button type="button" data-react-more aria-expanded="${_reactPickerExpanded}" aria-label="${_reactPickerExpanded?'Свернуть реакции':'Все реакции'}">${_reactPickerExpanded?'⌃':'…'}</button></div><div class="gp-message-actions"><button type="button" data-forward-message>${bankIcon('Send')}Переслать</button></div>` : '';
+        const reactChip=smsReactionChips(m,reactionAvatar,getUserName().slice(0,1));
         bubbles += `
         <div class="gp-bubble-wrap ${m.dir === 'out' ? 'gp-out' : 'gp-in'}${reactions.length ? ' gp-has-react' : ''}">
-            ${picker}
             ${stickerWithText?media:''}
             <div class="gp-bubble${m.voice ? ' gp-bubble-voice' : ''}${m.mediaKind==='sticker'&&m.img&&!m.text?.trim()?' gp-sticker-bubble':''}${m.text?.trim()?' gp-has-message-text':''}" data-bmi="${mi}">${senderLabel}${stickerWithText?'':media}${shotHtml(m)}${body}<button class="gp-sms-del" data-smsdel="${mi}" title="Удалить">${ic('fa-xmark')}</button>${reactChip}</div>
             ${tm || mi===t.messages.length-1 ? `<div class="gp-bubble-time gp-sms-message-foot">${tm?`<span>${esc(tm)}</span>`:''}${mi===t.messages.length-1?`<button type="button" class="gp-sms-inline-regen" id="gp-regen" title="${m.dir==='in'?'Другой ответ':'Получить ответ'}" aria-label="${m.dir==='in'?'Другой ответ':'Получить ответ'}" ${sending?'disabled':''}>${ic('fa-rotate-right')}</button>`:''}</div>` : ''}
@@ -2241,7 +2239,7 @@ function renderThread(screen) {
     applyThreadAppearance(screen,t.key);
     screen.querySelector('#gp-thread-style')?.addEventListener('click',()=>editThreadAppearance(screen,t.key,{render,toast}));
     const msgs = screen.querySelector('#gp-msgs');
-    if (msgs) msgs.scrollTop = msgs.scrollHeight;
+    if(msgs){msgs.dataset.threadKey=t.key;if(scrollState)msgs.classList.add('gp-preserve-scroll');restoreSmsScroll(msgs,scrollState);}
 
     screen.querySelector('#gp-back')?.addEventListener('click', () => {
         currentScreen = 'list';
@@ -2358,44 +2356,14 @@ function renderThread(screen) {
     });
     sendBtn?.addEventListener('click', () => doSend(t.key));
     screen.querySelector('#gp-regen')?.addEventListener('click', () => doRegen(t.key));
-    // Реакции: тап по пузырю → пикер; выбор пишет react в тег + журнал
-    screen.querySelectorAll('[data-bmi]').forEach(b => b.addEventListener('click', (event) => {
-        if(event.target.closest('video'))return;
-        const mi = parseInt(b.getAttribute('data-bmi'));
-        const wasOpen = _reactPickerFor === mi && _reactPickerKey === t.key;
-        if(!wasOpen)_reactPickerExpanded=false;
-        _reactPickerFor = wasOpen ? null : mi;
-        _reactPickerKey = t.key;
-        render();
-    }));
-    screen.querySelectorAll('[data-react-more]').forEach(button=>button.onclick=event=>{event.stopPropagation();_reactPickerExpanded=!_reactPickerExpanded;render();});
-    screen.querySelectorAll('[data-forward-message]').forEach(button=>button.onclick=event=>{event.stopPropagation();_reactPickerFor=null;_reactPickerExpanded=false;screen.dispatchEvent(new CustomEvent('gp:forward-select'));});
-    screen.querySelectorAll('[data-react]').forEach(b => b.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const mi = parseInt(b.getAttribute('data-react-mi'));
-        const m = t.messages[mi];
-        const r = REACTIONS.find(x => x.id === b.getAttribute('data-react'));
-        if (!m || !r) return;
-        const removing = smsReactions(m).includes(r.id);
-        const selectedReactions=toggleSmsReaction(m,r.id);
-        logAct('реакция', `${removing ? 'снять' : r.id} · ${m.dir === 'in' ? 'входящее' : 'своё'} #${m.idx}`);
-        const ok = await rewriteSmsTag(m, t, (j) => {
-            delete j.react;
-            j.reactions = selectedReactions;
-        });
-        if (!ok) {
-            toast('Не получилось', 'fa-circle-exclamation');
-            render();
-            return;
-        }
-        m.reactions = selectedReactions; delete m.react; // мгновенно, до перескана
-        // В журнал — только НОВАЯ реакция на чужое сообщение (снятие — шум)
-        if (!removing && m.dir === 'in') {
-            logSocialToChat(`${getUserName()} ставит реакцию «${r.ru}» на сообщение ${m.from || t.name}: «${String(m.text || (m.photoDesc ? 'фото' : m.voice ? 'голосовое' : '')).slice(0, 80)}»`, { priv: true });
-        }
-        applyChatHiding();
-        render();
-    }));
+    bindSmsReactions(screen,t,{
+        avatar:reactionAvatar,initial:getUserName().slice(0,1),
+        persist:(message,values)=>rewriteSmsTag(message,t,j=>{delete j.react;j.reactions=values;}),
+        saved:({message,reaction,removing})=>{
+            if(!removing&&message.dir==='in')logSocialToChat(getUserName()+' ставит реакцию «'+reaction.ru+'» на сообщение '+(message.from||t.name)+': «'+String(message.text||message.photoDesc||'').slice(0,80)+'»',{priv:true});
+            applyChatHiding();
+        },failed:()=>toast('Не получилось','fa-circle-exclamation'),
+    });
 
     // Генерация фото по описанию ММС (заглушка → реальная картинка).
     // Результат пишем в img прямо в tel:sms тег — переживает пересканирование.
@@ -2471,7 +2439,6 @@ function renderThread(screen) {
         logAct('удаление смс', `${msg.dir === 'in' ? 'входящее' : 'своё'} #${msg.idx}`);
         const ok = await deleteSmsFromChat(msg);
         if (!ok) { render(); return; }
-        _reactPickerFor = null;
         render();
         updatePhoneInjection();
         applyChatHiding();

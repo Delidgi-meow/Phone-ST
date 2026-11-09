@@ -555,6 +555,14 @@
 }
 
 /* ═══ Реакции на сообщения ═══ */
+#gp-phone #gp-screen.gp-reaction-host{position:relative}
+#gp-phone#gp-phone .gp-react-picker.gp-reaction-popover{position:absolute;z-index:30;grid-template-columns:repeat(7,32px);width:max-content;max-width:calc(100% - 12px);gap:2px;padding:6px;margin:0;box-sizing:border-box;animation:none;border:0;box-shadow:0 4px 18px #0003;overflow:hidden}
+#gp-phone#gp-phone .gp-reaction-popover button{width:32px;height:32px;min-width:0;min-height:0;padding:4px;border:0!important;background:transparent;box-shadow:none;transition:none}
+#gp-phone#gp-phone .gp-reaction-popover button:hover{transform:none}
+#gp-phone#gp-phone .gp-reaction-popover button.gp-selected{background:rgba(var(--gp-accent-a-rgb),.22)!important;outline:0}
+#gp-phone#gp-phone .gp-reaction-popover .gp-react-forward{color:var(--gp-text);border-left:1px solid var(--gp-border-soft)!important;border-radius:0}
+#gp-phone#gp-phone .gp-react-forward svg{width:23px;height:23px}
+#gp-phone #gp-msgs.gp-preserve-scroll .gp-bubble-wrap{animation:none!important}
 .gp-bubble { position: relative; } /* якорь чипа реакции */
 .gp-bubble[data-bmi] { cursor: pointer; }
 .gp-react-picker {
