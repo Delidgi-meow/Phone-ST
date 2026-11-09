@@ -135,6 +135,27 @@ function folderTile(e,templates){
     const unread=e.apps.some(a=>templates.get(a)?.querySelector('.gp-app-badge'));
     return '<div class="gp-app gp-home-folder" role="button" tabindex="0" data-home-item="'+esc(e.id)+'" aria-label="'+esc(e.name)+'"><div class="gp-app-icon gp-folder-preview">'+icons+(unread?'<b class="gp-folder-alert"></b>':'')+'</div><div class="gp-app-name">'+esc(e.name)+'</div></div>';
 }
+const imageAlphaCache=new Map();
+function fitWidgetImage(image){
+    const apply=()=>{
+        if(!image.naturalWidth||!image.isConnected)return;
+        const src=image.currentSrc||image.src;
+        let alpha=imageAlphaCache.get(src);
+        if(alpha===undefined){
+            try{
+                const canvas=document.createElement('canvas'),scale=Math.min(1,128/Math.max(image.naturalWidth,image.naturalHeight));
+                canvas.width=Math.max(1,Math.round(image.naturalWidth*scale));canvas.height=Math.max(1,Math.round(image.naturalHeight*scale));
+                const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(image,0,0,canvas.width,canvas.height);
+                const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data;
+                alpha=false;for(let i=3;i<pixels.length;i+=4)if(pixels[i]<255){alpha=true;break;}
+            }catch{alpha=/^(?:data:image\/(?:png|webp)|.*\.(?:png|webp)(?:[?#]|$))/i.test(src);}
+            if(imageAlphaCache.size>=128)imageAlphaCache.delete(imageAlphaCache.keys().next().value);
+            imageAlphaCache.set(src,alpha);
+        }
+        image.parentElement?.classList.toggle('gp-widget-cutout',alpha);
+    };
+    image.addEventListener('load',apply,{once:true});if(image.complete)apply();
+}
 function widgetHTML(w){
     let content='',route='';
     if(w.type==='image')content=w.image?'<img src="'+esc(w.image)+'" alt="'+esc(L('Картинка','Photo'))+'">':'<div class="gp-widget-placeholder">'+I('fa-image')+'</div>';
@@ -305,6 +326,7 @@ export function enhancePhoneHome(screen,api){
     }
     function bindControls(folder){
         bindTools();
+        home.querySelectorAll('.gp-widget-image>img').forEach(fitWidgetImage);
         home.querySelector('[data-home-action="closefolder"]')?.addEventListener('click',()=>{state.folder='';repaint();});
         home.querySelector('[data-folder-name]')?.addEventListener('input',e=>{if(folder){folder.name=e.target.value.trim()||L('Папка','Folder');save();}});
         home.querySelector('[data-folder-name]')?.addEventListener('keydown',e=>{if(e.key==='Enter')e.target.blur();});

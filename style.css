@@ -5853,19 +5853,21 @@ img[data-zoom] { cursor: zoom-in; }
 #gp-phone .gp-message-actions>button{display:inline-flex;align-items:center;justify-content:flex-start;flex:0 0 auto;width:max-content;min-width:0;max-width:100%;height:auto;min-height:28px;padding:3px 6px;border:0;background:transparent;box-shadow:none;color:var(--gp-text-dim);border-radius:6px;font:inherit;font-size:12px;line-height:20px}
 #gp-phone .gp-message-actions svg{flex:0 0 14px;width:14px;height:14px}
 
-/* Image widgets follow the artwork's alpha silhouette, including custom themes. */
-#gp-phone .gp-home-mixed-grid>.gp-home-widget.gp-widget-image{
+/* Opaque photos fill their tile; only transparent art follows the silhouette. */
+#gp-phone .gp-home-mixed-grid>.gp-home-widget.gp-widget-image{padding:0!important;border:0!important;border-radius:24px!important;overflow:hidden!important;box-shadow:none!important}
+#gp-phone .gp-home-widget.gp-widget-image>img{width:100%!important;height:100%!important;object-fit:cover!important;border:0!important;border-radius:inherit!important;filter:none!important;display:block}
+#gp-phone .gp-home-mixed-grid>.gp-home-widget.gp-widget-image.gp-widget-cutout{
     background:transparent!important;background-image:none!important;border:0!important;
     border-radius:0!important;padding:0!important;box-shadow:none!important;
-    backdrop-filter:none!important;-webkit-backdrop-filter:none!important;overflow:visible;
+    backdrop-filter:none!important;-webkit-backdrop-filter:none!important;overflow:visible!important;
 }
-#gp-phone .gp-home-widget.gp-widget-image>img{
+#gp-phone .gp-home-widget.gp-widget-image.gp-widget-cutout>img{
     object-fit:contain!important;border:0!important;border-radius:0!important;
     background:transparent!important;
     filter:drop-shadow(1px 0 0 rgba(248,253,255,.8))
            drop-shadow(-1px 0 0 rgba(248,253,255,.8))
            drop-shadow(0 1px 0 rgba(248,253,255,.8))
-           drop-shadow(0 -1px 0 rgba(248,253,255,.8));
+           drop-shadow(0 -1px 0 rgba(248,253,255,.8))!important;
 }
 
 /* Stable, compact home heading on every page, with or without widgets. */
