@@ -9,16 +9,6 @@ const PLATFORM = {
     instagram: { reach: 0.62, growth: 1.0, base: [72, 18, 10] },
 };
 
-const TASK_POOL = [
-    { type: 'post', platform: 'twitter', goal: 1, title: 'Сказать вслух', text: 'Опубликовать твит', set: 'twitter' },
-    { type: 'post', platform: 'instagram', goal: 1, title: 'Новый кадр', text: 'Опубликовать фото в Instagram', set: 'photo' },
-    { type: 'positive', goal: 1, threshold: 65, title: 'Тёплая волна', text: 'Получить не менее 65% позитивных реакций', set: 'positive' },
-    { type: 'comments', goal: 5, title: 'Разговор начался', text: 'Получить 5 реакций под одним постом', set: 'positive' },
-    { type: 'followers', goal: 10, title: 'Новые лица', text: 'Набрать суммарно 10 подписчиков', set: 'twitter' },
-    { type: 'debate', goal: 1, title: 'Искра спора', text: 'Вызвать споры без негативной волны', set: 'twitter' },
-    { type: 'crosspost', goal: 2, title: 'На двух экранах', text: 'Опубликоваться в обеих соцсетях', set: 'photo' },
-];
-
 function id(prefix = 'se') {
     return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
@@ -173,12 +163,10 @@ function settleAdvertisement(root, post) {
 
 function ensureTasks(root) {
     const tasks = root.postingTasks;
-    while (tasks.active.length < 3) {
-        const used = new Set(tasks.active.map(t => t.type));
-        const choices = TASK_POOL.filter(t => !used.has(t.type));
-        const template = choices[(tasks.completed.length + tasks.active.length * 3) % choices.length];
-        tasks.active.push({ ...template, id: id('task'), progress: 0, platforms: [] });
-    }
+    if(tasks.version===2)return;
+    tasks.retired=[...(tasks.retired||[]),...tasks.active.filter(t=>t.kind!=='contextual')].slice(-30);
+    tasks.active=tasks.active.filter(t=>t.kind==='contextual');
+    tasks.version=2;
 }
 
 function classifyComment(c) {
@@ -255,6 +243,7 @@ export function settlePost(platform, post, options = {}) {
 function advanceTasks(root, platform, post, commentCount) {
     const completed = [];
     for (const task of root.postingTasks.active) {
+        if (task.kind === 'contextual') continue;
         if (completed.length >= 2) break;
         const perf = post.performance;
         if (task.type === 'post' && task.platform === platform) task.progress++;

@@ -1,12 +1,21 @@
+import { smsReactions } from './sms-reactions.js';
+import { storyDate, storyTimeline, storyClockText } from './rp-time.js';
+import { normalizePhoneSpaces, parsePhoneJson } from './phone-text.js';
+import { deviceActions } from './device-actions.js';
+import { chatMedia, chatMediaKey } from './chat-media.js';
+import { PHONE_APPS, phoneAppId, phoneAppInstalled, phoneTagApp } from './phone-apps.js';
 
 import { chat_metadata } from '../../../../script.js';
 import { extension_settings, saveMetadataDebounced } from '../../../extensions.js';
 import { saveBase64AsFile } from '../../../utils.js';
+import { readPhoneMessage } from './message-sources.js';
+import { captureRoleplaySms, extractRoleplaySms, hasMixedRoleplaySms } from './roleplay-sms.js';
+import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity, repairContactMetadata } from './contact-identity.js';
 
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.35.1';
+export const GP_VERSION = '2.58.10';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -15,12 +24,18 @@ const defaultSettings = () => ({
     // Язык интерфейса: 'ru' | 'en' (переводится и панель настроек, и весь телефон)
     lang: 'ru',
     injectPrompt: true,
+    quietMode: false,
+    phoneActivityVersion: 0,
+    removedPhoneApps: {},
+    phoneAppVersions: {},
+    toastPosition: 'center',
     showFab: true,
     fabPos: null, // {right, bottom} — сохранённая позиция кнопки
     injectDepth: 0, // глубина инжекта (0 = последний ход)
     // Прятать смс-переписку из ленты чата (сообщения ОСТАЮТСЯ в истории и контексте
     // модели — скрывается только отображение; телефон это единственное «окно» в смс)
     hideSmsInChat: true,
+    captureRoleplaySms: true,
     // Профиль подключения для генерации соцсетей ('' = текущий API через generateRaw,
     // изолированно от пресета). Отдельный профиль дополнительно включает вижн.
     socialProfileId: '',
@@ -56,8 +71,9 @@ const defaultSettings = () => ({
     // Стили у новорака ГЛОБАЛЬНЫЕ (не входят в профиль подключения) — поэтому
     // телефону нужен свой выбор: на другой модели нужен другой стиль
     imageGenStyleId: '',
-    // Макс. длина ответа для генерации соцсетей (0 = авто по задаче). Если модель
-    // рвёт JSON из-за лимита токенов — поднять (действует как ПОЛ: не ниже задачи).
+    // One saved ExtBlocks block supplies prompts for every phone image.
+    imageGenBlockKey: '',
+    // Верхний лимит ответа. 0 = бюджет задачи; короткие задачи не раздуваются.
     socialMaxTokens: 0,
     // Квадрат 1:1 для инста-постов
     imageGenSquare: true,
@@ -72,6 +88,10 @@ const defaultSettings = () => ({
     // (1girl/1boy, solo, hair, ...) — для NovelAI и аниме-моделей, которые не
     // понимают короткие описания на русском. Стоит доп. текстовый запрос.
     imgTagMode: false,
+    // Read telephone tags from ExtBlocks storage and rendered text as well.
+    externalBlocks: true,
+    // Reuse enabled image presets and matching image lorebook entries.
+    imageGenExtensionContext: true,
     // Обои телефона (URL файла; '' = стандартный стеклянный градиент)
     wallpaper: '',
     // Размыть обои (blur-фильтр на слое обоев)
@@ -102,7 +122,7 @@ const defaultSettings = () => ({
     // сдвигает телефон и кнопку из-под неё. Определяется автоматически,
     // здесь — ручной оверрайд, если обёртка не отдала безопасные отступы.
     forceSafeArea: false,
-    // Компактные правила в инжекте (экономия ~60% токенов директивы)
+    // Компактные пояснения полей в уже сокращённой директиве
     compactRules: false,
     // Городская анонимка «Подслушано» в каналах
     anonChannel: true,
@@ -137,6 +157,7 @@ export function getSettings() {
 }
 
 // ── Per-chat метаданные ──
+const repairedContactRoots = new WeakSet();
 export function getMeta() {
     const md = chat_metadata;
     if (!md[META_KEY]) {
@@ -153,13 +174,225 @@ export function getMeta() {
     if (!Array.isArray(m.groups)) m.groups = [];
     // Переименования контактов (отображаемое имя поверх имени из чата), по ключу
     if (!m.names || typeof m.names !== 'object') m.names = {};
+    if (!m.contactIdentities || typeof m.contactIdentities !== 'object' || Array.isArray(m.contactIdentities)) m.contactIdentities = {};
+    for (const c of m.contacts) { const k=redirectedContactKey(m,keyOf(c?.name)); if(k&&!Object.hasOwn(m.contactIdentities,k))m.contactIdentities[k]={originalName:c.name,aliases:[]}; }
+    for (const k of Object.keys(m.names)) if(!k.startsWith('group:')&&!Object.hasOwn(m.contactIdentities,k))m.contactIdentities[k]={originalName:k,aliases:[]};
     // Забаненные аккаунты соцсетей (нормализованные ключи имени/ника)
     if (!Array.isArray(m.banned)) m.banned = [];
     // Интервалы блокировки SMS по ключу контакта. Храним интервалы индексов чата,
     // а не один флаг: после разблокировки сообщения, пришедшие во время блока,
     // не должны появляться задним числом при очередном пересканировании chat[].
     if (!m.smsBlocks || typeof m.smsBlocks !== 'object' || Array.isArray(m.smsBlocks)) m.smsBlocks = {};
+    if (!repairedContactRoots.has(m)) {
+        repairedContactRoots.add(m);
+        if (repairContactMetadata(m)) saveMeta();
+    }
+    // Per-chat intervals prevent paused messages from appearing on a later scan
+    // or after reload. Existing history remains available while quiet mode is on.
+    if (getSettings().quietMode || Array.isArray(m.quietPeriods)) {
+        if (!Array.isArray(m.quietPeriods)) m.quietPeriods = [];
+        const open = m.quietPeriods.at(-1);
+        let changed = false;
+        if (getSettings().quietMode && (!open || open.to != null)) {
+            m.quietPeriods.push({ from: currentChatLength(), to: null, baseline: quietActivityBaseline() });
+            changed = true;
+        } else if (!getSettings().quietMode && open?.to === null) {
+            open.to = currentChatLength() - 1;
+            const chat = SillyTavern.getContext()?.chat || [];
+            open.messages = Object.fromEntries(chat.slice(open.from, open.to + 1)
+                .map((message, offset) => [quietMessageId(message, open.from + offset), true]));
+            delete open.baseline;
+            quietBaselineSets.delete(open);
+            changed = true;
+        } else if (open?.to === null && open.from > currentChatLength()) {
+            open.from = currentChatLength();
+            changed = true;
+        }
+        if (changed) { invalidateChatCache(); saveMetadataDebounced(); }
+    }
+    syncPhoneApps(m);
     return m;
+}
+
+export function isPhoneAppInstalled(id) { return phoneAppInstalled(getSettings(), id); }
+
+// Keep a per-chat snapshot so events emitted while an app was removed cannot
+// replay after reinstall, including tags appended to an older streaming reply.
+const APP_TAGS = /<!--\s*tel:([a-z_]+):([\s\S]*?)-->/gi;
+const appTagSets = new WeakMap();
+const syncedAppVersions = new WeakMap();
+function appSets(entry) {
+    let sets = appTagSets.get(entry);
+    if (!sets) { sets = { accepted: new Set(entry.accepted || []), ignored: new Set(entry.ignored || []) }; appTagSets.set(entry, sets); }
+    return sets;
+}
+function appForEvent(root, kind, body) {
+    if (kind.toLowerCase() === 'sms' || kind.toLowerCase() === 'out') {
+        try {
+            const data = parsePhoneJson(body), name = data.from || data.to || '';
+            if (!data.chat && root.tinder?.matches?.some(match => match.inApp && keyOf(match.name) === keyOf(name))) return 'tinder';
+        } catch (_) { /* Partial tag. */ }
+    }
+    return phoneTagApp(kind);
+}
+function visitAppTags(root, message, index, visit) {
+    const counts = new Map();
+    return getPhoneMessageText(message).replace(APP_TAGS, (tag, kind, body) => {
+        const app = appForEvent(root, kind, body);
+        if (!app) return tag;
+        const base = quietActivityKey(message, index, kind, body);
+        const count = (counts.get(base) || 0) + 1; counts.set(base, count);
+        return visit(app, base + ':' + count, tag);
+    });
+}
+function currentAppTags(root) {
+    const result = new Map();
+    for (const [index, message] of (SillyTavern.getContext()?.chat || []).entries()) {
+        visitAppTags(root, message, index, (app, key, tag) => {
+            if (!result.has(app)) result.set(app, new Set());
+            result.get(app).add(key); return tag;
+        });
+    }
+    return result;
+}
+function syncPhoneApps(root) {
+    const settings = getSettings(), signature = JSON.stringify(settings.phoneAppVersions || {});
+    if (syncedAppVersions.get(root) === signature) return;
+    if (!root.appLifecycle || typeof root.appLifecycle !== 'object') root.appLifecycle = {};
+    const tags = currentAppTags(root);
+    for (const app of PHONE_APPS) {
+        const version = Number(settings.phoneAppVersions?.[app.id]) || 0;
+        let entry = root.appLifecycle[app.id];
+        if (!entry) entry = root.appLifecycle[app.id] = { version, accepted: [...(tags.get(app.id) || [])], ignored: [] };
+        else if (entry.version !== version) {
+            const sets = appSets(entry);
+            for (const key of tags.get(app.id) || []) if (!sets.accepted.has(key)) sets.ignored.add(key);
+            entry.ignored = [...sets.ignored]; entry.version = version;
+        }
+    }
+    syncedAppVersions.set(root, signature);
+    saveMetadataDebounced();
+}
+export function setPhoneAppInstalled(id, installed) {
+    id = phoneAppId(id);
+    const app = PHONE_APPS.find(item => item.id === id);
+    if (!app || app.essential || isPhoneAppInstalled(id) === !!installed) return false;
+    const root = getMeta(), settings = getSettings();
+    // Record the current history before disabling; record exclusions before enabling.
+    (SillyTavern.getContext()?.chat || []).forEach((message, index) => getPhoneAppText(message, index));
+    if (!settings.removedPhoneApps || typeof settings.removedPhoneApps !== 'object') settings.removedPhoneApps = {};
+    if (!settings.phoneAppVersions || typeof settings.phoneAppVersions !== 'object') settings.phoneAppVersions = {};
+    if (installed) delete settings.removedPhoneApps[id]; else settings.removedPhoneApps[id] = true;
+    settings.phoneAppVersions[id] = (Number(settings.phoneAppVersions[id]) || 0) + 1;
+    settings.phoneActivityVersion = (Number(settings.phoneActivityVersion) || 0) + 1;
+    syncedAppVersions.delete(root); syncPhoneApps(root); invalidateChatCache();
+    return true;
+}
+export function getPhoneAppText(message, index) {
+    const root = getMeta();
+    if (!Number.isInteger(index)) index = (SillyTavern.getContext()?.chat || []).indexOf(message);
+    let changed = false;
+    const text = visitAppTags(root, message, index, (app, key, tag) => {
+        const entry = root.appLifecycle[app], sets = appSets(entry);
+        if (sets.ignored.has(key)) return tag.replace(/[^\r\n]/g, ' ');
+        if (!isPhoneAppInstalled(app)) {
+            if (!sets.accepted.has(key)) { sets.ignored.add(key); entry.ignored.push(key); changed = true; }
+            return tag.replace(/[^\r\n]/g, ' ');
+        }
+        if (!sets.accepted.has(key)) { sets.accepted.add(key); entry.accepted.push(key); changed = true; }
+        return tag;
+    });
+    if (changed) saveMetadataDebounced();
+    return text;
+}
+
+export function phoneActivityAllowed(version = getSettings().phoneActivityVersion) {
+    const settings = getSettings();
+    return !settings.quietMode && version === settings.phoneActivityVersion;
+}
+
+export function setPhoneQuietMode(enabled) {
+    getMeta();
+    const settings = getSettings();
+    if (settings.quietMode === !!enabled) return false;
+    // Include tags appended to an already existing streaming message or swipe.
+    // They need a permanent exclusion as their message index predates the pause.
+    if (settings.quietMode) {
+        const chat = SillyTavern.getContext()?.chat || [];
+        chat.forEach((message, index) => getPhoneActivityText(message, index));
+    }
+    settings.quietMode = !!enabled;
+    settings.phoneActivityVersion = (Number(settings.phoneActivityVersion) || 0) + 1;
+    getMeta();
+    invalidateChatCache();
+    return true;
+}
+
+export function wasPhoneQuietAt(index, message = SillyTavern.getContext()?.chat?.[index]) {
+    const key = quietMessageId(message, index);
+    return (getMeta().quietPeriods || []).some(period => period.messages
+        ? !!period.messages[key] : index >= period.from && (period.to == null || index <= period.to));
+}
+
+export function getPhoneActivityText(message, index) {
+    const text = getPhoneAppText(message, index);
+    if (message?.is_user) return text;
+    if (!Number.isInteger(index)) index = (SillyTavern.getContext()?.chat || []).indexOf(message);
+    if (index >= 0 && wasPhoneQuietAt(index, message)) return '';
+    const root = getMeta(), paused = !!getSettings().quietMode;
+    if (!paused && !root.quietIgnoredTags) return text;
+    const period = paused ? root.quietPeriods?.at(-1) : null;
+    let baseline = period ? quietBaselineSets.get(period) : null;
+    if (period && !baseline) { baseline = new Set(period.baseline || []); quietBaselineSets.set(period, baseline); }
+    const counts = new Map();
+    let changed = false;
+    const filtered = text.replace(QUIET_ACTIVITY_TAG, (tag, kind, body) => {
+        const base = quietActivityKey(message, index, kind, body);
+        const count = (counts.get(base) || 0) + 1;
+        counts.set(base, count);
+        const key = base + ':' + count;
+        if (root.quietIgnoredTags?.[key]) return '';
+        if (!paused || baseline?.has(key)) return tag;
+        if (!root.quietIgnoredTags) root.quietIgnoredTags = {};
+        root.quietIgnoredTags[key] = true;
+        changed = true;
+        return '';
+    });
+    if (changed) { invalidateChatCache(); saveMetadataDebounced(); }
+    return filtered;
+}
+
+const QUIET_ACTIVITY_TAG = /<!--\s*tel:(?!bank\b|plan\b|time\b|out\b|sent\b|silent\b|log\b|priv\b|mark\b)([a-z_]+):([\s\S]*?)-->/gi;
+const quietBaselineSets = new WeakMap();
+function quietMessageId(message, index) {
+    return JSON.stringify([message?.send_date || message?.extra?.gen_id || index,
+        message?.name || '', !!message?.is_user, message?.extra?.gen_id || '']);
+}
+function quietActivityKey(message, index, kind, body) {
+    let normalized = body;
+    try {
+        const data = JSON.parse(body);
+        normalized = JSON.stringify(Object.fromEntries(Object.keys(data).sort()
+            .filter(key => key !== 'img' && key !== 'react').map(key => [key, data[key]])));
+    } catch (_error) { /* A partial streaming tag is suppressed as well. */ }
+    let hash = 2166136261;
+    for (const char of kind.toLowerCase() + ':' + normalized) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+    return String(message?.send_date || message?.extra?.gen_id || index) + ':' + (hash >>> 0).toString(36);
+}
+function quietActivityBaseline() {
+    const keys = [];
+    for (const [index, message] of (SillyTavern.getContext()?.chat || []).entries()) {
+        if (!message || message.is_user) continue;
+        const counts = new Map();
+        const text = readPhoneMessage(message, getSettings().externalBlocks !== false, stripThink);
+        for (const match of text.matchAll(QUIET_ACTIVITY_TAG)) {
+            const base = quietActivityKey(message, index, match[1], match[2]);
+            const count = (counts.get(base) || 0) + 1;
+            counts.set(base, count);
+            keys.push(base + ':' + count);
+        }
+    }
+    return keys;
 }
 
 // ── Сброс к заводским ──
@@ -229,17 +462,45 @@ export function stripHandle(s) {
     return String(s || '').replace(/^@+/, '').trim();
 }
 
-// ── Отображаемое имя контакта (учитывает переименование) ──
-export function displayName(key, fallback) {
-    const m = getMeta();
-    return (m.names && m.names[key]) || fallback || key;
+// A contact keeps its original identity; address-book labels are personal aliases.
+export function resolveContactKey(value){
+    return resolveIdentity(getMeta(),value);
 }
-export function renameContact(key, newName) {
-    const m = getMeta();
-    const n = String(newName || '').trim();
-    if (n) m.names[key] = n.slice(0, 60);
-    else delete m.names[key];
+function rememberContact(name,key=resolveContactKey(name)){
+    if(!key||key.startsWith('group:'))return;
+    const m=getMeta(),ids=m.contactIdentities;
+    if(!Object.hasOwn(ids,key))ids[key]={originalName:cleanContactName(name||key),aliases:[]};
+    const item=ids[key];
+    if(!Array.isArray(item.aliases))item.aliases=[];
+    if(!item.originalName||(item.originalName===key&&contactNameKey(name)===contactNameKey(key)))item.originalName=cleanContactName(name||key);
+}
+export function contactOriginalName(key,fallback=''){
+    const k=resolveContactKey(key),m=getMeta();
+    const record=Object.hasOwn(m.contactIdentities,k)?m.contactIdentities[k]:null;
+    return record?.originalName||m.contacts.find(c=>resolveIdentity(m,c.name)===k)?.name||fallback||k;
+}
+export function displayName(key,fallback){
+    const m=getMeta(),k=resolveContactKey(key);
+    return (Object.hasOwn(m.names,k)&&m.names[k])||fallback||k;
+}
+export function renameContact(key,newName){
+    const m=getMeta(),k=resolveContactKey(key),n=String(newName||'').trim().slice(0,60);
+    if(k.startsWith('group:')){if(n)m.names[k]=n;else delete m.names[k];saveMeta();return;}
+    rememberContact(contactOriginalName(k),k);
+    const item=m.contactIdentities[k],old=m.names[k];
+    if(old&&old!==n&&!item.aliases.includes(old))item.aliases.push(old);
+    item.aliases=item.aliases.slice(-20);
+    if(n)m.names[k]=n;else delete m.names[k];
+    m.lastRenamedContact=k;
     saveMeta();
+}
+export function contactIdentityPrompt() {
+    const focus=getMeta().lastRenamedContact;
+    const aliases = getThreadList().filter(thread => !thread.isGroup && thread.name !== thread.originalName)
+        .sort((a,b)=>Number(b.key===focus)-Number(a.key===focus)).slice(0, 60);
+    if (!aliases.length) return '';
+    return 'CONTACT LABELS (canonical character = name saved by {{user}}). These are the same people, with the same lore and stable handles. Remember the saved label in conversations with that contact; never treat it as a new person or infer that unrelated characters know the address book. Use canonical character names in phone tags, not the saved labels:\n'
+        + aliases.map(thread => JSON.stringify(thread.originalName) + ' = ' + JSON.stringify(thread.name)).join('\n');
 }
 
 // ── Бан аккаунтов соцсетей ──
@@ -273,28 +534,46 @@ function currentChatLength() {
 }
 
 export function isSmsBlocked(key) {
-    const ranges = getMeta().smsBlocks[keyOf(key)];
-    return Array.isArray(ranges) && ranges.some(r => r && r.to == null);
+    return wasSmsBlockedAt(key,currentChatLength());
 }
 
+let deviceEventSnapshot=null;
+export function getDeviceEvents(){
+    if(deviceEventSnapshot)return deviceEventSnapshot;
+    const chat=SillyTavern.getContext()?.chat||[],events=[];
+    for(let i=0;i<chat.length;i++){const message=chat[i];if(!message||message.is_user||message.is_system)continue;
+        for(const event of deviceActions(stripThink(getPhoneActivityText(message,i))))if(!isUserName(event.actor))events.push({...event,index:i});}
+    return events;
+}
+export function isDeviceContactBlocked(app,key,index=currentChatLength()){
+    const k=resolveContactKey(key),events=[];
+    for(const event of getDeviceEvents())if(event.index<=index&&event.app===app&&resolveContactKey(event.to)===k&&event.action!=='send')events.push({index:event.index,blocked:event.action==='block'});
+    events.push(...(getMeta().deviceBlockOverrides?.[app]?.[k]||[]));events.sort((a,b)=>a.index-b.index);
+    return events.filter(event=>event.index<=index).at(-1)?.blocked===true;
+}
+export function overrideDeviceContactBlock(app,key,blocked){const meta=getMeta();meta.deviceBlockOverrides||={};meta.deviceBlockOverrides[app]||={};(meta.deviceBlockOverrides[app][resolveContactKey(key)]||=[]).push({index:currentChatLength(),blocked:!!blocked});saveMeta();}
+
 export function blockSmsContact(key) {
-    const k = keyOf(key);
+    const k = resolveContactKey(key);
     if (!k || k.startsWith('group:')) return false;
     const meta = getMeta();
+    if(isSmsBlocked(k))return false;
+    meta.smsBlockManual||={};(meta.smsBlockManual[k]||=[]).push({index:currentChatLength(),blocked:true});
     if (!Array.isArray(meta.smsBlocks[k])) meta.smsBlocks[k] = [];
-    if (meta.smsBlocks[k].some(r => r && r.to == null)) return false;
     meta.smsBlocks[k].push({ from: currentChatLength(), to: null });
     saveMeta();
     return true;
 }
 
 export function unblockSmsContact(key) {
-    const k = keyOf(key);
+    const k = resolveContactKey(key);
     const meta = getMeta();
+    if(!isSmsBlocked(k))return false;
+    meta.smsBlockManual||={};(meta.smsBlockManual[k]||=[]).push({index:currentChatLength(),blocked:false});
     const ranges = meta.smsBlocks[k];
-    if (!Array.isArray(ranges)) return false;
+    if (!Array.isArray(ranges)){saveMeta();return true;}
     const open = [...ranges].reverse().find(r => r && r.to == null);
-    if (!open) return false;
+    if (!open){saveMeta();return true;}
     open.to = currentChatLength() - 1;
     saveMeta();
     return true;
@@ -302,18 +581,15 @@ export function unblockSmsContact(key) {
 
 export function getBlockedSmsKeys() {
     const meta = getMeta();
-    return Object.keys(meta.smsBlocks).filter(k => isSmsBlocked(k));
+    return [...new Set([...Object.keys(meta.smsBlocks),...getDeviceEvents().filter(event=>event.app==='sms').map(event=>resolveContactKey(event.to))])].filter(k => isSmsBlocked(k));
 }
 
 function wasSmsBlockedAt(key, chatIndex) {
-    const ranges = getMeta().smsBlocks[keyOf(key)];
-    if (!Array.isArray(ranges)) return false;
-    return ranges.some(r => {
-        if (!r || !Number.isFinite(Number(r.from))) return false;
-        const from = Number(r.from);
-        const to = r.to == null ? Number.POSITIVE_INFINITY : Number(r.to);
-        return chatIndex >= from && chatIndex <= to;
-    });
+    const meta=getMeta(),k=resolveContactKey(key),events=[];
+    for(const range of meta.smsBlocks[k]||[]){events.push({index:Number(range.from),blocked:true});if(range.to!=null)events.push({index:Number(range.to)+1,blocked:false});}
+    for(const event of getDeviceEvents())if(event.app==='sms'&&resolveContactKey(event.to)===k&&event.action!=='send')events.push({index:event.index,blocked:event.action==='block'});
+    events.push(...(meta.smsBlockManual?.[k]||[]));events.sort((a,b)=>a.index-b.index);
+    return events.filter(event=>event.index<=chatIndex).at(-1)?.blocked===true;
 }
 
 // ── Группы ──
@@ -326,13 +602,20 @@ export function addGroup(name, members) {
 }
 export function delGroup(groupKey) {
     const m = getMeta();
+    // Old group tags remain in the roleplay chat: hide their thread as well.
+    hideContact(groupKey);
     m.groups = m.groups.filter(g => `group:${keyOf(g.name)}` !== groupKey);
     saveMeta();
 }
 export function updateGroupMembers(groupKey, members) {
     const m = getMeta();
-    const g = m.groups.find(g => `group:${keyOf(g.name)}` === groupKey);
-    if (!g) return false;
+    let g = m.groups.find(g => `group:${keyOf(g.name)}` === groupKey);
+    if (!g) {
+        const thread = getThread(groupKey);
+        if (!thread?.isGroup) return false;
+        g = {id:'g' + Date.now().toString(36), name:thread.originalName, members:[]};
+        m.groups.push(g);
+    }
     g.members = (members || []).map(x => String(x).trim()).filter(Boolean);
     saveMeta();
     return true;
@@ -340,10 +623,21 @@ export function updateGroupMembers(groupKey, members) {
 
 // Версия метаданных: любое сохранение инвалидирует кэш scanChat
 let _metaVersion = 0;
+let metadataNoticeQueued = false;
+let metadataNoticeOwner = null;
 export function saveMeta() {
     _metaVersion++;
     try { saveMetadataDebounced(); } catch (e) { console.warn('[GlassPhone] saveMeta failed:', e); }
     scheduleImageOffload();
+    // Coalesce app writes so a locked phone refreshes after the whole update,
+    // including async reactions and deliveries outside the main chat handler.
+    if(typeof window!=='undefined'){
+        metadataNoticeOwner=chat_metadata[META_KEY];
+        if(!metadataNoticeQueued){metadataNoticeQueued=true;queueMicrotask(()=>{
+            metadataNoticeQueued=false;
+            window.dispatchEvent(new CustomEvent('gp:metadata',{detail:{owner:metadataNoticeOwner}}));
+        });}
+    }
 }
 
 // ── Фото из метаданных — в файлы ──
@@ -416,11 +710,31 @@ export async function offloadMetaImages() {
 // а resolveAuthorKey звал scanChat внутри цикла по тегам, давая O(n²)
 // (чат 1000 сообщений ≈ 400+ мс на событие → заметные фризы).
 // Сигнатура дешёвая: длина чата + хвост последнего сообщения + версия метаданных.
+export function getPhoneMessageText(message) {
+    return readPhoneMessage(message, getSettings().externalBlocks !== false, stripThink);
+}
+
+export function getRoleplaySmsOptions() {
+    const context = SillyTavern.getContext();
+    return {
+        userNames: [context.name1, getMeta().userHandle, 'User', '{{user}}'].filter(Boolean),
+        otherNames: [context.name2, ...(getMeta().contacts || []).map(contact => contact.name)]
+            .filter(name => name && !isUserName(name)),
+    };
+}
+
+export function captureRoleplayOutgoing() {
+    if (!isPhoneAppInstalled('list') || getSettings().quietMode || getSettings().captureRoleplaySms === false) return 0;
+    const count = captureRoleplaySms(SillyTavern.getContext().chat || [], getPhoneMessageText, getRoleplaySmsOptions());
+    if (count) invalidateChatCache();
+    return count;
+}
+
 function chatSignature() {
     let chat = [];
     try { chat = SillyTavern.getContext()?.chat || []; } catch (e) { return 'x'; }
     const last = chat.length ? chat[chat.length - 1] : null;
-    const tail = last ? String(last.mes || '').slice(-160) : '';
+    const tail = last ? getPhoneMessageText(last).slice(-160) : '';
     const swipe = last?.swipe_id ?? '';
     return `${chat.length}|${swipe}|${tail}|${_metaVersion}`;
 }
@@ -431,6 +745,7 @@ let _hiddenCache = null, _hiddenSig = null;
 // Принудительный сброс (правки сообщений, смена чата)
 export function invalidateChatCache() {
     _scanSig = null; _hiddenSig = null;
+    storyTimesSignature = null;
 }
 
 // ── Ключ треда/контакта: нормализованное имя ──
@@ -597,16 +912,16 @@ export function stripThink(text) {
 // ── Толерантный JSON-парсер (модели любят одинарные кавычки и висячие запятые) ──
 function safeJson(raw) {
     if (!raw) return null;
-    try { return JSON.parse(raw); } catch (e) {}
+    try { return parsePhoneJson(raw); } catch (e) {}
     try {
         const fixed = raw.replace(/,\s*([}\]])/g, '$1').replace(/'/g, '"');
-        return JSON.parse(fixed);
+        return parsePhoneJson(fixed);
     } catch (e2) {}
     try {
         // Fallback для неэкранированных переносов строк внутри значений (частая ошибка моделей)
         let f = raw.replace(/,\s*([}\]])/g, '$1').replace(/'/g, '"');
         f = f.replace(/([^\\])\n/g, '$1\\n').replace(/([^\\])\r/g, '$1\\r');
-        return JSON.parse(f);
+        return parsePhoneJson(f);
     } catch (e3) {}
     try {
         // Последняя надежда: извлекаем ключи регулярками
@@ -614,7 +929,7 @@ function safeJson(raw) {
         const extract = (key) => {
             const re = new RegExp(`"${key}"\\s*:\\s*"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"`, 'i');
             const m = raw.match(re) || raw.replace(/'/g, '"').match(re);
-            if (m) return m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+            if (m) return normalizePhoneSpaces(m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"'));
             return null;
         };
         res.from = extract('from');
@@ -632,6 +947,7 @@ function safeJson(raw) {
 // ── Регэкспы тегов ──
 const TAG_RE = /<!--\s*tel:(contact|sms):(\{[\s\S]*?\})\s*-->/gi;
 const OUT_RE = /<!--\s*tel:out:(\{[\s\S]*?\})\s*-->/i;
+const OUT_ALL_RE = /<!--\s*tel:out:(\{[\s\S]*?\})\s*-->/gi;
 // «Персонаж решил не отвечать на смс» — пустой ответ телефона
 const SILENT_RE = /<!--\s*tel:silent\s*-->/i;
 // Журнальная запись соцсетей (скрыта из ленты, но в контексте модели)
@@ -644,7 +960,7 @@ export function isAppJournal(msg) {
     return /^\s*<!--\s*tel:log\s*-->/i.test(String(msg.mes));
 }
 // Любой наш тег (для детекта смс-only сообщений)
-const ANY_TEL_RE = /<!--\s*tel:(sms|contact|out|silent|log)/i;
+const ANY_TEL_RE = /<!--\s*tel:(sms|contact|out|sent|silent|log)/i;
 // Видимый формат исходящей смс (парсим как fallback, если JSON битый)
 // Видимый формат двуязычный: [СМС → X] / [SMS → X] (телефон пишет по языку UI);
 // [Голосовое → X] / [Voice → X] — голосовое сообщение (текст = расшифровка)
@@ -678,35 +994,45 @@ function detectProseNumber(text) {
     return null;
 }
 
-// ── Маппинг реальных дат на RP-шкалу ──
-// Вычисляет offset между реальным «сейчас» и RP «сейчас», сдвигает все даты.
-// Кэшируется на тот же цикл, что и getRpDateTime.
-let _rpOffsetMs = null;
-let _rpOffsetSig = null;
-
-function getRpOffsetMs() {
-    const rpDt = getRpDateTime();
-    if (!rpDt) return 0; // нет RP — offset 0, показываем реальные даты
-    const sig = `${rpDt.day}|${rpDt.month}|${rpDt.year}|${rpDt.hours}|${rpDt.minutes}`;
-    if (sig === _rpOffsetSig && _rpOffsetMs !== null) return _rpOffsetMs;
-    _rpOffsetSig = sig;
-    const realNow = new Date();
-    const rpNow = new Date(
-        rpDt.year, rpDt.month - 1, rpDt.day,
-        rpDt.hours ?? realNow.getHours(),
-        rpDt.minutes ?? realNow.getMinutes(),
-        0, 0,
-    );
-    _rpOffsetMs = rpNow.getTime() - realNow.getTime();
-    return _rpOffsetMs;
+// Story time advances through RP timestamps and explicit phone actions.
+export function getRpNow() { return storyDate(getRpDateTime()) || new Date(); }
+let storyTimesCache = null, storyTimesSignature = null;
+export function getRpMessageTimes() {
+    const chat = SillyTavern.getContext()?.chat || [];
+    if (!getRpDateTime()) return chat.map(message => parseRealDate(message?.send_date));
+    const current = getRpNow();
+    const signature = chatSignature() + '|' + current.getTime();
+    if (signature !== storyTimesSignature) {
+        storyTimesCache = storyTimeline(chat, { current, tag: text => parseTimeTag(stripThink(text)),
+            prose: parseAnyDateTime, text: (message) => stripThink(getPhoneMessageText(message)) });
+        storyTimesSignature = signature;
+    }
+    return storyTimesCache;
 }
 
-/** Преобразует реальную дату в RP-дату (сдвиг на offset) */
+/** Resolve a legacy real timestamp to its surrounding story turn, with no wall-time delta. */
 export function realToRpDate(realDate) {
-    if (!realDate) return null;
-    const off = getRpOffsetMs();
-    if (off === 0) return realDate;
-    return new Date(realDate.getTime() + off);
+    if (!realDate || !Number.isFinite(realDate.getTime())) return null;
+    if (!getRpDateTime()) return realDate;
+    const chat = SillyTavern.getContext()?.chat || [];
+    const times = getRpMessageTimes();
+    for (let i = chat.length - 1; i >= 0; i--) {
+        const sent = parseRealDate(chat[i]?.send_date);
+        if (sent && sent <= realDate) return i === chat.length - 1 ? getRpNow() : times[i];
+    }
+    return times.find(Boolean) || getRpNow();
+}
+
+/** Persisted app timestamps take precedence over legacy reconstruction. */
+export function phoneRecordDate(record) {
+    return Number.isFinite(record?.rpAt) ? new Date(record.rpAt)
+        : record?.time instanceof Date ? record.time
+        : realToRpDate(parseRealDate(record?.at ?? record?.ts ?? record?.time));
+}
+
+export function rpElapsedMs(timestamp) {
+    const date=realToRpDate(parseRealDate(timestamp));
+    return date ? Math.max(0,getRpNow()-date) : 0;
 }
 
 function parseRealDate(sd) {
@@ -734,7 +1060,7 @@ export function fmtTime(date) {
     if (sameDay) {
         return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
     }
-    return `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}`;
+    return `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 }
 
 // ── RP-дата/время: из ЛЮБОГО источника ──
@@ -939,18 +1265,21 @@ export function getRpDateTime() {
             const m = chat[i]?.mes || '';
             chatSig += m.length + '|' + m.slice(0, 50) + '|' + m.slice(-50) + '|';
         }
-        const sig = `${chat.length}|${calText.length}|${calText.slice(0, 100)}|${calText.slice(-100)}|${chatSig}`;
+        const phoneClock=getMeta().phoneClock;
+        const sig = `${chat.length}|${phoneClock?.at||''}|${phoneClock?.anchor||''}|${calText.length}|${calText.slice(0, 100)}|${calText.slice(-100)}|${chatSig}`;
         if (sig === _rpDateSig) return _rpDateCache;
         _rpDateSig = sig;
 
         // Метка времени бьёт все остальные источники: её ставит сама модель,
         // зная, сколько времени прошло в сюжете.
-        for (let i = chat.length - 1; i >= 0 && i >= chat.length - 8; i--) {
+        for (let i = chat.length - 1; i >= 0; i--) {
             const mes = chat[i]?.mes;
             if (!mes) continue;
             const tagged = parseTimeTag(stripThink(mes));
             if (tagged) {
-                _rpDateCache = { ...tagged, label: `${String(tagged.day).padStart(2, '0')}.${String(tagged.month).padStart(2, '0')}` };
+                const clock=phoneClock?.anchor===i+':'+JSON.stringify(tagged)&&Number.isFinite(phoneClock.at)?new Date(phoneClock.at):null;
+                const effective=clock?{year:clock.getFullYear(),month:clock.getMonth()+1,day:clock.getDate(),hours:clock.getHours(),minutes:clock.getMinutes()}:tagged;
+                _rpDateCache = { ...effective, label: `${String(effective.day).padStart(2, '0')}.${String(effective.month).padStart(2, '0')}` };
                 return _rpDateCache;
             }
         }
@@ -958,15 +1287,20 @@ export function getRpDateTime() {
         // Источники идут по приоритету. Дату и часы ищем независимо: свежая
         // реплика «сейчас 18:40» должна обновить часы, но сохранить RP-день из
         // календаря/предыдущей реплики, а не подставить сегодняшнюю реальную дату.
+        if(phoneClock?.anchor===''&&Number.isFinite(phoneClock.at)){
+            const date=new Date(phoneClock.at);
+            _rpDateCache={year:date.getFullYear(),month:date.getMonth()+1,day:date.getDate(),hours:date.getHours(),minutes:date.getMinutes(),label:String(date.getDate()).padStart(2,'0')+'.'+String(date.getMonth()+1).padStart(2,'0')};
+            return _rpDateCache;
+        }
         const parsed = [];
         for (let i = chat.length - 1; i >= 0 && i >= chat.length - 3; i--) {
-            const mes = chat[i]?.mes;
-            if (mes && !chat[i].is_system) parsed.push(parseAnyDateTime(mes));
+            const mes = storyClockText(chat[i]);
+            if (mes) parsed.push(parseAnyDateTime(mes));
         }
         parsed.push(parseAnyDateTime(calText));
-        for (let i = chat.length - 4; i >= 0 && i >= chat.length - 20; i--) {
-            const mes = chat[i]?.mes;
-            if (mes && !chat[i].is_system) parsed.push(parseAnyDateTime(mes));
+        for (let i = chat.length - 4; i >= 0; i--) {
+            const mes = storyClockText(chat[i]);
+            if (mes) parsed.push(parseAnyDateTime(mes));
         }
 
         const full = parsed.find(r => r && !r.timeOnly) || null;
@@ -998,7 +1332,8 @@ export function getRpDateTime() {
 export function scanChat() {
     const sig = chatSignature();
     if (_scanSig === sig && _scanCache) return _scanCache;
-    const res = scanChatUncached();
+    const previous=deviceEventSnapshot;deviceEventSnapshot=getDeviceEvents();
+    let res;try{res=scanChatUncached();}finally{deviceEventSnapshot=previous;}
     _scanSig = sig; _scanCache = res;
     return res;
 }
@@ -1008,11 +1343,13 @@ function scanChatUncached() {
     const threads = new Map();
 
     const addContact = (name, number, source) => {
-        const k = keyOf(name);
+        const k = resolveContactKey(name);
         if (!k) return;
+        rememberContact(name,k);
+        const originalName=contactOriginalName(k,String(name).trim());
         const existing = contacts.get(k);
         if (!existing) {
-            contacts.set(k, { name: String(name).trim(), number: String(number || '').trim(), source });
+            contacts.set(k, { name: originalName, number: String(number || '').trim(), source });
         } else if (!existing.number && number) {
             existing.number = String(number).trim();
         }
@@ -1020,7 +1357,7 @@ function scanChatUncached() {
 
     // name может быть готовым ключом 'group:xxx' (displayName тогда обязателен)
     const pushMsg = (name, entry, displayName = null) => {
-        const k = String(name).startsWith('group:') ? String(name) : keyOf(name);
+        const k = String(name).startsWith('group:') ? String(name) : resolveContactKey(name);
         if (!k || k === 'group:') return;
         if (!threads.has(k)) {
             threads.set(k, {
@@ -1035,80 +1372,46 @@ function scanChatUncached() {
     let chat = [];
     try { chat = SillyTavern.getContext()?.chat || []; } catch (e) { /* ignore */ }
 
-    const currentGlobalOffset = getRpOffsetMs();
-    const offsets = new Array(chat.length).fill(null);
-    let lastKnownOffset = null;
+    const storyTimes = getRpMessageTimes();
 
     for (let i = 0; i < chat.length; i++) {
         const msg = chat[i];
-        if (msg && msg.mes) {
-            // Метка времени точнее прозы: берём её, не разбирая текст дальше
-            const tagged = parseTimeTag(stripThink(msg.mes));
-            if (tagged) {
-                const realDate = parseRealDate(msg.send_date) || new Date();
-                const rpDate = new Date(tagged.year, tagged.month - 1, tagged.day, tagged.hours, tagged.minutes, 0, 0);
-                lastKnownOffset = rpDate.getTime() - realDate.getTime();
-                offsets[i] = lastKnownOffset;
-                continue;
-            }
-        }
-        if (msg && msg.mes && !msg.is_system) {
-            const r = parseAnyDateTime(msg.mes);
-            if (r && !r.timeOnly) {
-                const realDate = parseRealDate(msg.send_date) || new Date();
-                const rpDate = new Date(
-                    r.year, r.month - 1, r.day,
-                    r.hours ?? realDate.getHours(),
-                    r.minutes ?? realDate.getMinutes(),
-                    0, 0
-                );
-                lastKnownOffset = rpDate.getTime() - realDate.getTime();
-            }
-        }
-        offsets[i] = lastKnownOffset;
-    }
-
-    let firstKnown = offsets.find(o => o !== null);
-    if (firstKnown === undefined) firstKnown = currentGlobalOffset;
-
-    for (let i = 0; i < chat.length; i++) {
-        if (offsets[i] === null) offsets[i] = firstKnown;
-    }
-
-    for (let i = 0; i < chat.length; i++) {
-        const msg = chat[i];
-        if (!msg || !msg.mes) continue;
+        const sourceText = getPhoneActivityText(msg, i);
+        if (!msg || !sourceText) continue;
         // Системные сообщения пропускаем, НО наши SMS-ответы (is_system с tel: тегами) — парсим
-        if (msg.is_system && !ANY_TEL_RE.test(msg.mes)) continue;
+        if (msg.is_system && !ANY_TEL_RE.test(sourceText)) continue;
         // Теги внутри CoT-блоков не считаются (иначе дубли сообщений)
-        const text = stripThink(msg.mes);
+        let text = stripThink(sourceText);
+        const deviceSends=!msg.is_user?deviceActions(text).filter(event=>event.action==='send'&&event.app==='sms'&&!isUserName(event.actor)):[];
+        for(const event of deviceSends)text+='\n<!--tel:out:'+JSON.stringify({to:event.to,...(event.chat?{group:event.chat}:{}),text:event.text,mixed:true,actor:event.actor,deviceTag:event.tag}).replace(/</g,'\\u003c').replace(/>/g,'\\u003e')+'-->';
 
-        let time = null;
-        const realDate = parseRealDate(msg.send_date);
-        if (realDate) {
-            time = new Date(realDate.getTime() + (offsets[i] || 0));
-        }
+        const time = storyTimes[i];
 
-        if (msg.is_user) {
+        if (msg.is_user || deviceSends.length) {
             // Исходящая смс юзера
-            const om = text.match(OUT_RE);
-            if (om) {
+            const rpQuotes = extractRoleplaySms(text, getRoleplaySmsOptions());
+            for (const om of text.matchAll(OUT_ALL_RE)) {
                 const j = safeJson(om[1]) || {};
+                if (j.origin === 'rp' && !rpQuotes.some(quote => quote.quoteIndex === j.quoteIndex && normalizePhoneSpaces(quote.text) === normalizePhoneSpaces(j.rpQuote || j.text))) continue;
                 const stripped = text.replace(OUT_RE, '').trim();
                 const vis = stripped.match(OUT_VISIBLE_RE);
                 const visGroup = !vis ? stripped.match(OUT_VISIBLE_GROUP_RE) : null;
-                let to = j.to || (vis ? vis[2].trim() : null);
-                const body = vis ? vis[3].trim() : (visGroup ? visGroup[3].trim() : (j.text || ''));
+                let to = j.contactKey || j.to || (vis ? vis[2].trim() : null);
+                const body = typeof j.text === 'string' ? j.text : (vis ? vis[3].trim() : (visGroup ? visGroup[3].trim() : ''));
                 const isVoice = !!j.voice || VOICE_KIND_RE.test(vis?.[1] || visGroup?.[1] || '');
                 // Групповой чат: to = "группа:Название" (или поле group)
                 const groupName = j.group || (typeof to === 'string' && to.match(/^группа:\s*(.+)$/i)?.[1]) || null;
                 // В пузыре телефона токен «*фото...*» не показываем — там миниатюра;
                 // полное описание остаётся в mes (для модели и саммари)
-                const displayBody = body.replace(/\*(?:фото|photo):[^*]*\*\s*/i, '').replace(/\*(?:фото|photo)\*\s*/i, '').trim();
+                const displayBody = normalizePhoneSpaces(body.replace(/<!--[\s\S]*?-->/g,'').replace(/\*(?:фото|photo):[^*]*\*\s*/i, '').replace(/\*(?:фото|photo)\*\s*/i, '').replace(/\*(?:переслано|forwarded|скрин|screenshot):[^*]*\*\s*/i, '').trim());
                 const tagStart = text.indexOf(om[0]);
                 const entry = { dir: 'out', text: displayBody, idx: i, time, tagStart, tagEnd: tagStart + om[0].length, tagText: om[0] };
+                if(j.actor){entry.actor=String(j.actor);entry.tagText=j.deviceTag||entry.tagText;}
+                if(j.mediaKind)entry.mediaKind=j.mediaKind;
+                if(j.stickerId)entry.stickerId=j.stickerId;
+                if(j.stickerCaption)entry.stickerCaption=j.stickerCaption;
                 if (isVoice) entry.voice = true;
-                if (j.react) entry.react = String(j.react);
+                entry.reactions = smsReactions(j);
                 // Фото: путь из маркера (надёжно — часть текста) ИЛИ из extra.media (ST-нативно)
                 if (j.img) entry.img = j.img;
                 else {
@@ -1116,10 +1419,12 @@ function scanChatUncached() {
                     if (ei) entry.img = ei;
                 }
                 if (j.photo) entry.photoDesc = String(j.photo).slice(0, 200);
+                const savedSticker=entry.img&&getMeta().stickers?.find(item=>item.image===entry.img);
+                if(savedSticker&&!entry.mediaKind){entry.mediaKind='sticker';entry.stickerId=savedSticker.id;entry.stickerCaption=savedSticker.caption||'';}
                 if (j.shot) entry.shot = j.shot;
                 if (groupName) {
-                    if (body || entry.img) pushMsg(`group:${keyOf(groupName)}`, entry, groupName);
-                } else if (to && (body || entry.img)) {
+                    if (body || entry.img || entry.shot) pushMsg(`group:${keyOf(groupName)}`, entry, groupName);
+                } else if (to && (body || entry.img || entry.shot)) {
                     pushMsg(to, entry);
                     // Раз юзер пишет этому имени — контакт точно есть
                     addContact(to, '', 'implicit');
@@ -1130,6 +1435,7 @@ function scanChatUncached() {
         // ── Сообщения бота (или юзера) ──
 
         // ГЛАВНАЯ ПРОВЕРКА: бот описывает СВОЙ телефон?
+        if (!msg.is_user && wasPhoneQuietAt(i)) continue;
         // Если да — это НЕ смс юзеру, пропускаем всё кроме contact-тегов.
         // Для сообщений юзера эта проверка всегда false, так как мы хотим парсить их тэги.
         TAG_RE.lastIndex = 0;
@@ -1141,7 +1447,7 @@ function scanChatUncached() {
             if (!j) continue;
             if (kind === 'contact' && j.name) {
                 addContact(j.name, j.number || '', 'tag');
-            } else if (kind === 'sms' && j.from && (j.text || j.photo)) {
+            } else if (kind === 'sms' && j.from && (j.text || j.photo || j.shot || j.sticker || j.meme)) {
                 // Явные теги = наш протокол, модель ставит их осознанно — доверяем.
                 // Исключение первое: тег явно адресован боту (j.to = имя бота).
                 if (j.to && !msg.is_user && keyOf(j.to) === keyOf(msg.name)) {
@@ -1162,7 +1468,7 @@ function scanChatUncached() {
                 // Заблокированный контакт не создаёт пузырь/непрочитанное. Проверка
                 // идёт по историческому интервалу, поэтому блок переживает reload,
                 // а разблокировка не возвращает пропущенные сообщения задним числом.
-                if (!j.chat && wasSmsBlockedAt(j.from, i)) {
+                if (!j.chat && wasSmsBlockedAt(resolveContactKey(j.from), i)) {
                     continue;
                 }
                 const entry = {
@@ -1179,10 +1485,20 @@ function scanChatUncached() {
                 if (j.voice) entry.voice = true;
                 // Сгенерированное фото ММС (кнопка на заглушке пишет img в тег)
                 if (j.img) entry.img = String(j.img);
+                if(j.mediaKind)entry.mediaKind=j.mediaKind;
+                if(j.stickerId)entry.stickerId=j.stickerId;
+                if(j.stickerCaption)entry.stickerCaption=j.stickerCaption;
+                const generated=getMeta().generatedChatMedia?.[chatMediaKey(i,tm[0])];
+                const descriptor=chatMedia(j);
+                if(generated?.img){entry.img=generated.img;entry.mediaKind=generated.mediaKind;entry.stickerId=generated.stickerId;entry.stickerCaption=generated.stickerCaption;entry.photoDesc=generated.photo;}
+                else if(descriptor&&generated?.status!=='skipped'){entry.photoDesc=descriptor.description||'Стикер';entry.mediaKind=descriptor.kind;}
+                const savedSticker=entry.img&&getMeta().stickers?.find(item=>item.image===entry.img);
+                if(savedSticker&&!entry.mediaKind){entry.mediaKind='sticker';entry.stickerId=savedSticker.id;entry.stickerCaption=savedSticker.caption||'';}
                 // Реакция юзера на сообщение (пишется в тег из UI)
-                if (j.react) entry.react = String(j.react);
+                entry.reactions = smsReactions(j);
                 // Скрин поста из соцсети или канала: карточку рисует телефон
                 if (j.shot) entry.shot = j.shot;
+                if(!entry.text&&!entry.img&&!entry.photoDesc&&!entry.shot)continue;
                 if (j.chat) {
                     // Сообщение в групповой чат
                     pushMsg(`group:${keyOf(j.chat)}`, entry, String(j.chat));
@@ -1213,11 +1529,12 @@ function scanChatUncached() {
     const meta = getMeta();
     for (const c of meta.contacts) {
         if (!c || !c.name) continue;
-        const k = keyOf(c.name);
+        const k = resolveContactKey(c.name);
+        rememberContact(c.name,k);
         const existing = contacts.get(k);
         if (!existing) {
             contacts.set(k, { name: c.name, number: c.number || '', source: 'manual' });
-        } else if (c.number && !existing.number) {
+        } else if (c.number) {
             existing.number = c.number;
         }
     }
@@ -1271,6 +1588,7 @@ export function getThreadList() {
         list.push({
             key: k,
             name: displayName(k, (g && g.name) || (c && c.name) || (t && t.name) || k),
+            originalName: isGroup ? ((g && g.name) || (t && t.name) || k) : contactOriginalName(k,(c && c.name) || (t && t.name) || k),
             number: (c && c.number) || '',
             isGroup,
             members: g ? g.members : (isGroup ? [...new Set(msgs.filter(m => m.from).map(m => m.from))] : []),
@@ -1285,14 +1603,21 @@ export function getThreadList() {
 }
 
 export function getThread(key) {
-    return getThreadList().find(t => t.key === key) || null;
+    const resolved=resolveContactKey(key);
+    return getThreadList().find(t => t.key === resolved) || null;
+}
+
+export function phoneAppForThread(key) {
+    const root = getMeta();
+    return root.tinder?.matches?.some(match => match.inApp && resolveIdentity(root, match.name) === resolveIdentity(root, key)) ? 'tinder' : 'list';
 }
 
 export function getTotalUnread() {
-    return getThreadList().reduce((sum, t) => sum + t.unread, 0);
+    return getThreadList().filter(t => isPhoneAppInstalled(phoneAppForThread(t.key))).reduce((sum, t) => sum + t.unread, 0);
 }
 
 export function markRead(key) {
+    key=resolveContactKey(key);
     const t = getThread(key);
     if (!t) return;
     const meta = getMeta();
@@ -1307,15 +1632,16 @@ export function markRead(key) {
 
 export function addManualContact(name, number) {
     const meta = getMeta();
-    const k = keyOf(name);
+    const k = resolveContactKey(name);
     if (!k) return false;
+    rememberContact(name,k);
     // Снимаем скрытие, если было
     meta.hidden = meta.hidden.filter(h => h.key !== k);
-    const existing = meta.contacts.find(c => keyOf(c.name) === k);
+    const existing = meta.contacts.find(c => resolveContactKey(c.name) === k);
     if (existing) {
         if (number) existing.number = number;
     } else {
-        meta.contacts.push({ name: String(name).trim(), number: String(number || '').trim() });
+        meta.contacts.push({ name: contactOriginalName(k,String(name).trim()), number: String(number || '').trim() });
     }
     saveMeta();
     return true;
@@ -1323,7 +1649,8 @@ export function addManualContact(name, number) {
 
 export function hideContact(key) {
     const meta = getMeta();
-    meta.contacts = meta.contacts.filter(c => keyOf(c.name) !== key);
+    key=resolveContactKey(key);
+    meta.contacts = meta.contacts.filter(c => resolveContactKey(c.name) !== key);
     const t = getThread(key);
     const atIdx = t && t.last ? t.last.idx : Number.MAX_SAFE_INTEGER;
     meta.hidden = meta.hidden.filter(h => h.key !== key);
@@ -1361,7 +1688,7 @@ function hiddenMessageIndexesUncached() {
         // Системные сообщения пропускаем, но наши SMS-ответы прячем
         if (msg.is_system && !ANY_TEL_RE.test(msg.mes) && !SILENT_RE.test(msg.mes)) continue;
         if (msg.is_user) {
-            if (OUT_RE.test(msg.mes)) out.push(i);
+            if (OUT_RE.test(msg.mes) && !hasMixedRoleplaySms(msg)) out.push(i);
             continue;
         }
         // Think-блоки не учитываем ни в детекте тегов, ни в «видимом остатке»

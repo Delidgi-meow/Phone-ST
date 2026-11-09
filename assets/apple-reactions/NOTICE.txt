@@ -1,0 +1,5 @@
+Apple emoji artwork: Copyright Apple Inc.
+Source package: emoji-datasource-apple 16.0.0 (iamcal/emoji-data).
+Source: https://github.com/iamcal/emoji-data
+PNG files obtained from https://cdn.jsdelivr.net/npm/emoji-datasource-apple@16.0.0/img/apple/64/
+The package's MIT data/code license does not license Apple's artwork.

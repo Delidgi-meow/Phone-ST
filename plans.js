@@ -1,9 +1,12 @@
+import { isPhoneAppInstalled } from './state.js';
+import { parsePhoneJson } from './phone-text.js';
+import { parseBirthdayDate, birthdayCalendarEntries, birthdaysOnDate, birthdayMemoryLine } from './birthday-dates.js';
 // Планы и важные даты: календарь телефона. Живёт по ролевому времени —
 // «сегодня» это сегодня В ИСТОРИИ, а не по часам компьютера.
 // Записи приходят двумя путями: она добавляет их сама или ролевая ставит тег
 // <!--tel:plan:{...}--> , когда о чём-то договорились.
 
-import { getMeta, saveMeta, getRpDateTime, stripThink } from './state.js';
+import { getMeta, saveMeta, getSettings, getRpDateTime, stripThink, isUserName, resolveContactKey, contactOriginalName, getPhoneAppText as getPhoneMessageText } from './state.js';
 import { logSocialToChat, getUserName } from './social.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
@@ -21,6 +24,42 @@ export function getPlans() {
     if (!Array.isArray(m.plans)) m.plans = [];
     if (!Array.isArray(m.planTags)) m.planTags = [];
     return m.plans;
+}
+
+export function getBirthdays() {
+    const root = getMeta();
+    if (!Array.isArray(root.birthdays)) root.birthdays = [];
+    return root.birthdays;
+}
+
+const birthdayNameKey = name => String(name || '').normalize('NFKC').toLocaleLowerCase().replace(/ё/g, 'е').replace(/\s+/g, ' ').trim();
+
+export function saveBirthday({id = '', name, date, day, month, year, who, source = 'user'}) {
+    name = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 100);
+    if (isUserName(name) || /^(?:я|me|myself|\{\{user\}\})$/i.test(name)) name = getUserName();
+    else name = contactOriginalName(resolveContactKey(name), name);
+    const parsed = parseBirthdayDate(date || {day, month, year});
+    if (!name || !parsed) return null;
+    const list = getBirthdays(), key = birthdayNameKey(name);
+    const existing = id ? list.find(b => b.id === id) : list.find(b => birthdayNameKey(b.name) === key);
+    if (id && !existing) return null;
+    if (list.some(b => b !== existing && birthdayNameKey(b.name) === key)) return null;
+    if (existing && source === 'context' && (existing.day !== parsed.day || existing.month !== parsed.month
+        || existing.year && parsed.year && existing.year !== parsed.year)) return {record:existing, changed:false, conflict:true};
+    if (existing && !parsed.year && existing.day === parsed.day && existing.month === parsed.month) parsed.year = existing.year || null;
+    const fields = {name, ...parsed, who:who === 'user' || isUserName(name) ? 'user' : 'char'};
+    if (existing && Object.entries(fields).every(([key, value]) => existing[key] === value)) return {record:existing, changed:false};
+    const record = existing || {id:'birthday:' + genId(), at:Date.now()};
+    Object.assign(record, fields, {source, updated:Date.now()});
+    if (!existing) list.push(record);
+    saveMeta();
+    return {record, changed:true};
+}
+
+export function getCalendarEntries() {
+    const entries = [...getPlans(), ...birthdayCalendarEntries(getMeta(), rpToday(), getSettings().lang === 'en')];
+    sortPlans(entries);
+    return entries;
 }
 
 // Ролевое «сегодня» как YYYY-MM-DD — так даты сортируются сами собой
@@ -47,8 +86,8 @@ export function parsePlanDate(raw) {
     }
     const ymd = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
     if (ymd) return iso(Number(ymd[1]), Number(ymd[2]), Number(ymd[3]));
-    if (/^сегодня|today$/.test(s)) return rpToday();
-    if (/^завтра|tomorrow$/.test(s)) return shiftDays(rpToday(), 1);
+    if (/^(?:сегодня|today)$/.test(s)) return rpToday();
+    if (/^(?:завтра|tomorrow)$/.test(s)) return shiftDays(rpToday(), 1);
     if (/^послезавтра$/.test(s)) return shiftDays(rpToday(), 2);
     const inDays = s.match(/^через\s+(\d{1,3})\s*(?:дн|день|дня|дней)/);
     if (inDays) return shiftDays(rpToday(), Number(inDays[1]));
@@ -78,6 +117,7 @@ export function addPlan({ text, date, time = '', who = 'user', source = 'user' }
         time: String(time || '').trim().slice(0, 5),
         who: PLAN_WHO[who] ? who : 'user',
         done: false,
+        status:'open',
         source,
         at: Date.now(),
     };
@@ -106,6 +146,7 @@ export function togglePlan(id) {
     const p = getPlans().find(x => x.id === id);
     if (!p) return false;
     p.done = !p.done;
+    p.status=p.done?'done':'open';p.cancelled=false;
     // День отметки нужен инжекту: свежее «сделано» модель должна увидеть,
     // иначе галочка просто убирала пункт, и ролевая считала дело незакрытым
     if (p.done) p.doneDate = rpToday();
@@ -119,9 +160,20 @@ export function togglePlan(id) {
     return p.done;
 }
 
+export function setPlanStatus(id,status) {
+    const plan=getPlans().find(p=>p.id===id);
+    if(!plan||!['open','done','cancelled'].includes(status))return false;
+    const previous=plan.cancelled?'cancelled':plan.done?'done':'open';
+    if(previous===status)return false;
+    plan.status=status;plan.done=status!=='open';plan.cancelled=status==='cancelled';
+    if(plan.done)plan.doneDate=rpToday();else delete plan.doneDate;
+    saveMeta();return true;
+}
+
 export function deletePlan(id) {
     const m = getMeta();
     m.plans = getPlans().filter(x => x.id !== id);
+    if (Array.isArray(m.birthdays)) m.birthdays = m.birthdays.filter(x => x.id !== id);
     saveMeta();
 }
 
@@ -129,7 +181,7 @@ export function deletePlan(id) {
 export function groupedPlans() {
     const today = rpToday();
     const groups = { overdue: [], today: [], tomorrow: [], week: [], later: [], done: [] };
-    for (const p of getPlans()) {
+    for (const p of getCalendarEntries()) {
         if (p.done) { groups.done.push(p); continue; }
         const diff = daysBetween(today, p.date);
         if (diff < 0) groups.overdue.push(p);
@@ -142,6 +194,7 @@ export function groupedPlans() {
 }
 
 export function plansBadgeCount() {
+    if (!isPhoneAppInstalled('calendar')) return 0;
     const g = groupedPlans();
     return g.overdue.length + g.today.length;
 }
@@ -161,7 +214,7 @@ export function shiftMonth(ym, delta) {
 }
 
 export function plansByDate(isoDate) {
-    return getPlans().filter(p => p.date === isoDate);
+    return [...getPlans().filter(p => p.date === isoDate), ...birthdaysOnDate(getMeta(), isoDate, getSettings().lang === 'en')];
 }
 
 // Шесть недель по семь дней, неделя с понедельника: сетка не прыгает по высоте
@@ -185,6 +238,7 @@ export function monthGrid(ym) {
             past: isoDate < today,
             total: dayPlans.length,
             open: dayPlans.filter(x => !x.done).length,
+            birthday: dayPlans.some(x => x.kind === 'birthday'),
             who: [...new Set(dayPlans.map(x => x.who))],
         });
     }
@@ -195,55 +249,62 @@ export function monthGrid(ym) {
 // Короткий список ближайшего: модель должна помнить, о чём договорились,
 // и иметь право напомнить, сорвать или перенести.
 export function plansInjectLine() {
+    if (!isPhoneAppInstalled('calendar')) return '';
     const g = groupedPlans();
     const today = rpToday();
-    const near = [...g.overdue, ...g.today, ...g.tomorrow, ...g.week].slice(0, 8);
+    const near = [...g.overdue, ...g.today, ...g.tomorrow, ...g.week].filter(p => p.kind !== 'birthday').slice(0, 8);
     // Дальние даты тоже нужны: день рождения через три недели или отпуск в мае
     // модель иначе не видела вовсе, пока до них не оставалось недели
-    const ahead = g.later.slice(0, 3);
+    const ahead = g.later.filter(p => p.kind !== 'birthday').slice(0, 3);
     // Недавно закрытое: она отметила галочку — значит дело сделано, и ролевая
     // должна это знать (не напоминать, не тянуть героя туда снова)
     const justDone = g.done
         .filter(p => !p.doneDate || daysBetween(p.doneDate, today) <= 3)
         .slice(-3);
-    if (!near.length && !ahead.length && !justDone.length) return '';
+    const birthdays = birthdayMemoryLine(getMeta(), today);
+    if (!near.length && !ahead.length && !justDone.length) return birthdays;
     const whoOf = (p) => (p.who === 'char' ? 'their plan' : p.who === 'both' ? 'together' : `{{user}}'s plan`);
     const lines = near.map((p) => {
         const diff = daysBetween(today, p.date);
         const when = diff < 0 ? `overdue by ${-diff}d` : diff === 0 ? 'TODAY' : diff === 1 ? 'tomorrow' : `in ${diff}d`;
-        return `- ${fmtPlanDate(p.date)}${p.time ? ` ${p.time}` : ''} (${when}, ${whoOf(p)}): ${p.text}`;
+        return `- [id:${p.id}] ${fmtPlanDate(p.date)}${p.time ? ` ${p.time}` : ''} (${when}, ${whoOf(p)}): ${p.text}`;
     }).join('\n');
-    const doneLines = justDone.map(p => `- DONE ${fmtPlanDate(p.date)} (${whoOf(p)}): ${p.text}`).join('\n');
+    const doneLines = justDone.map(p => `- [id:${p.id}] ${p.cancelled?'CANCELLED':'DONE'} ${fmtPlanDate(p.date)} (${whoOf(p)}): ${p.text}`).join('\n');
     const aheadLines = ahead.map((p) => {
         const diff = daysBetween(today, p.date);
-        return `- ${fmtPlanDate(p.date)}${p.time ? ` ${p.time}` : ''} (in ${diff}d, ${whoOf(p)}): ${p.text}`;
+        return `- [id:${p.id}] ${fmtPlanDate(p.date)}${p.time ? ` ${p.time}` : ''} (in ${diff}d, ${whoOf(p)}): ${p.text}`;
     }).join('\n');
     const body = [lines, aheadLines, doneLines].filter(Boolean).join('\n');
-    return `[{{user}}'S CALENDAR — what has been agreed or planned. It is TRUE and binding: characters who took part in a plan remember it, may bring it up, hold {{user}} to it, be late, cancel or show up. Do not invent a different date for these. Lines marked DONE are already finished — {{user}} ticked them off: treat them as done, do not push for them again, and you may refer to them as something that happened.]\n${body}`;
+    return `[CALENDAR — confirmed plans; participants remember them. Keep IDs, dates and ownership. Characters may discuss, cancel or attend their own commitments; do not decide {{user}}’s actions. DONE and CANCELLED entries are closed, not upcoming reminders.]\n${body}${birthdays ? '\n' + birthdays : ''}`;
 }
 
 export function plansInjectRule() {
-    return `[PLAN] If in THIS reply a date or plan is set — a meeting, a shift, a doctor's appointment, a promise to come or call at some time — append a hidden comment at the END: <!--tel:plan:{"date":"DD.MM.YYYY","time":"19:00","text":"what exactly","who":"user|char|both"}--> ("who": whose plan it is — {{user}}'s, the character's, or both). "time" may be empty. One tag per plan, only for things that are really agreed.`;
+    if (!isPhoneAppInstalled('calendar')) return '';
+    const creation='[CALENDAR] Record each new confirmed plan agreed in the latest user message or this reply, even if the calendar is empty: <!--tel:plan:{"date":"DD.MM.YYYY","time":"19:00","text":"specific plan","who":"user|char|both"}-->. "who" selects the owner; time may be "". Resolve dates from the RP clock. Never duplicate listed plans or record suggestions, refusals or hypothetical events.';
+    return creation+(getPlans().length ? ' When established events complete or explicitly cancel an existing plan, append <!--tel:plan:{"id":"exact listed ID","status":"done|cancelled"}-->. Mere passage of time is not completion. Never invent user actions. A confirmed reschedule updates the same ID with "status":"open","date":"DD.MM.YYYY","time":"HH:MM"; do not create a second entry. Only an explicit renewed agreement reopens a closed plan.' : '');
 }
 
 // ── Теги из чата ──
 const PLAN_TAG_RE = /<!--\s*tel:plan:(\{[\s\S]*?\})\s*-->/gi;
 
 function safeJson(raw) {
-    try { return JSON.parse(raw); } catch (e) { return null; }
+    try { return parsePhoneJson(raw); } catch (e) { return null; }
 }
 
 export function harvestPlanTags() {
+    if (!isPhoneAppInstalled('calendar')) return 0;
     const m = getMeta();
     getPlans();
     let chat = [];
     try { chat = SillyTavern.getContext()?.chat || []; } catch (e) { return 0; }
     const seen = new Set(m.planTags);
     let added = 0;
+    let consumed = false;
     for (let i = 0; i < chat.length; i++) {
         const msg = chat[i];
-        if (!msg || !msg.mes || msg.is_user || !/tel:plan/i.test(msg.mes)) continue;
-        const text = stripThink(msg.mes);
+        const sourceText = getPhoneMessageText(msg, i);
+        if (!msg || msg.is_user || !/tel:plan/i.test(sourceText)) continue;
+        const text = stripThink(sourceText);
         const occ = {};
         PLAN_TAG_RE.lastIndex = 0;
         let hit;
@@ -253,10 +314,32 @@ export function harvestPlanTags() {
             const n = occ[base] = (occ[base] || 0) + 1;
             const key = `${base}#${n}`;
             if (seen.has(key)) continue;
+            const j = safeJson(hit[1]);
+            if (!j) continue;
+            const statusAliases={done:'done',completed:'done',cancelled:'cancelled',canceled:'cancelled',open:'open',pending:'open'};
+            const status=typeof j.status==='string'&&Object.hasOwn(statusAliases,j.status.toLowerCase())?statusAliases[j.status.toLowerCase()]:null;
+            if(j.id||j.status){
+                if(!status)continue;
+                const normalize=text=>String(text||'').replace(/\s+/g,' ').trim().toLowerCase();
+                const candidates=j.id ? m.plans.filter(p=>p.id===j.id) : m.plans.filter(p=>normalize(p.text)===normalize(j.text)&&(!j.date||p.date===parsePlanDate(j.date))&&(!j.who||p.who===j.who));
+                if(candidates.length!==1)continue;
+                const plan=candidates[0];let changed=setPlanStatus(plan.id,status);
+                if(status==='open'){
+                    if(j.date){const next=parsePlanDate(j.date);if(next!==plan.date){plan.date=next;changed=true;}}
+                    if(typeof j.time==='string'&&/^(?:[01]\d|2[0-3]):[0-5]\d$|^$/.test(j.time)&&j.time!==plan.time){plan.time=j.time;changed=true;}
+                }
+                seen.add(key);m.planTags.push(key);consumed=true;
+                if(changed){added++;sortPlans(m.plans);}
+                continue;
+            }
+            if(typeof j.text!=='string'||!j.text.trim())continue;
             seen.add(key);
             m.planTags.push(key);
-            const j = safeJson(hit[1]);
-            if (!j || !j.text) continue;
+            consumed = true;
+            const date = parsePlanDate(j.date);
+            const time = String(j.time || '').trim().slice(0, 5);
+            const who = PLAN_WHO[j.who] ? j.who : 'user';
+            if (m.plans.some(plan => plan.date === date && plan.time === time && plan.who === who && plan.text === j.text.trim().slice(0, 200))) continue;
             addPlan({
                 text: j.text,
                 date: j.date,
@@ -268,6 +351,6 @@ export function harvestPlanTags() {
         }
     }
     if (m.planTags.length > 300) m.planTags = m.planTags.slice(-300);
-    if (added) saveMeta();
+    if (added || consumed) saveMeta();
     return added;
 }

@@ -1,3 +1,4 @@
+import { isPhoneAppInstalled } from './state.js';
 // Заметки: личные записи в телефоне. По умолчанию СЕКРЕТНЫ (модель не видит);
 // тумблер «видна модели» отправляет заметку в инжект как фоновое знание
 // нарратора (персонажи всё равно не знают, пока она не покажет).
@@ -13,19 +14,20 @@ export function getNotes() {
     return m.notes;
 }
 
-export function addNote(text) {
+export function addNote(text, drawing = null) {
     const t = String(text || '').trim();
-    if (!t) return null;
-    const note = { id: genId(), text: t.slice(0, 2000), time: Date.now(), shared: false };
+    if (!t && !drawing?.strokes?.length) return null;
+    const note = { id: genId(), text: t.slice(0, 20000), time: Date.now(), shared: false, drawing };
     getNotes().unshift(note);
     saveMeta();
     return note;
 }
 
-export function updateNote(id, text) {
+export function updateNote(id, text, drawing) {
     const n = getNotes().find(x => x.id === id);
     if (!n) return false;
-    n.text = String(text || '').trim().slice(0, 2000);
+    n.text = String(text || '').trim().slice(0, 20000);
+    if (drawing !== undefined) n.drawing = drawing;
     n.time = Date.now();
     saveMeta();
     // Открытую заметку правим и в истории: старая строка журнала устарела
@@ -52,7 +54,7 @@ function noteMarker(id) { return `note:${id}`; }
 function journalNote(n, verb) {
     try {
         logSocialToChat(`${getUserName()} ${verb} заметку в телефоне: «${String(n.text).slice(0, 400)}»`,
-            { marker: noteMarker(n.id), priv: true });
+            { marker: noteMarker(n.id), priv: true, advance:false });
     } catch (e) { /* ignore */ }
 }
 
@@ -75,8 +77,9 @@ export function getSharedNotes() {
 // как «не используй», и модель заметки честно игнорировала. Открытую заметку
 // она открывает специально — значит хочет, чтобы та работала в сцене.
 export function notesInjectBlock() {
+    if (!isPhoneAppInstalled('notes')) return '';
     const shared = getSharedNotes();
     if (!shared.length) return '';
-    const lines = shared.slice(0, 6).map(n => `- ${n.text.slice(0, 300)}`).join('\n');
-    return `[{{user}}'S NOTES — what they wrote in their phone's notes app and deliberately opened to you. Treat it as TRUE and current: their plans, intentions, reminders, things they keep in mind. USE it — let it steer what {{user}} remembers and does, and let the world test it; it is not decoration. Other characters know only what {{user}} has actually told or shown them.]\n${lines}`;
+    const lines = shared.slice(0, 6).map(note => '- ' + note.text.slice(0, 300)).join('\n');
+    return '[SHARED PHONE NOTES — user-written intentions/reminders, not proof that an event happened. Respect newer story facts. You may offer relevant reminders or opportunities; never decide what {{user}} remembers, feels or does. Characters know only notes actually shown or told to them.]\n' + lines;
 }

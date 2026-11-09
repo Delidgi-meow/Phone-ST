@@ -1,3 +1,4 @@
+import { isPhoneAppInstalled } from './state.js';
 // Спам/мошенники: редкие скам-смс с незнакомых номеров. Генерация ленивая,
 // с кулдауном и вероятностью — модель НЕ дёргается на каждое сообщение.
 
@@ -22,6 +23,7 @@ let _inflight = false;
 
 // Возвращает {from, text} или null. force=true — без кулдауна/вероятности.
 export async function maybeScamSms({ force = false } = {}) {
+    if (!isPhoneAppInstalled('list')) return null;
     if (_inflight) return null;
     if (getSettings().scamEnabled === false) return null;
     const sc = getScam();

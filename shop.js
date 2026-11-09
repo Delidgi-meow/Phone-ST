@@ -1,8 +1,9 @@
 
-import { getMeta, saveMeta, getRpDateTime, rpTimeTagged } from './state.js';
-import { generateShopContent, logSocialToChat, getUserName, generateCourier, generateCourierReply } from './social.js';
-import { addTransaction, getBank, fmtMoney } from './bank.js';
+import { getMeta, saveMeta, getRpDateTime, rpTimeTagged, resolveContactKey, contactOriginalName, displayName } from './state.js';
+import { generateShopContent, logSocialToChat, getUserName } from './social.js';
+import { addTransaction, getBank, fmtMoney, roundMoney } from './bank.js';
 import { lang } from './i18n.js';
+import { paymentPayer } from './bank-protocol.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -44,7 +45,7 @@ export function delCustomCat(id) {
 }
 
 export function catById(id) {
-    return SHOP_CATS.find(c => c.id === id) || getCustomCats().find(c => c.id === id) || null;
+    return SHOP_CATS.find(c => c.id === id) || getCustomCats().find(c => c.id === id) || getShop().searchQueries.find(c=>c.id===id) || null;
 }
 
 export function getShop() {
@@ -53,11 +54,28 @@ export function getShop() {
     const s = m.shop;
     if (!s.cats || typeof s.cats !== 'object') s.cats = {};
     if (!Array.isArray(s.orders)) s.orders = [];
+    if (!Array.isArray(s.searchQueries)) s.searchQueries = [];
     return s;
 }
 
 export function getCategory(catId) {
     return getShop().cats[catId] || null;
+}
+
+export function getShopPayer() {
+    const selected = getShop().paymentPayer;
+    if (!selected || selected === 'user') return {payer:'user', label:lang() === 'en' ? 'My account' : 'Мой счёт', key:''};
+    const key = selected.key ? resolveContactKey(selected.key) : '';
+    const name = key ? contactOriginalName(key, selected.name) : String(selected.name || '');
+    const payer = paymentPayer(name, getUserName());
+    return {payer, key, label:payer === 'user' ? (lang() === 'en' ? 'My account' : 'Мой счёт') : key ? displayName(key, name) : name};
+}
+
+export function setShopPayer(selected) {
+    const key = selected?.key ? resolveContactKey(selected.key) : '';
+    const name = key ? contactOriginalName(key, selected?.name) : String(selected?.name || '').trim().slice(0, 80);
+    getShop().paymentPayer = !name || paymentPayer(name, getUserName()) === 'user' ? 'user' : {key, name};
+    saveMeta();
 }
 
 // Категория «активна» (что-то сгенерировано/куплено) — на будущее/бейджи
@@ -69,18 +87,21 @@ export function shopActive() {
 // Последовательная очередь генераций
 let _genChain = Promise.resolve();
 export function generateCategory(catId, onStatus) {
-    const run = () => _generateCategory(catId, onStatus);
+    const owner=getMeta();
+    const run = () => {if(getMeta()!==owner)throw new Error('Чат изменился');return _generateCategory(catId, onStatus);};
     const p = _genChain.then(run, run);
     _genChain = p.then(() => {}, () => {});
     return p;
 }
 
 async function _generateCategory(catId, onStatus) {
+    const owner=getMeta();
     const cat = catById(catId);
     if (!cat) throw new Error('Неизвестная категория');
     onStatus?.('Загружаю каталог...');
     const currency = getBank().currency;
     const arr = await generateShopContent(cat.name, cat.hint, currency);
+    if(getMeta()!==owner)throw new Error('Чат изменился');
     if (!Array.isArray(arr) || arr.length === 0) throw new Error('Каталог не сгенерировался — попробуй ещё раз');
     const stores = arr.map(st => ({
         id: genId(),
@@ -88,7 +109,7 @@ async function _generateCategory(catId, onStatus) {
         items: (Array.isArray(st.items) ? st.items : []).filter(it => it && it.name).slice(0, 10).map(it => ({
             id: genId(),
             name: String(it.name).slice(0, 70),
-            price: Math.max(0, Math.round(Number(it.price) || 0)),
+            price: Math.max(0, roundMoney(it.price)),
             desc: String(it.desc || '').slice(0, 160),
         })),
     })).filter(st => st.items.length > 0);
@@ -98,8 +119,42 @@ async function _generateCategory(catId, onStatus) {
     return stores;
 }
 
-// Купить товар: списываем с банка, пишем заказ, событие в чат (ролевая узнаёт)
-export function buyItem(catId, storeId, itemId) {
+const searchText=value=>String(value||'').normalize('NFC').toLowerCase().replace(/ё/g,'е').replace(/\s+/g,' ').trim();
+export function findShopProducts(query=''){
+    const terms=searchText(query).split(' ').filter(Boolean), results=[], seen=new Set();
+    const catalogs=Object.entries(getShop().cats).sort((a,b)=>(b[1]?.at||0)-(a[1]?.at||0));
+    for(const [catId,data] of catalogs){
+        for(const store of data?.stores||[])for(const item of store?.items||[]){
+            if(!item?.name)continue;
+            const title=searchText(item.name), text=searchText(item.name+' '+item.desc+' '+store.name);
+            if(terms.length&&!terms.every(term=>text.includes(term)))continue;
+            const key=searchText(store.name)+'|'+title+'|'+item.price;if(seen.has(key))continue;seen.add(key);
+            results.push({catId,storeId:store.id,storeName:store.name,item,score:terms.filter(term=>title.includes(term)).length});
+        }
+    }
+    return results.sort((a,b)=>b.score-a.score).slice(0,80);
+}
+
+export async function searchShopProducts(query){
+    const request=String(query||'').replace(/\s+/g,' ').trim().slice(0,100);
+    if(!request)return [];
+    const shop=getShop();let category=shop.searchQueries.find(c=>searchText(c.query)===searchText(request));
+    if(!category){
+        category={id:'search_'+genId(),query:request,name:request,icon:'fa-magnifying-glass',search:true,
+            hint:'PRODUCT SEARCH. User query: '+JSON.stringify(request)+'. Generate matching products only, with concrete names, descriptions and prices. Respect requested attributes, sizes, brands and budget when established. Use relevant stores in the roleplay setting; do not fill unrelated categories.'};
+        shop.searchQueries.unshift(category);
+        if(shop.searchQueries.length>20){
+            for(let i=shop.searchQueries.length-1;i>=20;i--){const old=shop.searchQueries[i];if(!shop.orders.some(o=>o.cat===old.id)){delete shop.cats[old.id];shop.searchQueries.splice(i,1);}}
+        }
+        saveMeta();
+    }
+    const stores=await generateCategory(category.id);
+    return stores;
+}
+
+// The chosen payer is recorded before the order: sponsored purchases never
+// create a temporary debit/refund on the owner's account.
+export function buyItem(catId, storeId, itemId, deliveryMinutes = null) {
     const s = getShop();
     const cat = s.cats[catId];
     if (!cat) return null;
@@ -108,12 +163,15 @@ export function buyItem(catId, storeId, itemId) {
     const item = store.items.find(x => x.id === itemId);
     if (!item) return null;
 
-    addTransaction({ amount: -item.price, label: item.name, category: 'покупки' });
+    const payment = getShopPayer();
+    addTransaction({ amount: -item.price, label: item.name, category: 'покупки', payer:payment.payer, appPurchase:true });
 
     // Корзина: пока курьер не выехал, добор из того же магазина идёт в тот же
     // заказ. Иначе два круассана из одной «Азбуки» ехали бы по отдельности,
     // каждый со своим сроком.
     const open = s.orders.find(o => o.stage === 'placed' && o.cat === catId && o.store === store.name
+        && (deliveryMinutes == null || o.eta === deliveryMinutes)
+        && (o.payer || 'user') === payment.payer
         && (o.placedTurn === chatLen() || Date.now() - (o.time || 0) < 15 * 60 * 1000));
     if (open) {
         if (!Array.isArray(open.items)) open.items = [{ name: open.item, price: open.price }];
@@ -121,17 +179,17 @@ export function buyItem(catId, storeId, itemId) {
         open.price += item.price;
         saveMeta();
         try {
-            logSocialToChat(`${getUserName()} добавляет «${item.name}» (${store.name}) к заказу за ${fmtMoney(item.price)}`);
+            logSocialToChat(`${getUserName()} добавляет «${item.name}» (${store.name}) к заказу за ${fmtMoney(item.price)}.${payment.payer === 'user' ? ' Оплачено со счёта владельца телефона; уже учтено банком.' : ` Напрямую магазину платит ${payment.payer} своими деньгами; счёт ${getUserName()} не меняется. Оплата уже учтена.`}`);
         } catch (e) { /* ignore */ }
         return { ...open, merged: true };
     }
 
-    const order = { id: genId(), item: item.name, price: item.price, store: store.name, cat: catId, time: Date.now(), items: [{ name: item.name, price: item.price }] };
+    const order = { id: genId(), item: item.name, price: item.price, store: store.name, cat: catId, time: Date.now(), payer:payment.payer, payerKey:payment.key, items: [{ name: item.name, price: item.price }] };
     if (BOOKING_CATS.has(catId)) {
         order.stage = 'booked';
     } else {
         const [lo, hi] = DELIVERY_ETA[catId] || DEFAULT_ETA;
-        order.eta = Math.round(lo + Math.random() * (hi - lo));
+        order.eta = Number.isFinite(deliveryMinutes) && deliveryMinutes > 0 ? Math.round(deliveryMinutes) : Math.round(lo + Math.random() * (hi - lo));
         order.stage = 'placed';
         order.placedRp = rpMinutes();       // null, если в ролевой нет дат
         order.placedTurn = chatLen();
@@ -143,7 +201,7 @@ export function buyItem(catId, storeId, itemId) {
     // Событие для ролевой (скрытая строка в чат, уважает настройку журнала)
     try {
         const verb = catId === 'hotels' ? 'бронирует' : (catId === 'travel' ? 'оформляет тур' : 'заказывает');
-        logSocialToChat(`${getUserName()} ${verb} «${item.name}» (${store.name}) за ${fmtMoney(item.price)}`);
+        logSocialToChat(`${getUserName()} ${verb} «${item.name}» (${store.name}) за ${fmtMoney(item.price)}.${payment.payer === 'user' ? ' Оплачено со счёта владельца телефона; уже учтено банком.' : ` Напрямую продавцу платит ${payment.payer} своими деньгами; счёт ${getUserName()} не меняется. Оплата уже учтена.`}`);
     } catch (e) { /* ignore */ }
     return order;
 }
@@ -225,7 +283,7 @@ function orderProgress(o) {
     // Когда модель ставит метки времени, часы сюжета достоверны — считаем
     // строго по ним. Иначе заказ приезжал бы просто потому, что «прошло
     // три сообщения», хотя в сюжете не прошло и минуты.
-    if (haveRp && rpTimeTagged()) return byRp;
+    if (haveRp) return byRp;
     // Не меньше трёх ходов даже у самой быстрой доставки: за один ответ
     // ролевой курьер приехать не может
     const turnsNeeded = Math.min(20, Math.max(3, Math.round(o.eta / MIN_PER_TURN)));
@@ -259,14 +317,13 @@ export function advanceOrders() {
         // отсчитала полдня одной репликой, метка съехала после свайпа) — без
         // этого свежий заказ приезжал бы мгновенно, не побывав в пути и даже
         // не получив курьера.
-        if (o.stage === 'placed' && next === 'done') next = 'way';
         if (next === o.stage) continue;
         o.stage = next;
         dirty = true;
         events.push({ order: o, stage: next });
         if (next === 'done') {
             try {
-                const who = o.courier?.name ? `Курьер ${o.courier.name}` : 'Курьер';
+                const who = 'Магазин';
                 logSocialToChat(`${who} доставил ${getUserName()} заказ «${o.item}» (${o.store})`);
             } catch (e) { /* ignore */ }
         }
@@ -275,82 +332,8 @@ export function advanceOrders() {
     return events;
 }
 
-// ═══ КУРЬЕР ═══
-// Назначается лениво — в момент, когда заказ выехал, и одним запросом:
-// пока посылка собирается, курьера ещё нет, придумывать некого.
-
+// Shared by order notifications and the order list, independently of couriers.
 export function findOrder(id) { return getShop().orders.find(o => o.id === id) || null; }
-
-let _courierBusy = new Set();
-
-// Назначить курьера и получить от него первое сообщение. Идемпотентна.
-export async function ensureCourier(orderId) {
-    const o = findOrder(orderId);
-    if (!o || o.courier) return o?.courier || null;
-    if (_courierBusy.has(orderId)) return null;
-    _courierBusy.add(orderId);
-    try {
-        // Курьера могут назначить ещё на сборке — тогда и пишет он про сборку
-        const c = await generateCourier(o, fmtEta(orderLeft(o)), o.stage === 'placed');
-        // За время запроса заказ мог быть удалён
-        const cur = findOrder(orderId);
-        if (!cur) return null;
-        cur.courier = { name: c.name };
-        cur.chat = Array.isArray(cur.chat) ? cur.chat : [];
-        if (c.text) cur.chat.push({ text: c.text, ts: Date.now() });
-        saveMeta();
-        return cur.courier;
-    } finally {
-        _courierBusy.delete(orderId);
-    }
-}
-
-export function orderChat(o) { return Array.isArray(o?.chat) ? o.chat : []; }
-
-// Непрочитанное от курьера — бейдж на заказе
-export function courierUnread(o) {
-    const seen = o?.chatRead || 0;
-    return orderChat(o).filter(m => !m.user && m.ts > seen).length;
-}
-export function markCourierRead(orderId) {
-    const o = findOrder(orderId);
-    if (!o) return;
-    o.chatRead = Date.now();
-    saveMeta();
-}
-
-// Её сообщение курьеру + его ответ
-export async function writeToCourier(orderId, text) {
-    const o = findOrder(orderId);
-    text = String(text || '').trim();
-    if (!o || !o.courier || !text) return null;
-    o.chat = orderChat(o);
-    o.chat.push({ text: text.slice(0, 500), ts: Date.now(), user: true });
-    saveMeta();
-    try {
-        logSocialToChat(`${getUserName()} пишет курьеру ${o.courier.name}: «${text}»`);
-    } catch (e) { /* ignore */ }
-    const reply = await generateCourierReply(o, o.courier, o.chat, text);
-    const cur = findOrder(orderId);
-    if (!cur) return null;
-    cur.chat = orderChat(cur);
-    cur.chat.push({ text: reply, ts: Date.now() });
-    saveMeta();
-    return reply;
-}
-
-// Курьер у двери — сообщение при доставке
-export async function courierArrived(orderId) {
-    const o = findOrder(orderId);
-    if (!o || !o.courier) return null;
-    const reply = await generateCourierReply(o, o.courier, orderChat(o), '', true);
-    const cur = findOrder(orderId);
-    if (!cur) return null;
-    cur.chat = orderChat(cur);
-    cur.chat.push({ text: reply, ts: Date.now() });
-    saveMeta();
-    return reply;
-}
 
 export function findShopItem(catId, storeId, itemId) {
     const cat = getShop().cats[catId];

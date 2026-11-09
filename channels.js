@@ -1,13 +1,19 @@
+import { phoneEventTime } from './phone-clock.js';
+import { getRpNow } from './state.js';
+import { SMS_REACTIONS } from './sms-reactions.js';
+import { rpElapsedMs } from './state.js';
+import { isPhoneAppInstalled } from './state.js';
+import { parsePhoneJson } from './phone-text.js';
 // Каналы: свой и чужие, посты с реакциями, просмотрами и обсуждением.
 // Данные лежат per-chat в meta; генерация — по кнопкам и после своих постов.
 
-import { getMeta, saveMeta, keyOf, stripThink, getSettings } from './state.js';
-import { logSocialToChat, getUserName, getUserHandle, resolveAuthorKey } from './social.js';
+import { getMeta, saveMeta, keyOf, stripThink, getSettings, getPhoneActivityText as getPhoneMessageText } from './state.js';
+import { logSocialToChat, getUserName, getUserHandle, resolveAuthorKey, filterGeneratedSocialEntries } from './social.js';
 import { getBank, addTransaction, fmtMoney } from './bank.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
-export const CHAN_REACTS = ['🔥', '❤️', '😮', '😂', '💔', '👍'];
+export const CHAN_REACTS = SMS_REACTIONS.map(r=>r.emoji);
 
 export function getChannels() {
     const m = getMeta();
@@ -115,7 +121,7 @@ export function addAnonPosts(arr, { fromTag = false } = {}) {
             // ни в одном экране, пока она не заплатит.
             realAuthor: String(p.from || '').trim().slice(0, 40),
             revealed: false,
-            time: Date.now() - i * 41 * 60000,
+            time: Date.now() - i * 41 * 60000, rpAt: getRpNow().getTime() - i * 41 * 60000,
             views: 0,
             reacts: [],
             comments: [],
@@ -150,7 +156,7 @@ export function postAnonAsUser(text, to = '') {
         to: normHandle(to),
         realAuthor: getUserName(),
         revealed: false,
-        time: Date.now(),
+        time: Date.now(), rpAt: getRpNow().getTime(),
         views: 0,
         reacts: [],
         comments: [],
@@ -315,7 +321,7 @@ function normalizePosts(arr) {
             imgDesc: String(p.photo || '').slice(0, 300),
             image: null,
             // Свежий пост сверху: чем дальше по списку, тем он старше
-            time: Date.now() - i * 47 * 60000,
+            time: Date.now() - i * 47 * 60000, rpAt: getRpNow().getTime() - i * 47 * 60000,
             views: 0,
             reacts: [],
             comments: [],
@@ -413,7 +419,7 @@ export function publishToMyChannel({ text = '', image = null, imgDesc = '', comm
         text: String(text).slice(0, 1200),
         image,
         imgDesc: String(imgDesc).slice(0, 300),
-        time: Date.now(),
+        time: Date.now(), rpAt: phoneEventTime().getTime(),
         views: 0,
         reacts: [],
         comments: [],
@@ -491,7 +497,7 @@ function logCommentsDigest(channel, post, fresh) {
 export function addComments(post, arr, { fromUser = false, channel = null } = {}) {
     if (!post) return 0;
     if (!Array.isArray(post.comments)) post.comments = [];
-    const fresh = (Array.isArray(arr) ? arr : [])
+    const fresh = (fromUser ? (Array.isArray(arr) ? arr : []) : filterGeneratedSocialEntries(arr))
         .filter(c => c && c.author && c.text)
         .slice(0, 8)
         .map(c => ({
@@ -499,7 +505,7 @@ export function addComments(post, arr, { fromUser = false, channel = null } = {}
             author: String(c.author).slice(0, 40),
             handle: String(c.handle || '').slice(0, 32),
             text: String(c.text).slice(0, 600),
-            ts: Date.now(),
+            ts: Date.now(), rpAt: getRpNow().getTime(),
             // Ключ автора решает, чьё лицо встанет на аватарку: знакомый
             // подтягивает контакт/реф, незнакомый остаётся градиентом
             ak: fromUser ? 'user' : resolveAuthorKey(c.author),
@@ -519,7 +525,7 @@ export function addMyComment(post, text, replyTo = null) {
         id: genId(),
         author: getUserName(),
         text: String(text).slice(0, 600),
-        ts: Date.now(),
+        ts: Date.now(), rpAt: getRpNow().getTime(),
         ak: 'user',
         replyTo: replyTo ? String(replyTo).slice(0, 40) : null,
         likes: 0,
@@ -540,7 +546,7 @@ export function deleteComment(post, id) {
 export function bumpViews(channel, post) {
     if (!channel || !post) return 0;
     const reach = Math.max(10, Math.round((channel.subs || 50) * 0.72));
-    const ageMin = (Date.now() - (post.time || Date.now())) / 60000;
+    const ageMin = rpElapsedMs(post.time) / 60000;
     const target = Math.round(reach * Math.min(1, 0.15 + ageMin / 600));
     if (target > (post.views || 0)) {
         post.views = target;
@@ -594,7 +600,7 @@ function hash32(str) {
 }
 
 function safeJson(raw) {
-    try { return JSON.parse(raw); } catch (e) { return null; }
+    try { return parsePhoneJson(raw); } catch (e) { return null; }
 }
 
 function applyChannelTag(j) {
@@ -633,6 +639,7 @@ function applyChannelTag(j) {
 }
 
 export function harvestChannelTags() {
+    if (!isPhoneAppInstalled('chans')) return 0;
     const c = getChannels();
     if (!Array.isArray(c.seenTags)) c.seenTags = [];
     let chat = [];
@@ -642,8 +649,9 @@ export function harvestChannelTags() {
     for (let i = 0; i < chat.length; i++) {
         const msg = chat[i];
         // Свои сообщения не сканируем: посты в каналы она публикует из телефона
-        if (!msg || !msg.mes || msg.is_user || !/tel:chan/i.test(msg.mes)) continue;
-        const text = stripThink(msg.mes);
+        const sourceText = getPhoneMessageText(msg, i);
+        if (!msg || msg.is_user || !/tel:chan/i.test(sourceText)) continue;
+        const text = stripThink(sourceText);
         const occ = {};
         CHAN_TAG_RE.lastIndex = 0;
         let m;
@@ -672,6 +680,7 @@ const ANON_BUST_RE = /<!--\s*tel:anonbust:(\{[\s\S]*?\})\s*-->/gi;
 
 // Пробили её саму. Возвращает список {who, text} — для уведомлений.
 export function harvestAnonBust() {
+    if (!isPhoneAppInstalled('chans')) return 0;
     if (!anonEnabled()) return [];
     const c = getChannels();
     // Нет канала — нет и её анонимок, пробивать нечего. Не заводим его зря
@@ -685,8 +694,9 @@ export function harvestAnonBust() {
     const hits = [];
     for (let i = 0; i < chat.length; i++) {
         const msg = chat[i];
-        if (!msg || !msg.mes || msg.is_user || !/tel:anonbust/i.test(msg.mes)) continue;
-        const text = stripThink(msg.mes);
+        const sourceText = getPhoneMessageText(msg, i);
+        if (!msg || msg.is_user || !/tel:anonbust/i.test(sourceText)) continue;
+        const text = stripThink(sourceText);
         const occ = {};
         ANON_BUST_RE.lastIndex = 0;
         let m;
@@ -721,6 +731,7 @@ export function harvestAnonBust() {
 }
 
 export function harvestAnonTags() {
+    if (!isPhoneAppInstalled('chans')) return 0;
     if (!anonEnabled()) return 0;
     const c = getChannels();
     if (!Array.isArray(c.anonSeen)) c.anonSeen = [];
@@ -731,8 +742,9 @@ export function harvestAnonTags() {
     let n = 0;
     for (let i = 0; i < chat.length; i++) {
         const msg = chat[i];
-        if (!msg || !msg.mes || msg.is_user || !/tel:anon/i.test(msg.mes)) continue;
-        const text = stripThink(msg.mes);
+        const sourceText = getPhoneMessageText(msg, i);
+        if (!msg || msg.is_user || !/tel:anon/i.test(sourceText)) continue;
+        const text = stripThink(sourceText);
         const occ = {};
         ANON_TAG_RE.lastIndex = 0;
         let m;
@@ -757,6 +769,7 @@ export function harvestAnonTags() {
 // Одна строка: где она ведёт канал и на что подписана. Без постов — их и так
 // видно по журналу.
 export function channelInjectLine() {
+    if (!isPhoneAppInstalled('chans')) return '';
     const c = getChannels();
     const parts = [];
     if (c.mine) {
@@ -772,38 +785,28 @@ export function channelInjectLine() {
 // Анонимка — отдельной строкой: в ней и правило про тег, и то, что ролевая
 // обязана знать про её собственные анонимки и про уже пробитых авторов.
 export function anonInjectLine() {
+    if (!isPhoneAppInstalled('chans')) return '';
     if (!anonEnabled() || !anonInUse()) return '';
-    const ch = getAnonChannel();
-    const handle = getUserHandle();
-    const mine = ch.posts.filter(p => p.byUser).slice(0, 3);
-    const known = ch.posts.filter(p => p.revealed && p.realAuthor).slice(0, 3);
-    const recent = ch.posts.filter(p => !p.byUser).slice(0, 3)
-        .map(p => `«${p.text.slice(0, 80)}»`).join('; ');
-    let s = `[«${ANON_NAME}» — the town's anonymous gossip channel on {{user}}'s phone, ${ch.subs} subscribers. Anyone submits posts WITHOUT a name: rumours about local people, confessions, questions someone would never ask to your face. A post aimed at a person names them by @handle — {{user}} is ${handle}.]\n`;
-    // Молчит давно — просим прямо. Мягкое «когда сюжет даст повод» модель
-    // пропускает ходов сорок подряд, и канал стоит мёртвый.
-    const silent = Math.max(0, chatLen() - (ch.lastPostAt || 0));
-    s += `[RULE — ANONYMOUS POST] Append at the END: <!--tel:anon:{"text":"the post exactly as the sender wrote it, no name","to":"@handle it is aimed at — omit if aimed at nobody","from":"who REALLY sent it: a NAME (a character from the story, or an invented «Имя Фамилия», plus who they are after a comma)"}-->. The "from" field is HIDDEN from {{user}}: never name the sender in visible prose, and never have a character admit it unprompted.\n`;
-    s += `WHAT COUNTS AS A REASON — any of these, and they happen constantly: something took place where strangers could see it (a street, a shop, a cafe, a stairwell, a workplace); somebody in town did something odd, shameful, generous or loud; a new person appeared; two people were seen together; a local business, a neighbour, a bus route or a dog caused a scandal; someone wants to ask or say a thing anonymously. It does NOT have to involve {{user}} — most posts are about other townspeople, named.\n`;
-    if (silent >= 8) {
-        s += `NOTE: nothing has been posted to «${ANON_NAME}» for ${silent} messages and the channel looks dead. Unless this scene is completely private and nothing public has happened at all, post ONE now — preferably about somebody other than {{user}}.\n`;
-    } else {
-        s += `At most 1-2 posts per reply, and not every reply — the channel should feel alive, not spammy.\n`;
+    const channel = getAnonChannel(), handle = getUserHandle();
+    const mine = channel.posts.filter(post => post.byUser).slice(0, 3);
+    const known = channel.posts.filter(post => post.revealed && post.realAuthor).slice(0, 3);
+    const recent = channel.posts.filter(post => !post.byUser).slice(0, 3).map(post => '«' + post.text.slice(0, 80) + '»').join('; ');
+    const silent = Math.max(0, chatLen() - (channel.lastPostAt || 0));
+    const lines = [
+        `[ANONYMOUS CHANNEL «${ANON_NAME}», ${channel.subs} subscribers; {{user}} is ${handle}]`,
+        'New submission: <!--tel:anon:{"text":"anonymous post","to":"optional @handle","from":"actual sender name, who they are"}-->. The app hides "from"; never expose the sender or make them confess unprompted.',
+        'Use publicly witnessed events, local concerns or a sender’s own confession; never leak private messages or closed-door scenes from author context. Most posts concern other townspeople. At most 1–2 posts when there is a plausible new reason; do not repeat old submissions.',
+        silent >= 8 ? `No new posts for ${silent} messages. A fresh public/local topic may fit; silence alone is not a reason to invent private knowledge.` : '',
+        recent ? 'Latest posts: ' + recent : ''
+    ];
+    const hidden = mine.filter(post => !post.bustedBy), exposed = mine.filter(post => post.bustedBy);
+    if (hidden.length) {
+        lines.push('{{user}}’s still-anonymous posts: ' + hidden.map(post => '«' + post.text.slice(0, 90) + '»').join('; ') + '. Others do not know who wrote them.');
+        lines.push('Rarely, a character with a specific motive and money may buy the author’s identity: <!--tel:anonbust:{"who":"buyer name","post":"identifying words from that post"}-->. Only that buyer learns it; do not trigger a random reveal.');
     }
-    if (recent) s += `Latest posts there: ${recent}.\n`;
-    if (mine.length) {
-        const open = mine.filter(p => !p.bustedBy);
-        const burnt = mine.filter(p => p.bustedBy);
-        if (open.length) {
-            s += `{{user}} has posted there anonymously themselves: ${open.map(p => `«${p.text.slice(0, 90)}»`).join('; ')}. The channel shows no name and NOBODY knows it was them.\n`;
-            s += `[RULE — SOMEBODY BUYS {{user}}'S NAME] The admin sells authors for money, same as {{user}} can buy others. When a character has both a real reason (the post hurt them or someone they care about, they suspect {{user}}, they are the jealous or vindictive sort) and the means, they may do it — append at the END: <!--tel:anonbust:{"who":"who bought it","post":"a few words from that anonymous post"}-->. Then that character KNOWS and acts on it: cold silence, a direct question, a scene. Rare and earned — not every reply, and never as a random event.\n`;
-        }
-        if (burnt.length) {
-            s += `ALREADY EXPOSED: ${burnt.map(p => `«${p.text.slice(0, 70)}» — ${p.bustedBy} paid and knows {{user}} wrote it`).join('; ')}. They may bring it up at any time; {{user}} has no idea they know unless it has already come up.\n`;
-        }
-    }
-    if (known.length) {
-        s += `{{user}} has paid to unmask these: ${known.map(p => `«${p.text.slice(0, 60)}» — sent by ${p.realAuthor}${p.realWho ? ` (${p.realWho})` : ''}`).join('; ')}. ONLY {{user}} knows this; the authors have no idea they were exposed. {{user}} may drop hints, and they would be rattled.\n`;
-    }
-    return s.trim();
+    if (exposed.length) lines.push('Already exposed to these buyers: ' + exposed.map(post => '«' + post.text.slice(0, 70) + '» → ' + post.bustedBy).join('; ') + '. {{user}} knows about the purchase only if it was disclosed.');
+    if (known.length) lines.push('Authors privately revealed to {{user}}: ' + known.map(post =>
+        '«' + post.text.slice(0, 60) + '» → ' + post.realAuthor + (post.realWho ? ' (' + post.realWho + ')' : '')
+    ).join('; ') + '. Others, including the authors, do not automatically know about this discovery.');
+    return lines.filter(Boolean).join('\n');
 }

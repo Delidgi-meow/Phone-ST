@@ -10,7 +10,21 @@ export function getDiscord() {
     const m = getMeta();
     if (!m.discord || typeof m.discord !== 'object') m.discord = {};
     if (!Array.isArray(m.discord.servers)) m.discord.servers = [];
+    if (!m.discord.readVersion) {
+        for (const server of m.discord.servers) for (const channel of server.channels || []) {
+            for (const message of channel.messages || []) message.read = true;
+        }
+        m.discord.readVersion = 1;
+        saveMeta();
+    }
     return m.discord;
+}
+
+export function markDChannelRead(sid, cid) {
+    const channel = findDChannel(sid, cid);
+    let changed = false;
+    for (const message of channel?.messages || []) if (!message.read) { message.read = true; changed = true; }
+    if (changed) saveMeta();
 }
 
 export function findDServer(sid) { return getDiscord().servers.find(s => s.id === sid) || null; }
@@ -86,6 +100,7 @@ function pushMessages(ch, arr, cap = 60) {
     const fresh = (Array.isArray(arr) ? arr : []).filter(x => x && x.author && x.text).map(x => ({
         id: genId(),
         author: String(x.author).slice(0, 32),
+        read: false,
         text: String(x.text).slice(0, 500),
         ts: Date.now(),
     }));

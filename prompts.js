@@ -1,14 +1,21 @@
+import { isPhoneAppInstalled } from './state.js';
+import { DEVICE_DIRECTIVE } from './device-actions.js';
+import { CHAT_MEDIA_DIRECTIVE } from './chat-media.js';
+import { smsRoleplayMemory } from './sms-context.js';
 
 import { setExtensionPrompt, extension_prompt_types, extension_prompt_roles } from '../../../../script.js';
-import { getSettings, getMeta, scanChat, getBlockedSmsKeys, keyOf, EXT_NAME } from './state.js';
+import { getSettings, getMeta, scanChat, getBlockedSmsKeys, keyOf, EXT_NAME, getRoleplaySmsOptions, contactIdentityPrompt } from './state.js';
+import { hasMixedRoleplaySms, roleplaySmsDirective } from './roleplay-sms.js';
 import { getSocialActivitySummary } from './social.js';
 import { getBankSummaryLine, bankInjectRule } from './bank.js';
 import { notesInjectBlock } from './notes.js';
 import { channelInjectLine, anonInjectLine } from './channels.js';
-import { plansInjectLine, plansInjectRule, getPlans } from './plans.js';
+import { plansInjectLine, plansInjectRule } from './plans.js';
+import { callsInjectLine, callsInjectRule } from './calls.js';
 import { twitchInjectLine } from './twitch.js';
 import { tinderInjectLine, inAppMatchNames } from './tinder.js';
 import { pendingConsequences } from './social-events.js';
+import { instagramInjectLine } from './instagram.js';
 
 const CHAT_KEY = EXT_NAME;
 const SYS_KEY = EXT_NAME + '_sys';
@@ -20,7 +27,7 @@ const SYS_KEY = EXT_NAME + '_sys';
 function phoneTurnState() {
     try {
         const chat = SillyTavern.getContext()?.chat || [];
-        const isPhoneMsg = (m) => !!m && m.is_user
+        const isPhoneMsg = (m) => !!m && m.is_user && !hasMixedRoleplaySms(m)
             && /<!--\s*tel:out|\[(?:СМС|SMS|Голосовое|Voice)\s*(?:→|в\s+чат|to\s+chat)/i.test(String(m.mes || ''));
         for (let i = chat.length - 1, seen = 0; i >= 0 && seen < 3; i--) {
             const m = chat[i];
@@ -44,225 +51,108 @@ function socialActive() {
 }
 
 function buildPrompt() {
+    if (getSettings().quietMode) {
+        const parts = ['<phone_directive>',
+            'PHONE QUIET MODE: incoming phone activity is disabled. No incoming SMS, calls, Direct, social posts, reactions, channel posts or other phone notifications; do not narrate their arrival or output their event tags. Do not queue them for later. Only installed tracking apps may record established story events.'];
+        if (phoneTurnState() === 'now') parts.push('The latest user phone message is an app action. Return <!--tel:silent--> and tags for installed tracking apps only, with no visible prose or invented user actions.');
+        for (const producer of [bankInjectRule, getBankSummaryLine, plansInjectRule, plansInjectLine]) {
+            try { const text = producer(); if (text) parts.push(text); } catch (_error) { /* Optional state. */ }
+        }
+        if (getSettings().timeTag !== false) parts.push('CLOCK: last line <!--tel:time:HH:MM DD.MM.YYYY--> using story time.');
+        return parts.concat('</phone_directive>').join('\n');
+    }
     const { contacts, threads } = scanChat();
-    const meta = getMeta();
-    let consequenceBlock = '';
-    // Последствия — часть систем: выключены, значит и в промпт не идут.
-    // Сводка активности остаётся: посты она пишет и без них, а персонажам
-    // полезно знать, что она выкладывала.
-    try {
-        const pending = getSettings().socialSystems === false ? [] : pendingConsequences();
-        if (pending.length) {
-            consequenceBlock = `[PENDING STORY CONSEQUENCES FROM THE PHONE — established facts, not suggestions]\n${pending.map(c => `- (${c.urgency}; visibility: ${c.visibility}) ${c.summary}${c.actors?.length ? ` Actors: ${c.actors.join(', ')}.` : ''}`).join('\n')}\nIntroduce each naturally only when compatible with location, timing and who can know it. Do not retcon, repeat the phone exchange, force {{user}}'s actions, or reveal private knowledge. Once it appears clearly in the scene, do not keep restating it.`;
-        }
-    } catch (e) { /* ignore */ }
-
-    // Мэтч из приложения в контактах телефона лежит (на нём держится тред),
-    // но номера у него нет — в список «у них есть твой номер» он не идёт
+    const meta = getMeta(), settings = getSettings(), phoneTurn = phoneTurnState();
+    const compact = !!settings.compactRules;
+    const sms = isPhoneAppInstalled('list'), dating = isPhoneAppInstalled('tinder') && settings.tinder !== false;
+    const messaging = sms || dating;
+    const phoneContacts = messaging || isPhoneAppInstalled('phone') || isPhoneAppInstalled('contacts');
     let inAppKeys = new Set();
-    try { inAppKeys = new Set(inAppMatchNames().map(n => keyOf(n))); } catch (e) { /* ignore */ }
+    try { inAppKeys = new Set(inAppMatchNames().map(keyOf)); } catch (e) { /* ignore */ }
     const contactLines = [];
-    for (const c of contacts.values()) {
-        if (inAppKeys.has(keyOf(c.name))) continue;
-        contactLines.push(`- ${c.name}${c.number ? ` (${c.number})` : ''}`);
+    for (const contact of contacts.values()) {
+        if (inAppKeys.has(keyOf(contact.name))) continue;
+        const listing = meta.contacts.some(item => item.publicListing && keyOf(item.name) === keyOf(contact.name));
+        contactLines.push(`- ${contact.name}${contact.number ? ' (' + contact.number + ')' : ''}${listing ? ' [public directory listing; no personal acquaintance or access to the user’s number implied]' : ''}`);
     }
-    let contactsBlock = contactLines.length > 0
-        ? `Contacts already in {{user}}'s phone (these characters HAVE {{user}}'s number, and {{user}} has theirs):\n${contactLines.join('\n')}`
-        : `{{user}}'s phone has NO contacts yet — nobody exchanged numbers so far.`;
-
+    const groups = new Map();
+    for (const group of Array.isArray(meta.groups) ? meta.groups : []) {
+        if (group?.name) groups.set(`group:${keyOf(group.name)}`, { name: group.name, members: Array.isArray(group.members) ? group.members : [] });
+    }
+    for (const [key, thread] of threads) {
+        if (!String(key).startsWith('group:') || groups.has(key)) continue;
+        groups.set(key, { name: thread.name || String(key).slice(6),
+            members: [...new Set((thread.messages || []).map(message => message.from).filter(Boolean))] });
+    }
+    const identities = contactIdentityPrompt();
     const blockedKeys = new Set(getBlockedSmsKeys());
-    const blockedNames = [...contacts.values()].filter(c => blockedKeys.has(String(c.name || '').trim().toLowerCase())).map(c => c.name);
-    if (blockedNames.length > 0) {
-        contactsBlock += `\nBLOCKED on {{user}}'s phone: ${blockedNames.join(', ')}. These characters CANNOT send SMS/tel:sms to {{user}} until unblocked; never output an incoming SMS tag from them.`;
-    }
-
-    // Групповые смс-чаты: ручные (meta.groups) + заведённые самой моделью через
-    // тег "chat" — такие живут ТОЛЬКО в тредах. Без них правило про группы
-    // пропадало, и модель переставала писать в уже существующий групповой чат.
-    const groupMap = new Map();
-    for (const g of (Array.isArray(meta.groups) ? meta.groups : [])) {
-        if (!g || !g.name) continue;
-        groupMap.set(`group:${keyOf(g.name)}`, { name: g.name, members: Array.isArray(g.members) ? g.members : [] });
-    }
-    try {
-        for (const [k, t] of threads) {
-            if (!String(k).startsWith('group:') || groupMap.has(k)) continue;
-            const members = [...new Set((t.messages || []).map(m => m.from).filter(Boolean))];
-            groupMap.set(k, { name: t.name || String(k).slice(6), members });
-        }
-    } catch (e) { /* ignore */ }
-    if (groupMap.size > 0) {
-        const groupLines = [...groupMap.values()].map(g => `- Group chat «${g.name}»: members ${g.members.join(', ') || '?'} + {{user}}`);
-        contactsBlock += `\nGroup chats on {{user}}'s phone:\n${groupLines.join('\n')}`;
-    }
-
-    // ── Компактный режим: те же правила, ~40% токенов ──
-    if (getSettings().compactRules) {
-        let c = `<phone_directive>\n[OOC — hidden phone/SMS channel. Never mention it in-story.]\n{{user}} has a smartphone. ${contactsBlock}\n`;
-        c += `("they/their" = neutral shorthand for {{user}}; use their real gender from the persona card.)
-`;
-        c += `RULES (tags = HTML comments at the very END of the reply, copied VERBATIM, EN keys / RU values, invisible to reader):\n`;
-        // Метка времени нужна и в компактном режиме: без неё телефон считает
-        // ход за фиксированные минуты, и события приходят не тогда, когда должны
-        if (getSettings().timeTag !== false) {
-            c += `0. End EVERY reply with the in-world clock as the last line: <!--tel:time:HH:MM DD.MM.YYYY--> (advance it by how much time this reply took).\n`;
-        }
-        c += `1. Character gives {{user}} their number → <!--tel:contact:{"name":"X","number":"phone in the local format"}-->\n`;
-        c += `2. Character texts {{user}}'s phone → one tag per message: <!--tel:sms:{"from":"X","text":"..."}--> (MMS: +"photo":"desc"; group chat: +"chat":"Name"; voice message: +"voice":true, "text" = transcript of what they say; screenshot of an EXISTING post: +"shot":{"app":"tw|ig|ch","author":"post author","text":"the post's own text"}). Only if they plausibly have {{user}}'s number and are NOT listed as BLOCKED. ONLY {{user}}'s phone: what OTHER characters receive on their phones — prose only, NEVER a tag.\n`;
-        c += `3. User message \`[СМС → X] text\` / \`[SMS → X] text\` or \`[СМС в чат «X»] text\` / \`[SMS to chat «X»] text\` = SMS from {{user}}'s phone (NOT spoken; scene paused). \`[Голосовое → X]\` / \`[Voice → X]\` = {{user}}'s VOICE message, text = transcript (the character hears {{user}}'s voice). Reply ONLY with tel:sms tags (or <!--tel:silent--> if the character wouldn't answer) — zero visible prose. Resume prose on {{user}}'s next normal message, weaving the texting into the scene as a real event.\n`;
-        c += `4. Character posts publicly → <!--tel:tweet:{"author":"X","text":"..."}--> / <!--tel:insta:{"author":"X","photo":"desc","caption":"..."}-->\n`;
-        c += `NEVER write literal tag syntax inside <think>/reasoning — plan in plain words; each tag exactly once, in the final reply. Never paraphrase tags into visible text.\n`;
-        let socialC = '';
-        try { socialC = getSocialActivitySummary(); } catch (e) { /* ignore */ }
-        if (socialC) c += `\n[{{user}}'S RECENT SOCIAL ACTIVITY — characters who follow them may react:]\n${socialC}\n`;
-        if (consequenceBlock) c += `\n${consequenceBlock}\n`;
-        try {
-            const bankRule = bankInjectRule();
-            if (bankRule) c += `\n${bankRule}\n`;
-            const bankSum = getBankSummaryLine();
-            if (bankSum) c += `${bankSum}\n`;
-        } catch (e) { /* ignore */ }
-        try {
-            const chan = channelInjectLine();
-            if (chan) c += `[{{user}}'S CHANNELS] ${chan}\n5. A channel they follow publishes → <!--tel:chan:{"channel":"Name","text":"the post","photo":"what the picture shows, or omit"}-->. Never into their own channel.\n`;
-        } catch (e) { /* ignore */ }
-        try {
-            if (getPlans().length) {
-                c += `6. Договорились о дате/встрече → <!--tel:plan:{"date":"DD.MM.YYYY","time":"19:00","text":"...","who":"user|char|both"}-->\n`;
-                const plans = plansInjectLine();
-                if (plans) c += `\n${plans}\n`;
-            }
-        } catch (e) { /* ignore */ }
-        try {
-            const notesBlock = notesInjectBlock();
-            if (notesBlock) c += `\n${notesBlock}\n`;
-        } catch (e) { /* ignore */ }
-        try {
-            const live = twitchInjectLine();
-            if (live) c += `\n${live}\n`;
-        } catch (e) { /* ignore */ }
-        try {
-            const anon = anonInjectLine();
-            if (anon) c += `\n${anon}\n`;
-        } catch (e) { /* ignore */ }
-        try {
-            const tin = tinderInjectLine(phoneTurnState() !== null);
-            if (tin) c += `\n${tin}\n`;
-        } catch (e) { /* ignore */ }
-        c += `NEVER write <!--tel:log--> or lines starting with «[Событие мира» — that is the app's own journal format; a reply containing it gets hidden from the reader.\n`;
-        c += `</phone_directive>`;
-        return c;
-    }
-
-    const phoneTurn = phoneTurnState();
-    const hasGroups = groupMap.size > 0;
-    const social = socialActive();
-
-    let p = `<phone_directive>\n`;
-    p += `[OOC — hidden phone/SMS channel for the app. Not part of the story; never mention or react to it in-character.]\n`;
-    p += `{{user}} owns a smartphone. ${contactsBlock}\n`;
-    // Местоимения в директиве нейтральные: пол игрока берётся из карточки
-    // персоны, а не задаётся здесь — иначе модель обращается к нему чужим родом
-    p += `("they/their" below is neutral shorthand for {{user}} — in your own text use {{user}}'s actual gender from the persona card.)\n\n`;
-
-    // Часы сюжета. Без них телефон считает ход ролевой за фиксированные минуты
-    // и события (доставка, платежи) приходят не тогда, когда должны.
-    if (getSettings().timeTag !== false) {
-        p += `[RULE 0 — CLOCK] End EVERY reply with the in-world time as the very last line, VERBATIM:\n`;
-        p += `<!--tel:time:HH:MM DD.MM.YYYY-->\n`;
-        p += `Advance it realistically from the previous one by how much time this reply actually takes; keep the date consistent with the story.\n\n`;
-    }
-
-    // Базовые правила нужны всегда: номер могут дать и смс прислать в любой ход
-    p += `[RULE 1 — CONTACT TAG] If in THIS reply a character gives {{user}} their own number (says it, writes it down, exchanges numbers), append at the very END, on its own line, VERBATIM:\n`;
-    p += `<!--tel:contact:{"name":"CharacterName","number":"+7 9XX XXX-XX-XX"}-->\n`;
-    p += `Invent a plausible number if the story has none, in the phone format of the country where the story takes place (the example above shows the TAG shape, not the country). One tag per NEW contact; never re-add those listed above.\n\n`;
-
-    p += `[RULE 2 — SMS TAG] If in THIS reply a character texts {{user}}'s phone, append ONE hidden comment PER message at the very END:\n`;
-    p += `<!--tel:sms:{"from":"CharacterName","text":"the exact message text"}-->\n`;
-    p += `Optional fields: "shot":{"app":"tw|ig|ch","author":"who posted it","text":"the post's own text"} — they forward a SCREENSHOT of a post that ALREADY exists (a tweet, an Instagram post, a channel post they or {{user}} can see); quote enough of its text for the app to find it · "photo":"what the photo shows" (MMS) · "voice":true — then "text" is the transcript of what they SAY, spoken register (use when it fits the moment, not every message)${hasGroups ? ' · "chat":"GroupChatName" for a group chat, where several members may text in a row (one tag each)' : ''}.\n`;
-    p += `You may also narrate the buzz in prose and show the text in your usual visible style (backticks). Duplicate as a tag ONLY what {{user}} receives. Only characters who plausibly have {{user}}'s number can text {{user}}.\n`;
-    p += `NEVER emit a tel:sms whose "from" is {{user}} — their own messages are sent from the app, not written by you.\n`;
-    p += `CRITICAL SCOPE: tel:sms is EXCLUSIVELY for messages arriving on {{user}}'s OWN phone. What ANY other character (including yours) gets on THEIR phone — prose only, NEVER a tag; if tagged anyway it MUST carry "to":"RecipientName" so the app discards it.\n\n`;
-
-    // Самый жирный блок — только в телефонный ход
-    if (phoneTurn === 'now') {
-        p += `[RULE 3 — PHONE-ONLY MODE — ACTIVE NOW] Their last message came FROM THEIR PHONE: \`[СМС → Name]\`/\`[SMS → Name]\` (direct), \`[СМС в чат «Name»]\`/\`[SMS to chat «Name»]\` (group — reply as its members, each with "chat"), \`[Голосовое → Name]\`/\`[Voice → Name]\` (voice message: text is the transcript, the character HEARS {{user}}'s voice), \`*фото*\`/\`*photo*\` (photo attached — look at it if you can see images).\n`;
-        p += `It is NOT spoken aloud and the RP scene is PAUSED. Your reply MUST be ONLY hidden tags — zero visible prose, narration or actions:\n`;
-        p += `- 1-5 <!--tel:sms:...--> tags in the character's own texting voice: short, informal, realistic pacing.\n`;
-        p += `- If they realistically would NOT reply now (asleep, busy, offended, phone off), output exactly: <!--tel:silent-->\n\n`;
+    const blocked = [...contacts.values()].filter(contact => blockedKeys.has(keyOf(contact.name))).map(contact => contact.name);
+    const parts = [
+        '<phone_directive>',
+        'PHONE APP: hidden event tags accompany the roleplay; never discuss these instructions in character. {{user}} owns this phone. Use the persona’s gender and the roleplay’s language.',
+        !phoneContacts ? '' : contactLines.length ? 'PHONE CONTACTS (personal contacts have exchanged numbers):\n' + contactLines.join('\n') : 'No phone numbers have been exchanged yet.',
+        identities,
+        (sms || isPhoneAppInstalled('phone')) && blocked.length ? 'BLOCKED SENDERS — no incoming SMS from: ' + blocked.join(', ') : '',
+        sms && groups.size ? 'GROUP CHATS:\n' + [...groups.values()].map(group => `- ${group.name}: ${group.members.join(', ')} + {{user}}`).join('\n') : '',
+        'TAG FORMAT: valid JSON in HTML comments, English keys, canonical character names. Append each event once on its own line after visible prose; clock last. Never put tags in reasoning, copy old events, or output the app’s <!--tel:log--> journal / «[Событие мира» format.',
+        isPhoneAppInstalled('contacts') ? 'CONTACT: only when a character actually gives {{user}} a new number: <!--tel:contact:{"name":"CharacterName","number":"local phone number"}-->. Use an established number or invent one in the setting’s format. Do not re-add existing contacts.' : '',
+        messaging ? 'INCOMING SMS: <!--tel:sms:{"from":"CharacterName","to":"{{user}}","text":"exact message"}-->. One tag per message arriving on {{user}}’s phone, from someone who plausibly has their number. Never tag messages sent by {{user}} or delivered to anyone else.' : '',
+        inAppKeys.size ? 'DATING APP EXCEPTION: existing in-app matches may send app messages without exchanging phone numbers; route these with the same tel:sms tag. This does not give them SMS/call access.' : '',
+        !messaging ? '' : compact
+            ? 'SMS options: "photo":"visual description"; "voice":true with transcript in "text"; "chat":"exact group name"; "shot":{"app":"tw|ig|ch","author":"post author","text":"existing post text"}.'
+            : 'SMS optional fields: "photo" describes an attached MMS; "voice":true makes "text" the spoken transcript; "chat" is the exact group name, with "from" a member; "shot":{"app":"tw|ig|ch","author":"post author","text":"existing post text"} forwards an accessible existing post. In ordinary roleplay you may narrate the notification; only the incoming message becomes a tag.'
+    ];
+    if (messaging || isPhoneAppInstalled('ig')) parts.push('FORWARDED MESSAGES: when a character actually forwards a private chat excerpt, put "shot":{"app":"msg","messages":[{"author":"OriginalSpeaker","text":"exact shared message"}]} in '+[messaging?'tel:sms':'',isPhoneAppInstalled('ig')?'tel:igdm':''].filter(Boolean).join(' or ')+'. The sender must have participated in or been shown that exchange. Recipients learn only the attached excerpts, never the rest of another phone/chat. Do not turn a forward into a new message from its original author.');
+    if (sms && isPhoneAppInstalled('ig')) parts.push('MESSAGE CHANNEL: preserve an explicitly established delivery app. For ordinary personal messages from people who have the user\u2019s phone number, default to tel:sms. Use tel:igdm for a story reply, an explicitly Instagram message, or a reply to an ongoing Direct exchange. An Instagram account, old Direct history, or a recent post alone does not move ordinary texts into Direct. Reply to SMS with SMS. Never duplicate one message across both apps.');
+    if(messaging||isPhoneAppInstalled('ig'))parts.push(DEVICE_DIRECTIVE,CHAT_MEDIA_DIRECTIVE+' For RP incoming messages put meme fields in tel:sms or tel:igdm. Stickers are supported ONLY in tel:sms, never in Direct/tel:igdm. Saved SMS sticker ids: '+JSON.stringify((getMeta().stickers||[]).slice(0,12).map(item=>({id:item.id,description:item.description}))));
+    if (settings.timeTag !== false) parts.push('CLOCK: last line of every reply: <!--tel:time:HH:MM DD.MM.YYYY-->. Use story time and date; advance by elapsed scene time.');
+    if (phoneTurn === 'now' && !messaging) parts.push('Return <!--tel:silent--> for app messages while messaging is unavailable.');
+    else if (phoneTurn === 'now') {
+        parts.push('PHONE-ONLY NOW: the latest [СМС → Name]/[SMS → Name], [СМС в чат «Name»]/[SMS to chat «Name»], or [Голосовое → Name]/[Voice → Name] is an app message, not spoken in the room. Output only hidden tags: 1–5 incoming tel:sms replies (group replies include "chat"), any newly confirmed plan/transaction, and the clock if enabled. If unavailable or unwilling, use <!--tel:silent--> instead of SMS. No visible prose or user actions.');
     } else if (phoneTurn === 'justEnded') {
-        p += `[RULE 3 — RESUMING AFTER TEXTING] The previous exchange happened on {{user}}'s phone. Weave it into the scene as a real event: {{user}} was holding the phone, reading and typing — it took time and attention, and others present may have noticed. Do NOT resume as if nothing happened.\n\n`;
+        parts.push('The recent phone exchange is an established event. When roleplay resumes, respect its timing and what present characters could observe; do not invent {{user}}’s actions.');
     }
-
-    // Соцсети — только когда ими реально пользуются
-    if (social) {
-        p += `[RULE 4 — SOCIAL TAGS] If a character posts publicly as a story event, append at the END:\n`;
-        p += `<!--tel:tweet:{"author":"CharacterName","text":"tweet text"}--> / <!--tel:insta:{"author":"CharacterName","photo":"short visual description","caption":"caption text"}-->\n`;
-        p += `Only when the story actually involves posting — do not spam. NEVER post as {{user}}: their own posts are written by them in the app, and a tag with their name is discarded.\n`;
+    if (sms && settings.captureRoleplaySms !== false) {
+        parts.push(roleplaySmsDirective(SillyTavern.getContext().chat || [], getRoleplaySmsOptions()));
     }
-
-    let socialSummary = '';
-    try { socialSummary = getSocialActivitySummary(); } catch (e) { /* ignore */ }
-    if (socialSummary) {
-        p += `\n[{{user}}'S RECENT SOCIAL MEDIA ACTIVITY] Characters who follow them may have seen these and can react naturally:\n${socialSummary}\n`;
+    parts.push(callsInjectRule(), callsInjectLine());
+    if (socialActive()) {
+        if (isPhoneAppInstalled('tw')) parts.push('TWITTER: an established new character post: <!--tel:tweet:{"author":"CharacterName","text":"post"}-->. Never post for {{user}}.');
+        if (isPhoneAppInstalled('ig')) parts.push('INSTAGRAM POST: an established new character post: <!--tel:insta:{"author":"CharacterName","photo":"visual description","caption":"caption"}-->. Never post for {{user}}.');
     }
-    if (consequenceBlock) p += `\n${consequenceBlock}\n`;
-
-    // Банк — правило + сводка ТОЛЬКО если приложение реально используется
-    try {
-        const bankRule = bankInjectRule();
-        if (bankRule) {
-            p += `\n${bankRule}\n`;
-            const bankSum = getBankSummaryLine();
-            if (bankSum) p += `[{{user}}'S FINANCES] ${bankSum}\n`;
-        }
-    } catch (e) { /* ignore */ }
-    // Каналы — одной строкой, только если она их завела или на что-то подписана.
-    // Правило про тег идёт следом: чужие каналы ведёт модель, свой — она сама.
-    try {
-        const chan = channelInjectLine();
-        if (chan) {
-            p += `\n[{{user}}'S CHANNELS] ${chan}\n`;
-            p += `[RULE 5 — CHANNEL POST] When a channel above would really publish something about what is happening now (news, a warning, the blogger's own remark), append at the END: <!--tel:chan:{"channel":"exact channel name","text":"the post as that channel writes it","photo":"one line of what the picture shows — or omit the field"}-->\n`;
-            p += `A channel not listed above may appear this way too — give it a plain "channel" name and the app adds it. NEVER post into {{user}}'s OWN channel: those are written by them in the app, and such a tag is discarded. Do not spam: at most 1-2 channel posts per reply, and only when the story gives a reason.\n`;
-        }
-    } catch (e) { /* ignore */ }
-    // Календарь: правило ставим, только когда планы вообще заведены —
-    // пустой календарь не должен занимать место в директиве
-    try {
-        if (getPlans().length) p += `\n${plansInjectRule()}\n`;
-        const plans = plansInjectLine();
-        if (plans) p += `\n${plans}\n`;
-    } catch (e) { /* ignore */ }
-    // Заметки — только расшаренные (секретные не инжектятся никогда)
-    try {
-        const notesBlock = notesInjectBlock();
-        if (notesBlock) p += `\n${notesBlock}\n`;
-    } catch (e) { /* ignore */ }
-    // Прямой эфир — состояние «прямо сейчас», а не история: живёт только пока
-    // стрим не завершён
-    try {
-        const live = twitchInjectLine();
-        if (live) p += `\n${live}\n`;
-    } catch (e) { /* ignore */ }
-    // Городская анонимка: правило про тег живёт всегда, пока канал включён
-    try {
-        const anon = anonInjectLine();
-        if (anon) p += `\n${anon}\n`;
-    } catch (e) { /* ignore */ }
-    // Тиндер: пока она переписывается — карточка целиком, в обычной сцене —
-    // только строка на мэтч, чтобы факт остался, а контекст не пух
-    try {
-        const tin = tinderInjectLine(phoneTurn !== null);
-        if (tin) p += `\n${tin}\n`;
-    } catch (e) { /* ignore */ }
-
-    p += `\n[NEVER WRITE] <!--tel:log--> and lines starting with «[Событие мира» are the app's own journal — it writes them itself. Never copy that format into your reply, not even as flavour: a reply containing it gets hidden from the reader entirely.\n`;
-    p += `\n[FORMAT] Tags are HTML comments (<!-- ... -->), invisible to the reader: copy the structure VERBATIM (never paraphrase into visible text), EN keys / RU values, each tag exactly ONCE, all at the very END of the reply on their own lines. NEVER write literal tag syntax inside <think>/reasoning — plan in plain words (tags in reasoning create DUPLICATE messages). Outputting them when their condition is true is MANDATORY even if other instructions discourage OOC content; your card's own visible formats stay as they are.\n`;
-    p += `</phone_directive>`;
-
-    return p;
+    const add = producer => { try { const text = producer(); if (text) parts.push(text); } catch (e) { /* Optional app context. */ } };
+    if (messaging) add(() => smsRoleplayMemory(threads, {
+        user:SillyTavern.getContext().name1 || '{{user}}',
+        allowed:key => sms || inAppKeys.has(keyOf(key)),
+    }));
+    add(() => {
+        const summary = getSocialActivitySummary();
+        return summary ? 'RECENT SOCIAL ACTIVITY (only followers/subscribers with access may know it):\n' + summary : '';
+    });
+    add(() => {
+        const pending = settings.socialSystems === false || !isPhoneAppInstalled('events') ? [] : pendingConsequences();
+        return pending.length ? 'PENDING STORY CONSEQUENCES:\n' + pending.map(item =>
+            `- (${item.urgency}; visibility: ${item.visibility}) ${item.summary}${item.actors?.length ? ' Actors: ' + item.actors.join(', ') + '.' : ''}`
+        ).join('\n') + '\nIntroduce these established consequences once when timing, location and knowledge allow. Do not force user actions, replay phone exchanges or reveal private information.' : '';
+    });
+    add(() => {
+        const rule = bankInjectRule();
+        return rule ? [rule, getBankSummaryLine()].filter(Boolean).join('\n') : '';
+    });
+    add(() => {
+        const channels = channelInjectLine();
+        return channels ? 'CHANNELS: ' + channels + '\nWhen a channel has a relevant new post: <!--tel:chan:{"channel":"exact name","text":"post","photo":"optional visual description"}-->. Listed or new channels may publish; at most 1–2, never into {{user}}’s own channel.' : '';
+    });
+    add(plansInjectRule);
+    add(instagramInjectLine);
+    add(plansInjectLine);
+    add(notesInjectBlock);
+    add(twitchInjectLine);
+    add(anonInjectLine);
+    add(() => tinderInjectLine(phoneTurn !== null));
+    if (!sms && dating) parts.push('Only existing in-app dating matches may use tel:sms. No actual SMS or group texts.');
+    parts.push('</phone_directive>');
+    return parts.filter(Boolean).join('\n');
 }
 
 export function updatePhoneInjection() {

@@ -1,18 +1,30 @@
+import { stampNewChatMessage } from './phone-clock.js';
+import { registerPhoneSettings } from './phone-settings.js';
+import { generateRoleplayMedia } from './roleplay-media.js';
 
-import { eventSource, event_types, saveSettingsDebounced } from '../../../../script.js';
-import { getSettings, GP_VERSION, invalidateChatCache, factoryReset, wipePhoneTraces } from './state.js';
+import { eventSource, event_types, saveSettingsDebounced, saveChatConditional } from '../../../../script.js';
+import { getSettings, getMeta, GP_VERSION, invalidateChatCache, factoryReset, wipePhoneTraces, captureRoleplayOutgoing, setPhoneQuietMode } from './state.js';
 import { updatePhoneInjection } from './prompts.js';
 import { initUI, checkNewIncoming, resetIncomingCounters, updateFabBadge, render, isPhoneOpen, closePhone, applySkin, applyWallpaper, applyChatHiding, toast, notifyBankReminders, notifyDeliveries, deliverScamSms } from './ui.js';
 import { harvestSocialTags, setUserHandle, getUserHandle, listIigProfiles, listIigStyles, listImageBuckets, currentExtModel, stripFakeJournal } from './social.js';
 import { harvestBankTags } from './bank.js';
 import { harvestPlanTags } from './plans.js';
+import { harvestPhoneCalls, getCalls, endPhoneCall } from './calls.js';
+import { clearPhoneNotifications } from './phone-notifications.js';
+import { notifyIncomingCall } from './ui.js';
+import { openInstagram, instagramEventVisible } from './ui.js';
+import { harvestInstagramTags, flushInstagramJournal } from './instagram.js';
+import { igEventText } from './instagram-state.js';
 import { harvestChannelTags, harvestAnonTags, harvestAnonBust, ANON_NAME } from './channels.js';
 import { maybeScamSms } from './scam.js';
 import { trDom } from './i18n.js';
 import { buildReport, clearLog } from './debug-log.js';
+import { listPhoneImageBlocks } from './external-image-blocks.js';
 
 // ── CSS ──
 const cssId = 'glassphone-css';
+let onExternalBlocksChanged = () => {};
+let refreshPhoneImageBlocks = () => {};
 if (!document.getElementById(cssId)) {
     const link = document.createElement('link');
     link.id = cssId;
@@ -23,12 +35,12 @@ if (!document.getElementById(cssId)) {
     document.head.appendChild(link);
 }
 
-// ── Панель настроек в Extensions ──
+// ── Controls for the Settings app inside the phone ──
 function setupSettingsPanel() {
     const s = getSettings();
     const html = `
-<div class="inline-drawer gp-settings-panel" id="gp-settings-drawer">
-    <div class="inline-drawer-toggle inline-drawer-header gp-settings-header">
+<div class="gp-settings-panel" id="gp-settings-drawer">
+    <div class="gp-settings-header">
         <div class="gp-settings-title">
             <span class="gp-settings-status-dot" aria-hidden="true"></span>
             <span><b>Телефон</b><small id="gp-settings-status"></small></span>
@@ -37,22 +49,23 @@ function setupSettingsPanel() {
             <option value="ru" ${s.lang !== 'en' ? 'selected' : ''}>Русский</option>
             <option value="en" ${s.lang === 'en' ? 'selected' : ''}>English</option>
         </select>
-        <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        
     </div>
-    <div class="inline-drawer-content gp-settings-body">
+    <div class="gp-settings-body">
         <div class="gp-settings-quick">
             <label><input type="checkbox" id="gp-set-enabled" ${s.isEnabled ? 'checked' : ''}><span>Включено</span></label>
             <label><input type="checkbox" id="gp-set-fab" ${s.showFab ? 'checked' : ''}><span>Плавающая кнопка</span></label>
             <label><input type="checkbox" id="gp-set-inject" ${s.injectPrompt ? 'checked' : ''}><span>Инструкции для модели</span></label>
+            <label><input type="checkbox" id="gp-set-quiet" ${s.quietMode ? 'checked' : ''}><span>Без звука<small class="gp-quiet-hint">Пауза входящих · банк и календарь работают</small></span></label>
         </div>
 
         <details class="gp-settings-group">
             <summary><i class="fa-solid fa-layer-group"></i><span><b>Модель и контекст</b><small>Профиль, история и параметры ответа</small></span><i class="fa-solid fa-chevron-down gp-settings-chevron"></i></summary>
             <div class="gp-settings-group-body gp-settings-grid">
                 <label class="gp-settings-field"><span>Глубина инжекта</span><input type="number" id="gp-set-depth" class="text_pole gp-settings-number" min="0" max="100" step="1" value="${Math.max(0, Number(s.injectDepth) || 0)}"><small>0 — перед последним ходом</small></label>
-                <label class="gp-settings-field"><span>Макс. длина ответа</span><input type="number" id="gp-set-maxtokens" class="text_pole gp-settings-number" min="0" max="32000" step="256" value="${s.socialMaxTokens || 0}"><small>0 = авто</small></label>
-                <label class="gp-settings-field gp-settings-wide"><span>Профиль для соцсетей</span><span class="gp-settings-control-row"><select id="gp-set-profile" class="text_pole"></select><button class="menu_button gp-settings-icon-button" id="gp-profile-test" type="button" title="Проверить профиль (маленький запрос)" aria-label="Проверить профиль (маленький запрос)"><i class="fa-solid fa-plug-circle-check"></i></button></span></label>
-                <label class="gp-settings-field"><span>Контекст соцсетей</span><select id="gp-set-ctxmode" class="text_pole"><option value="rich" ${s.socialContextMode !== 'lite' ? 'selected' : ''}>История + лорбук + карточка бота</option><option value="lite" ${s.socialContextMode === 'lite' ? 'selected' : ''}>Изолированно (только срез чата)</option></select></label>
+                <label class="gp-settings-field"><span>Макс. длина ответа</span><input type="number" id="gp-set-maxtokens" class="text_pole gp-settings-number" min="0" max="32000" step="256" value="${s.socialMaxTokens || 0}"><small>Верхняя граница; 0 = автоматически по задаче</small></label>
+                <label class="gp-settings-field gp-settings-wide"><span>Профиль генерации телефона</span><span class="gp-settings-control-row"><select id="gp-set-profile" class="text_pole"></select><button class="menu_button gp-settings-icon-button" id="gp-profile-test" type="button" title="Проверить профиль (маленький запрос)" aria-label="Проверить профиль (маленький запрос)"><i class="fa-solid fa-plug-circle-check"></i></button></span><small>SMS, Direct, звонки и соцсети. Без выбранного профиля — текущий API.</small></label>
+                <label class="gp-settings-field"><span>Контекст соцсетей</span><select id="gp-set-ctxmode" class="text_pole"><option value="rich" ${s.socialContextMode !== 'lite' ? 'selected' : ''}>История + лорбук + карточка бота</option><option value="lite" ${s.socialContextMode === 'lite' ? 'selected' : ''}>Только срез истории</option></select><small>SMS, Direct и звонки всегда получают карточку, лорбук и историю ролевой. Чужие переписки исключены.</small></label>
                 <label class="gp-settings-field"><span>Твой ник (@)</span><input type="text" id="gp-set-handle" class="text_pole" maxlength="21" placeholder="авто из имени"></label>
                 <label class="gp-settings-field"><span>Узнать автора анонимки</span><input type="number" id="gp-set-anonprice" class="text_pole gp-settings-number" min="0" step="100" value="${Number(s.anonRevealPrice) || 2500}"><small>цена первого имени, дальше растёт</small></label>
                 <div class="gp-settings-checks gp-settings-wide">
@@ -72,9 +85,12 @@ function setupSettingsPanel() {
                 <label class="gp-settings-field gp-hidden" id="gp-imgcfg-row"><span>Картинко-расширение</span><select id="gp-set-imgcfg" class="text_pole"></select></label>
                 <label class="gp-settings-field"><span>Профиль картинко-расширения</span><select id="gp-set-imgprofile" class="text_pole"></select></label>
                 <label class="gp-settings-field"><span>Стиль картинок телефона</span><select id="gp-set-imgstyle" class="text_pole"></select></label>
+                <label class="gp-settings-field gp-settings-wide"><span>Внешний блок для всех картинок телефона</span><span class="gp-settings-control-row"><select id="gp-set-imgblock" class="text_pole"></select><button id="gp-imgblock-refresh" class="menu_button gp-settings-icon-button" type="button" title="Обновить список блоков" aria-label="Обновить список блоков"><i class="fa-solid fa-rotate"></i></button></span><small>Блок составляет промпт через свой API. Используются его инструкции, шаблон и контекст. Если выбран блок, отдельный перевод в Booru-теги не запускается.</small></label>
                 <div class="gp-settings-checks gp-settings-wide">
                     <label><input type="checkbox" id="gp-set-square" ${s.imageGenSquare !== false ? 'checked' : ''}><span>Картинки постов — квадрат 1:1</span></label>
                     <label><input type="checkbox" id="gp-set-tagmode" ${s.imgTagMode ? 'checked' : ''}><span>Booru-теги (для NovelAI/аниме-моделей)</span></label>
+                    <label><input type="checkbox" id="gp-set-imgcontext" ${s.imageGenExtensionContext !== false ? 'checked' : ''}><span>Пресеты и лорбуки из расширения картинок</span></label>
+                    <label><input type="checkbox" id="gp-set-extblocks" ${s.externalBlocks !== false ? 'checked' : ''}><span>Читать телефон из внешних блоков</span></label>
                 </div>
                 <label class="gp-settings-field"><span>Публичные посты</span><textarea id="gp-set-imgprompt-ig" class="text_pole" rows="3"></textarea></label>
                 <label class="gp-settings-field"><span>Закрытые посты</span><textarea id="gp-set-imgprompt-of" class="text_pole" rows="3"></textarea></label>
@@ -89,6 +105,7 @@ function setupSettingsPanel() {
             <div class="gp-settings-group-body">
                 <div class="gp-settings-checks">
                     <label><input type="checkbox" id="gp-set-sociallog" ${s.socialLogToChat !== false ? 'checked' : ''}><span>Журнал соцсетей в чат</span></label>
+                    <label><input type="checkbox" id="gp-set-rpsms" ${s.captureRoleplaySms !== false ? 'checked' : ''}><span>Переносить мои СМС из ролевой</span></label>
                     <label><input type="checkbox" id="gp-set-compact" ${s.compactRules ? 'checked' : ''}><span>Компактные правила в инжекте</span></label>
                     <label><input type="checkbox" id="gp-set-safearea" ${s.forceSafeArea ? 'checked' : ''}><span>Экран с системной панелью (сдвинуть телефон)</span></label>
                 </div>
@@ -105,7 +122,8 @@ function setupSettingsPanel() {
         <div class="gp-settings-footer"><small id="gp-version-label"></small></div>
     </div>
 </div>`;
-    $('#extensions_settings2').append(html);
+    const holder=document.createElement('div');holder.innerHTML=html;
+    registerPhoneSettings(holder.firstElementChild);
     // Значения назначаются как свойства DOM, не интерполируются в HTML:
     // кавычки и </textarea> в пользовательских промптах/CSS безопасны.
     $('#gp-set-imgmodel').val(s.imageGenModel || '');
@@ -170,6 +188,23 @@ function setupSettingsPanel() {
             saveSettingsDebounced();
         });
     }
+    refreshPhoneImageBlocks = () => {
+        const selected = getSettings().imageGenBlockKey || '';
+        const blocks = listPhoneImageBlocks();
+        const select = $('#gp-set-imgblock').empty().append($('<option>').val('').text('Без внешнего блока'));
+        for (const block of blocks) select.append($('<option>').val(block.key).text(block.label));
+        if (selected && !blocks.some(block => block.key === selected)) {
+            select.append($('<option>').val(selected).text('Выбранный блок недоступен — выберите заново'));
+        }
+        select.val(selected);
+        try { trDom(document.getElementById('gp-settings-drawer')); } catch (_error) { /* ignore */ }
+    };
+    refreshPhoneImageBlocks();
+    $('#gp-set-imgblock').on('focus', refreshPhoneImageBlocks).on('change', function () {
+        getSettings().imageGenBlockKey = String($(this).val() || '');
+        saveSettingsDebounced();
+    });
+    $('#gp-imgblock-refresh').on('click', refreshPhoneImageBlocks);
     // Перевод панели (en) — оригиналы хранятся на нодах, переключение обратимо
     const translatePanel = () => { try { trDom(document.getElementById('gp-settings-drawer')); } catch (e) { /* ignore */ } };
     const updatePanelStatus = () => {
@@ -206,6 +241,19 @@ function setupSettingsPanel() {
         getSettings().injectPrompt = this.checked;
         saveSettingsDebounced();
         updatePhoneInjection();
+    });
+    $('#gp-set-quiet').on('change', function () {
+        if (!setPhoneQuietMode(this.checked)) return;
+        if (this.checked) {
+            clearPhoneNotifications();
+            for (const call of getCalls().history) {
+                if (['ringing', 'connecting', 'active'].includes(call.status)) endPhoneCall(call.id);
+            }
+        }
+        saveSettingsDebounced();
+        resetIncomingCounters();
+        updatePhoneInjection();
+        if (isPhoneOpen()) render();
     });
     $('#gp-set-depth').on('change', function () {
         const value = Math.max(0, Math.min(100, parseInt(this.value) || 0));
@@ -264,6 +312,21 @@ function setupSettingsPanel() {
     $('#gp-set-tagmode').on('change', function () {
         getSettings().imgTagMode = this.checked;
         saveSettingsDebounced();
+    });
+    $('#gp-set-imgcontext').on('change', function () {
+        getSettings().imageGenExtensionContext = this.checked;
+        saveSettingsDebounced();
+    });
+    $('#gp-set-rpsms').on('change', function () {
+        getSettings().captureRoleplaySms = this.checked;
+        saveSettingsDebounced();
+        updatePhoneInjection();
+    });
+    $('#gp-set-extblocks').on('change', function () {
+        getSettings().externalBlocks = this.checked;
+        saveSettingsDebounced();
+        invalidateChatCache();
+        onExternalBlocksChanged();
     });
     // Промпты сохраняются сами, как только уходит фокус: «Применить» легко
     // не заметить, и генерация уходила со старым текстом
@@ -441,17 +504,35 @@ jQuery(async () => {
         getSettings();
         setupSettingsPanel();
         initUI();
+        let instagramJournalTimer;
+        window.addEventListener('gp:instagram',({detail})=>{
+            if(detail?.owner!==getMeta())return;
+            const event=detail.event;
+            if(getSettings().isEnabled&&!instagramEventVisible(event))toast('Instagram · '+igEventText(event),'fa-instagram',null,()=>openInstagram(event));
+            clearTimeout(instagramJournalTimer);
+            instagramJournalTimer=setTimeout(async()=>{await flushInstagramJournal();updatePhoneInjection();applyChatHiding();if(isPhoneOpen())render();},250);
+        });
         updatePhoneInjection();
         // Первичный замер входящих без тостов
-        setTimeout(() => resetIncomingCounters(), 800);
+        setTimeout(() => {
+            resetIncomingCounters();
+            harvestInstagramTags();flushInstagramJournal();
+            try { if(harvestBankTags()>0){updatePhoneInjection();if(isPhoneOpen())render();} } catch(error) { console.warn('[GlassPhone] Initial bank sync:',error); }
+            try { for (const call of getCalls().history.filter(item => item.status === 'ringing')) notifyIncomingCall(call); }
+            catch (error) { console.warn('[GlassPhone] Call notifications:', error); }
+        }, 800);
 
         // ── Новые сообщения: пересчёт тредов, тосты, бейдж, обновление инжекции ──
         const onNewMessage = () => {
             if (!getSettings().isEnabled) return;
+            invalidateChatCache();
+            if (captureRoleplayOutgoing()) saveChatConditional().catch(error => console.warn('[GlassPhone] save RP SMS failed:', error));
             // Модель могла скопировать формат журнальной строки себе в пост —
             // убираем, пока телефон не спрятал весь ответ
             try { stripFakeJournal(); } catch (e) { /* ignore */ }
             checkNewIncoming();
+            try { harvestInstagramTags(); } catch(error) { console.warn('[GlassPhone] Instagram:',error); }
+            generateRoleplayMedia().then(()=>{invalidateChatCache();if(isPhoneOpen())render();}).catch(error=>console.warn('[GlassPhone] Media:',error));
             // Персонаж запостил из ролевой (теги tel:tweet / tel:insta) → в ленты + тост
             try {
                 const { tweets, posts } = harvestSocialTags();
@@ -482,8 +563,9 @@ jQuery(async () => {
             // Планы и даты, о которых договорились в сцене
             try {
                 const n = harvestPlanTags();
-                if (n > 0) toast(`В календарь: ${n}`, 'fa-calendar-check');
+                if (n > 0) toast(`Календарь обновлён: ${n}`, 'fa-calendar-check');
             } catch (e) { /* ignore */ }
+            try { for (const call of harvestPhoneCalls()) notifyIncomingCall(call); } catch (e) { console.warn('[GlassPhone] Calls:', e); }
             notifyBankReminders();
             notifyDeliveries();   // курьер выехал / заказ приехал
             // Мошенники: редкий скам-смс (сам себя гейтит кулдауном и шансом)
@@ -493,12 +575,22 @@ jQuery(async () => {
             setTimeout(applyChatHiding, 350); // второй проход — переживает ре-рендер ST
             if (isPhoneOpen()) render();
         };
-        eventSource.on(event_types.MESSAGE_RECEIVED, onNewMessage);
+        eventSource.on(event_types.MESSAGE_RECEIVED, id=>{
+            if(getSettings().isEnabled){const chat=SillyTavern.getContext()?.chat||[];if(stampNewChatMessage(chat[Number.isInteger(id)?id:chat.length-1]))saveChatConditional().catch(console.warn);}
+            onNewMessage();
+        });
+        // ExtBlocks emits before writing its generated content to storage.
+        // Defer one turn so background blocks are visible to the harvesters.
+        onExternalBlocksChanged = () => setTimeout(onNewMessage, 0);
+        eventSource.on('/extblocks/generated', () => onExternalBlocksChanged());
+        eventSource.on('/fatpresets/change/extblocks', () => refreshPhoneImageBlocks());
+        eventSource.on('/fatpresets/import/extblocks', () => refreshPhoneImageBlocks());
         if (event_types.GENERATION_ENDED) {
             eventSource.on(event_types.GENERATION_ENDED, onNewMessage);
         }
         eventSource.on(event_types.MESSAGE_SENT, () => {
             if (!getSettings().isEnabled) return;
+            if(stampNewChatMessage(SillyTavern.getContext()?.chat?.at(-1)))saveChatConditional().catch(console.warn);
             updatePhoneInjection();
             applyChatHiding();
             if (isPhoneOpen()) render();
@@ -514,11 +606,16 @@ jQuery(async () => {
         const onEdit = () => {
             if (!getSettings().isEnabled) return;
             invalidateChatCache();
+            if (captureRoleplayOutgoing()) saveChatConditional().catch(error => console.warn('[GlassPhone] save RP SMS failed:', error));
+            try { harvestSocialTags(); } catch (e) { /* ignore */ }
+            try { harvestChannelTags(); harvestAnonTags(); harvestAnonBust(); } catch (e) { /* ignore */ }
             // Свайп уносит вариант ответа вместе с его деньгами: пересверяемся
             // сразу, иначе баланс держал бы списание до следующего сообщения
             try { harvestBankTags(); } catch (e) { /* ignore */ }
+            try { harvestPlanTags(); } catch (e) { console.warn('[GlassPhone] Calendar tags:', e); }
             checkNewIncoming({ silent: true });
             applyChatHiding();
+            if (isPhoneOpen()) render();
         };
         if (event_types.MESSAGE_DELETED) eventSource.on(event_types.MESSAGE_DELETED, onEdit);
         if (event_types.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, onEdit);
@@ -528,12 +625,18 @@ jQuery(async () => {
         // ── Смена чата: новый источник правды, счётчики с нуля ──
         if (event_types.CHAT_CHANGED) {
             eventSource.on(event_types.CHAT_CHANGED, () => {
+                clearPhoneNotifications();
+                clearTimeout(instagramJournalTimer);
                 invalidateChatCache();
+                refreshPhoneImageBlocks();
                 setTimeout(() => {
                     invalidateChatCache();
                     resetIncomingCounters();
                     try { harvestSocialTags(); } catch (e) { /* ignore */ }
                     try { harvestBankTags(); } catch (e) { /* ignore */ }
+                    try { harvestPlanTags(); } catch (e) { console.warn('[GlassPhone] Calendar tags:', e); }
+                    try { for(const call of getCalls().history.filter(item=>item.status==='ringing'))notifyIncomingCall(call); } catch(e) { console.warn('[GlassPhone] Call notifications:',e); }
+                    try { harvestInstagramTags();flushInstagramJournal(); } catch(error) { console.warn('[GlassPhone] Instagram:',error); }
                     updateFabBadge();
                     updatePhoneInjection();
                     applyChatHiding();
