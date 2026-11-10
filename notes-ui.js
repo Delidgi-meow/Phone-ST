@@ -36,7 +36,7 @@ export function renderNotesApp(screen,{onHome,onChange,icon}){
     const privacy=document.createElement('div');privacy.className='gp-note-privacy';privacy.textContent=draft.shared?'Видна модели':'Личная заметка';screen.querySelector('.gp-ios-note-paper').before(privacy);
     screen.querySelector('[data-check]').onclick=()=>{const pos=area.selectionStart;area.setRangeText((pos&&area.value[pos-1]!=='\n'?'\n':'')+'☐ ',pos,area.selectionEnd,'end');area.dispatchEvent(new Event('input'));area.focus();};
     const canvas=screen.querySelector('canvas'),ctx=canvas.getContext('2d'),sketch=canvas.parentElement,tools=screen.querySelector('.gp-note-art-tools');
-    let tool='brush',color=colors[0],width=6,stroke=null;
+    let tool='brush',color=getComputedStyle(area).color,width=6,stroke=null;
     // Fixed drawing coordinates keep existing strokes stable at every phone width.
     canvas.width=800;canvas.height=600;
     function redraw(){
