@@ -563,6 +563,9 @@
 #gp-phone#gp-phone .gp-reaction-popover .gp-react-forward{color:var(--gp-text);border-left:1px solid var(--gp-border-soft)!important;border-radius:0}
 #gp-phone#gp-phone .gp-react-forward svg{width:23px;height:23px}
 #gp-phone #gp-msgs.gp-preserve-scroll .gp-bubble-wrap{animation:none!important}
+#gp-phone.gp-home-active #gp-screen{padding-bottom:0!important}
+#gp-phone.gp-home-active .gp-home-os{flex:1 1 0%;height:auto!important;box-sizing:border-box}
+#gp-phone.gp-home-active .gp-home-dock{margin-bottom:8px!important}
 .gp-bubble { position: relative; } /* якорь чипа реакции */
 .gp-bubble[data-bmi] { cursor: pointer; }
 .gp-react-picker {

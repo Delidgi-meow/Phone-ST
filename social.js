@@ -1,3 +1,4 @@
+import { applyBotSmsReactions } from './sms-bot-reactions.js';
 import { SMS_REACTIONS } from './sms-reactions.js';
 import { stampPhoneText } from './phone-clock.js';
 import { phoneMediaVisionData, phoneMediaVisionBatch } from './phone-media.js';
@@ -1466,6 +1467,7 @@ export async function generatePrivateSmsReply({ threadKey, contactName, isGroup 
     const owner = getMeta();
     const activityVersion = getSettings().phoneActivityVersion;
     const thread = getThread(threadKey || contactName);
+    const reactionTarget=(messages||thread?.messages||[]).findLast(m=>m.dir==='out');
     const turns = smsConversationHistory(messages || thread?.messages, { user: getUserName(), peer: contactName });
     const header = await buildPhoneConversationContext({key:threadKey || contactName,name:thread?.name || contactName,originalName:contactName},
         {medium:'sms',includeSms:false,members:isGroup?members:[],utterance:JSON.stringify(turns.at(-1) || {})});
@@ -1482,21 +1484,22 @@ ${regenerate ? 'This replaces wording of an existing reply. Do not repeat or cre
 ${uiLangLine()}
 Return JSON only: {"photo_description":"","replies":[{"from":"canonical sender","text":"message"${isPhoneAppInstalled('bank')?',"bank":[]':''}${isPhoneAppInstalled('calendar')?',"plans":[]':''}}]}.`;
     const stickerIds=(owner.stickers||[]).slice(0,12).map(item=>({id:item.id,description:item.description,caption:item.caption}));
-    const raw = await socialGen(prompt+'\n'+CHAT_MEDIA_DIRECTIVE+'\nSaved stickers: '+JSON.stringify(stickerIds), { app: phoneAppForThread(threadKey || contactName), maxTokens: 2200, image, prefill: '{"photo_description":"' });
+    const raw = await socialGen(prompt+'\nOptional reaction on the latest USER SMS: each reply may include reaction with one of '+SMS_REACTIONS.map(r=>r.emoji).join(' ') +'. Use it only when emotionally appropriate to that specific user message, not automatically; omit otherwise. Never react to your own messages.\n'+CHAT_MEDIA_DIRECTIVE+'\nSaved stickers: '+JSON.stringify(stickerIds), { app: phoneAppForThread(threadKey || contactName), maxTokens: 2200, image, prefill: '{"photo_description":"' });
     if (getMeta() !== owner || !phoneActivityAllowed(activityVersion)) throw Object.assign(new Error('Запрос отменён'), { name: 'AbortError' });
     const obj = parseJsonObject(raw);
     if (!obj || !Array.isArray(obj.replies)) throw new Error('Не удалось прочитать ответ SMS');
     const replies = obj.replies.filter(reply => reply && typeof reply === 'object').map(reply => {
         const from = isGroup ? members.find(member => resolveContactKey(member) === resolveContactKey(reply.from)) : contactName;
         return {
-            from, text: String(reply.text || '').trim().slice(0, 1800), media:chatMedia(reply),
+            from, reaction: typeof reply.reaction==='string'?reply.reaction:'', text: String(reply.text || '').trim().slice(0, 1800), media:chatMedia(reply),
             forward: messageForward(reply.forward),
             ...(reply.voice ? { voice: true } : {}),
             ...(reply.photo ? { photo: String(reply.photo).slice(0, 1000) } : {}),
             bank: isPhoneAppInstalled('bank') && !regenerate && Array.isArray(reply.bank) ? reply.bank.slice(0, 5) : [],
             plans: isPhoneAppInstalled('calendar') && !regenerate && Array.isArray(reply.plans) ? reply.plans.slice(0, 5) : [],
         };
-    }).filter(reply => reply.from && (reply.text || reply.forward || reply.photo || reply.media)).slice(0, 5);
+    }).filter(reply => reply.from && (reply.text || reply.forward || reply.photo || reply.media || reply.reaction)).slice(0, 5);
+    if(!regenerate)await applyBotSmsReactions(reactionTarget,replies,owner);
     for(const mediaReply of replies.filter(reply=>reply.media)){
         try{Object.assign(mediaReply,await generateChatAttachment(mediaReply.media,{speaker:mediaReply.from,phoneApp:phoneAppForThread(threadKey||contactName)}));}
         catch(error){if(getMeta()!==owner)throw error;console.warn('[GlassPhone] Reply attachment:',error);mediaReply.text+='\n['+(mediaReply.media.kind==='sticker'?'Стикер':'Мем')+' не удалось создать. Проверь подключение для картинок.]';}
@@ -3214,6 +3217,7 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
         requestSettings.overrideAspectRatio = false;
         requestSettings.overrideImageSize = false;
     }
+    if(post.mediaKind==='sticker'){requestSettings.aspectRatio='1:1';requestSettings.novelaiAspectRatio='1:1';requestSettings.overrideAspectRatio=true;}
     const genOptions = { providerSettings: requestSettings };
     if(!isShop){
         requestSettings.optionalAvatarSending=false;

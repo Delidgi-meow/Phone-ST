@@ -8,7 +8,8 @@ const forwardIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path
 
 export function smsReactionChips(message,avatar,initial){
     const selected=smsReactions(message);
-    return selected.length?'<span class="gp-react-chip">'+selected.map(id=>'<span>'+appleReaction(id)+(avatar?'<img class="gp-reaction-avatar" src="'+esc(avatar)+'" alt="'+esc(tr('Вы'))+'">':'<small class="gp-reaction-avatar">'+esc(initial)+'</small>')+'</span>').join('')+'</span>':'';
+    const bot=(message.botReactions||[]).map(r=>'<span title="'+esc(r.from)+'">'+appleReaction(r.emoji)+'<small class="gp-reaction-avatar">'+esc(r.from.slice(0,1))+'</small></span>').join('');
+    return (selected.length||bot)?'<span class="gp-react-chip">'+selected.map(id=>'<span>'+appleReaction(id)+(avatar?'<img class="gp-reaction-avatar" src="'+esc(avatar)+'" alt="'+esc(tr('Вы'))+'">':'<small class="gp-reaction-avatar">'+esc(initial)+'</small>')+'</span>').join('')+bot+'</span>':'';
 }
 
 export function rememberSmsScroll(list){

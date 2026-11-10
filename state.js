@@ -15,7 +15,7 @@ import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.58.13';
+export const GP_VERSION = '2.58.14';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -1412,6 +1412,7 @@ function scanChatUncached() {
                 if(j.stickerCaption)entry.stickerCaption=j.stickerCaption;
                 if (isVoice) entry.voice = true;
                 entry.reactions = smsReactions(j);
+                entry.botReactions=Array.isArray(j.botReactions)?j.botReactions.filter(r=>r&&typeof r.from==='string'&&typeof r.emoji==='string'):[];
                 // Фото: путь из маркера (надёжно — часть текста) ИЛИ из extra.media (ST-нативно)
                 if (j.img) entry.img = j.img;
                 else {
@@ -1496,6 +1497,7 @@ function scanChatUncached() {
                 if(savedSticker&&!entry.mediaKind){entry.mediaKind='sticker';entry.stickerId=savedSticker.id;entry.stickerCaption=savedSticker.caption||'';}
                 // Реакция юзера на сообщение (пишется в тег из UI)
                 entry.reactions = smsReactions(j);
+                entry.botReactions=Array.isArray(j.botReactions)?j.botReactions.filter(r=>r&&typeof r.from==='string'&&typeof r.emoji==='string'):[];
                 // Скрин поста из соцсети или канала: карточку рисует телефон
                 if (j.shot) entry.shot = j.shot;
                 if(!entry.text&&!entry.img&&!entry.photoDesc&&!entry.shot)continue;
