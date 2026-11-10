@@ -1,4 +1,7 @@
 const bindings=new WeakMap();
+export function setPhoneViewportCompatibility(overlay,enabled){
+    overlay?.classList.toggle('gp-viewport-compatible',enabled===true);
+}
 export function bindPhoneViewport(overlay,view=window){
     if(bindings.has(overlay))return;
     let frame=0;

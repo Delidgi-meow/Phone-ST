@@ -1,6 +1,7 @@
 import { lang } from './i18n.js';
 import { getSettings } from './state.js';
 import { saveSettingsDebounced } from '../../../../script.js';
+import { setPhoneViewportCompatibility } from './phone-viewport.js';
 const L=(ru,en)=>lang()==='en'?en:ru;
 const I=n=>'<i class="fa-solid '+n+'" aria-hidden="true"></i>';
 let panel=null;
@@ -25,6 +26,13 @@ export function renderPhoneSettings(screen,api){
         [['appstore','fa-store',L('App Store','App Store'),L('Установить и удалить приложения','Install and remove apps')],['appearance','fa-palette',L('Оформление телефона','Phone appearance'),L('Тема, иконки и главный экран','Theme, icons and home screen')],['lock','fa-lock',L('Экран блокировки','Lock screen'),L('Часы, дата и отдельные обои','Clock, date and wallpaper')],['chats','fa-comments',L('Оформление переписок','Chat appearance'),L('Общий стандарт обоев и пузырей','Default wallpaper and bubbles')]].map(([id,icon,title,subtitle])=>'<button type="button" data-settings-open="'+id+'"><i class="fa-solid '+icon+'" aria-hidden="true"></i><span><b>'+title+'</b><small>'+subtitle+'</small></span>'+I('fa-chevron-right')+'</button>').join('')+
         '</div><label class="gp-story-questions-setting"><span class="gp-story-questions-copy"><b id="gp-story-questions-title">'+L('Анонимные вопросы','Anonymous questions')+'</b><small id="gp-story-questions-hint">'+L('В сторис со стикером. Сбор — вручную.','Stories with a sticker. Collected manually.')+'</small></span><span class="gp-story-questions-switch"><input type="checkbox" role="switch" aria-labelledby="gp-story-questions-title" aria-describedby="gp-story-questions-hint" data-story-questions-setting '+(getSettings().storyQuestionsEnabled!==false?'checked':'')+'><span class="gp-story-questions-track" aria-hidden="true"></span></span></label><div class="gp-phone-settings-mount"></div></div>';
     screen.querySelector('[data-story-questions-setting]').onchange=e=>{getSettings().storyQuestionsEnabled=e.target.checked;saveSettingsDebounced();};
+    const compatibility=document.createElement('label');
+    compatibility.className='gp-story-questions-setting';
+    compatibility.innerHTML='<span class="gp-story-questions-copy"><b id="gp-viewport-title">'+L('Совместимость мобильного экрана','Mobile screen compatibility')+'</b><small id="gp-viewport-hint">'+L('Включи, если нижняя панель обрезается или смещается в мобильном браузере.','Enable if the dock is clipped or misplaced in a mobile browser.')+'</small></span><span class="gp-story-questions-switch"><input type="checkbox" role="switch" aria-labelledby="gp-viewport-title" aria-describedby="gp-viewport-hint" data-viewport-compatibility><span class="gp-story-questions-track" aria-hidden="true"></span></span>';
+    const compatibilityInput=compatibility.querySelector('input');
+    compatibilityInput.checked=getSettings().mobileViewportCompatibility===true;
+    compatibilityInput.onchange=()=>{getSettings().mobileViewportCompatibility=compatibilityInput.checked;setPhoneViewportCompatibility(screen.closest('#gp-overlay'),compatibilityInput.checked);saveSettingsDebounced();};
+    screen.querySelector('.gp-phone-settings-mount').before(compatibility);
     screen.querySelector('#gp-settings-back').onclick=api.home;
     screen.querySelector('[data-settings-open="appstore"]').onclick=api.appstore;
     screen.querySelector('[data-settings-open="appearance"]').onclick=api.appearance;

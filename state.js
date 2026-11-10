@@ -15,7 +15,7 @@ import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.58.17';
+export const GP_VERSION = '2.58.18';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -23,6 +23,7 @@ const defaultSettings = () => ({
     isEnabled: true,
     // Язык интерфейса: 'ru' | 'en' (переводится и панель настроек, и весь телефон)
     lang: 'ru',
+    mobileViewportCompatibility: false,
     injectPrompt: true,
     quietMode: false,
     phoneActivityVersion: 0,

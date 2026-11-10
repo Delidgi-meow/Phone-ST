@@ -1,5 +1,5 @@
 import { bindSmsReactions, disposeSmsReactions, smsReactionChips, rememberSmsScroll, restoreSmsScroll } from './sms-reaction-ui.js';
-import { bindPhoneViewport } from './phone-viewport.js';
+import { bindPhoneViewport, setPhoneViewportCompatibility } from './phone-viewport.js';
 import { stampPhoneText, phoneEventTime, phoneTimeTag } from './phone-clock.js';
 import { smsQueue, enqueueSms, takeSmsQueue } from './sms-batch.js';
 import { smsReactions, preserveSmsMedia, appleReaction } from './sms-reactions.js';
@@ -438,6 +438,7 @@ function createPhone() {
         </div>`;
     document.body.appendChild(ov);
     bindPhoneViewport(ov);
+    setPhoneViewportCompatibility(ov,getSettings().mobileViewportCompatibility);
     watchPhoneTranslations(ov);
     ov.addEventListener('pointerdown', (e) => {
         if (e.target === ov) closePhone();
