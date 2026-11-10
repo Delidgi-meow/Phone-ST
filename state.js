@@ -15,7 +15,7 @@ import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.58.18';
+export const GP_VERSION = '2.58.19';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -1276,6 +1276,15 @@ export function getRpDateTime() {
         for (let i = chat.length - 1; i >= 0; i--) {
             const mes = chat[i]?.mes;
             if (!mes) continue;
+            // A newer scene without a tag must be read before an older phone tag.
+            const narrative=storyClockText(chat[i],stripThink(mes));
+            if(narrative&&!parseTimeTag(stripThink(mes))){
+                let base=parseAnyDateTime(calText);
+                if(!base||base.timeOnly){for(let j=i-1;j>=0;j--){base=parseTimeTag(stripThink(chat[j]?.mes||''))||parseAnyDateTime(storyClockText(chat[j]));if(base&&!base.timeOnly)break;}}
+                const fresh=parseAnyDateTime(narrative,base);
+                const date=storyDate(fresh,base&&!base.timeOnly?storyDate(base):null);
+                if(date){_rpDateCache={year:date.getFullYear(),month:date.getMonth()+1,day:date.getDate(),hours:date.getHours(),minutes:date.getMinutes(),label:String(date.getDate()).padStart(2,'0')+'.'+String(date.getMonth()+1).padStart(2,'0')};return _rpDateCache;}
+            }
             const tagged = parseTimeTag(stripThink(mes));
             if (tagged) {
                 const clock=phoneClock?.anchor===i+':'+JSON.stringify(tagged)&&Number.isFinite(phoneClock.at)?new Date(phoneClock.at):null;
