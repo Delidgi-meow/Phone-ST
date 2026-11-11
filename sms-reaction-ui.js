@@ -6,9 +6,9 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const bindings=new WeakMap();
 const forwardIcon='<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 5v4C7 9 3 13 2 19c4-4 7-6 12-6v4l8-6-8-6Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>';
 
-export function smsReactionChips(message,avatar,initial){
+export function smsReactionChips(message,avatar,initial,avatarForBot=()=>''){
     const selected=smsReactions(message);
-    const bot=(message.botReactions||[]).map(r=>'<span title="'+esc(r.from)+'">'+appleReaction(r.emoji)+'<small class="gp-reaction-avatar">'+esc(r.from.slice(0,1))+'</small></span>').join('');
+    const bot=(message.botReactions||[]).map(r=>{const image=avatarForBot(r.from);return '<span title="'+esc(r.from)+'">'+appleReaction(r.emoji)+(image?'<img class="gp-reaction-avatar" src="'+esc(image)+'" alt="'+esc(r.from)+'">':'<small class="gp-reaction-avatar">'+esc(r.from.slice(0,1))+'</small>')+'</span>';}).join('');
     return (selected.length||bot)?'<span class="gp-react-chip">'+selected.map(id=>'<span>'+appleReaction(id)+(avatar?'<img class="gp-reaction-avatar" src="'+esc(avatar)+'" alt="'+esc(tr('Вы'))+'">':'<small class="gp-reaction-avatar">'+esc(initial)+'</small>')+'</span>').join('')+bot+'</span>':'';
 }
 
@@ -28,7 +28,7 @@ export function restoreSmsScroll(list,saved){
 
 export function disposeSmsReactions(screen){bindings.get(screen)?.abort();bindings.delete(screen);}
 
-export function bindSmsReactions(screen,thread,{avatar,initial,persist,saved,failed}){
+export function bindSmsReactions(screen,thread,{avatar,initial,avatarForBot=()=>'',persist,saved,failed}){
     disposeSmsReactions(screen);
     const controller=new AbortController(),signal=controller.signal,owner=getMeta(),list=screen.querySelector('#gp-msgs');
     if(!list)return;
@@ -56,7 +56,7 @@ export function bindSmsReactions(screen,thread,{avatar,initial,persist,saved,fai
     function chips(message,mi){
         const target=list.querySelector('[data-bmi="'+mi+'"]');if(!target)return;
         const top=list.scrollTop;target.querySelector(':scope>.gp-react-chip')?.remove();
-        target.insertAdjacentHTML('beforeend',smsReactionChips(message,avatar,initial));
+        target.insertAdjacentHTML('beforeend',smsReactionChips(message,avatar,initial,avatarForBot));
         target.closest('.gp-bubble-wrap')?.classList.toggle('gp-has-react',smsReactions(message).length>0);
         list.scrollTop=top;
     }

@@ -2125,6 +2125,7 @@ function renderThread(screen) {
     const previousList=screen.querySelector('#gp-msgs');
     const scrollState=previousList?.dataset.threadKey===t.key?rememberSmsScroll(previousList):null;
     const reactionAvatar=avatarForAuthor('user');
+    const reactionBotAvatar=name=>getContactAvatar(name)||(!t.isGroup?getContactAvatar(t.key):'');
     const _smsDraftImage=getSmsAttachment(t.key)?.image;
     const queued=smsQueue(t.key);
     markRead(t.key);
@@ -2171,11 +2172,11 @@ function renderThread(screen) {
         const stickerWithText=m.mediaKind==='sticker'&&m.img&&!!m.text?.trim();
         const body = (m.actor?`<small class="gp-device-actor">С телефона отправил(а): ${esc(m.actor)}</small>`:'')+(m.voice ? voiceBubbleHtml(m) : esc(m.text));
         const reactions = smsReactions(m);
-        const reactChip=smsReactionChips(m,reactionAvatar,getUserName().slice(0,1));
+        const reactChip=smsReactionChips(m,reactionAvatar,getUserName().slice(0,1),reactionBotAvatar);
         bubbles += `
         <div class="gp-bubble-wrap ${m.dir === 'out' ? 'gp-out' : 'gp-in'}${reactions.length ? ' gp-has-react' : ''}">
             ${stickerWithText?media:''}
-            <div class="gp-bubble${m.voice ? ' gp-bubble-voice' : ''}${m.mediaKind==='sticker'&&m.img&&!m.text?.trim()?' gp-sticker-bubble':''}${m.text?.trim()?' gp-has-message-text':''}" data-bmi="${mi}">${senderLabel}${stickerWithText?'':media}${shotHtml(m)}${body}<button class="gp-sms-del" data-smsdel="${mi}" title="Удалить">${ic('fa-xmark')}</button>${reactChip}</div>
+            <div class="gp-bubble${m.img&&m.mediaKind!=='sticker'?' gp-photo-bubble':''}${m.voice ? ' gp-bubble-voice' : ''}${m.mediaKind==='sticker'&&m.img&&!m.text?.trim()?' gp-sticker-bubble':''}${m.text?.trim()?' gp-has-message-text':''}" data-bmi="${mi}">${senderLabel}${stickerWithText?'':media}${shotHtml(m)}${m.img&&m.mediaKind!=='sticker'?`<div class="gp-photo-caption">${body}</div>`:body}<button class="gp-sms-del" data-smsdel="${mi}" title="Удалить">${ic('fa-xmark')}</button>${reactChip}</div>
             ${tm || mi===t.messages.length-1 ? `<div class="gp-bubble-time gp-sms-message-foot">${tm?`<span>${esc(tm)}</span>`:''}${mi===t.messages.length-1?`<button type="button" class="gp-sms-inline-regen" id="gp-regen" title="${m.dir==='in'?'Другой ответ':'Получить ответ'}" aria-label="${m.dir==='in'?'Другой ответ':'Получить ответ'}" ${sending?'disabled':''}>${ic('fa-rotate-right')}</button>`:''}</div>` : ''}
         </div>`;
     }
@@ -2360,7 +2361,7 @@ function renderThread(screen) {
     sendBtn?.addEventListener('click', () => doSend(t.key));
     screen.querySelector('#gp-regen')?.addEventListener('click', () => doRegen(t.key));
     bindSmsReactions(screen,t,{
-        avatar:reactionAvatar,initial:getUserName().slice(0,1),
+        avatar:reactionAvatar,initial:getUserName().slice(0,1),avatarForBot:reactionBotAvatar,
         persist:(message,values)=>rewriteSmsTag(message,t,j=>{delete j.react;j.reactions=values;}),
         saved:({message,reaction,removing})=>{
             if(!removing&&message.dir==='in')logSocialToChat(getUserName()+' ставит реакцию «'+reaction.ru+'» на сообщение '+(message.from||t.name)+': «'+String(message.text||message.photoDesc||'').slice(0,80)+'»',{priv:true});
@@ -2953,7 +2954,7 @@ function igCard(p, { clickable = true } = {}) {
         </div>
         <div class="${clickable ? 'gp-clickable' : ''}" data-open-ig="${esc(p.id)}">${igImageHtml(p)}</div>
         <div class="gp-ig-actions">
-            <button class="gp-tw-act${p.liked ? ' gp-tw-on' : ''}" data-like-ig="${esc(p.id)}" aria-label="Нравится">${appleReaction('heart')}</button>
+            <button class="gp-tw-act${p.liked ? ' gp-tw-on' : ''}" data-like-ig="${esc(p.id)}" aria-label="Нравится">${ic('fa-heart')}</button>
             <button class="gp-tw-act" data-open-ig2="${esc(p.id)}" aria-label="Комментарии">${bankIcon('MessageCircle')}</button>
             <button class="gp-tw-act" data-share-ig="${esc(p.id)}" aria-label="Поделиться публикацией">${bankIcon('Send')}</button>
             <button class="gp-tw-act gp-insta-save${p.saved?' is-saved':''}" data-ig-save="${esc(p.id)}" aria-label="Сохранить публикацию">${bankIcon('Bookmark')}</button>
@@ -3517,7 +3518,7 @@ function renderIgStory(screen) {
             ${st.caption ? `<div class="gp-igst-caption">${esc(st.caption)}</div>` : ''}
             ${isMine
                 ? `<div class="gp-igst-bottom">${ic('fa-eye')} ${views}${(st.reacts || []).length ? `<span class="gp-igst-reacts">${st.reacts.map(r => `<span class="gp-igst-react">${appleReaction(r.icon || 'heart')} ${esc(r.author)}</span>`).join('')}</span>` : ''}`
-                : `<div class="gp-igst-bottom gp-igst-bottom-other"><form class="gp-insta-story-reply"><input aria-label="Ответить на историю" placeholder="Ответить…" maxlength="1000"><button type="submit" aria-label="Отправить в Direct">Отправить</button></form><button class="gp-igst-like${st.liked ? ' gp-on' : ''}" id="gp-st-like" title="Нравится" aria-label="Нравится">${appleReaction('heart')}</button>`}
+                : `<div class="gp-igst-bottom gp-igst-bottom-other"><form class="gp-insta-story-reply"><input aria-label="Ответить на историю" placeholder="Ответить…" maxlength="1000"><button type="submit" aria-label="Отправить в Direct">Отправить</button></form><button class="gp-igst-like${st.liked ? ' gp-on' : ''}" id="gp-st-like" title="Нравится" aria-label="Нравится">${ic('fa-heart')}</button>`}
             <button type="button" class="gp-insta-story-share" id="gp-st-share" aria-label="Поделиться историей">${bankIcon('Send')}</button></div></div>
             <div class="gp-igst-nav gp-igst-nav-left" id="gp-st-prev"></div>
             <div class="gp-igst-nav gp-igst-nav-right" id="gp-st-next"></div>

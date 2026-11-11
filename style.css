@@ -6051,3 +6051,12 @@ img[data-zoom] { cursor: zoom-in; }
 #gp-phone#gp-phone .gp-telegram .gp-chan-feedback-retry{display:inline-flex;align-items:center;gap:6px;font-size:11px!important;color:var(--tg-blue)!important;background:transparent!important;border:0!important;box-shadow:none!important;padding:6px 13px;min-height:30px;cursor:pointer}
 #gp-phone#gp-phone .gp-telegram .gp-chan-feedback-retry:disabled{opacity:.55;cursor:wait}
 #gp-phone#gp-phone .gp-note-privacy{font-size:10px;color:#88867c;padding:0 7px 8px;flex-shrink:0}
+
+/* Photo captions and reactions share the bubble; media fills its top edge. */
+#gp-phone#gp-phone .gp-bubble.gp-photo-bubble{padding:0!important;overflow:hidden}
+#gp-phone#gp-phone .gp-photo-bubble>.gp-bubble-img{margin:0!important;border-radius:0!important}
+#gp-phone#gp-phone .gp-photo-bubble>.gp-bubble-img>img,#gp-phone#gp-phone .gp-photo-bubble>.gp-bubble-img>.gp-video{border-radius:0!important;width:100%;display:block}
+#gp-phone#gp-phone .gp-photo-bubble>.gp-photo-caption{padding:9px 13px}
+#gp-phone#gp-phone .gp-photo-bubble>.gp-photo-caption:empty{display:none}
+#gp-phone#gp-phone .gp-photo-bubble>.gp-react-chip{margin:0 13px 9px}
+#gp-phone#gp-phone .gp-photo-bubble>.gp-bubble-sender{padding:7px 13px}
