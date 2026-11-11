@@ -7,7 +7,7 @@ import { smsQueue, enqueueSms, takeSmsQueue } from './sms-batch.js';
 import { smsReactions, preserveSmsMedia, appleReaction } from './sms-reactions.js';
 import { uploadPhoneMedia, phoneMediaHtml, isVideoMedia } from './phone-media.js';
 import { chatMediaKey } from './chat-media.js';
-import { getRpNow, realToRpDate } from './state.js';
+import { getRpNow, realToRpDate, phoneRecordElapsedMs } from './state.js';
 import { cancelPhoneImageGenerations } from './social.js';
 import { saveSticker } from './chat-media.js';
 import { renderAppStore } from './app-store.js';
@@ -3522,7 +3522,7 @@ function renderIgStory(screen) {
     const authorName = isMine ? getUserName() : (st.author || '?');
     const authorAva = avatarHtml(authorName, avatarForAuthor(isMine ? 'user' : st.ak), 'gp-avatar gp-avatar-sm');
     const views = isMine ? bumpStoryViews(st) : 0;
-    const ageMin = Math.max(1, Math.round((getRpNow() - realToRpDate(new Date(st.time))) / 60000));
+    const ageMin = Math.max(1, Math.round(phoneRecordElapsedMs(st) / 60000));
     const ageLabel = ageMin < 60 ? `${ageMin} м` : `${Math.round(ageMin / 60)} ч`;
     const media = st.image
         ? `${phoneMediaHtml(st.image,{className:"gp-igst-media"})}`

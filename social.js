@@ -2,7 +2,7 @@ import { applyBotSmsReactions } from './sms-bot-reactions.js';
 import { SMS_REACTIONS } from './sms-reactions.js';
 import { stampPhoneText } from './phone-clock.js';
 import { phoneMediaVisionData, phoneMediaVisionBatch } from './phone-media.js';
-import { getRpNow, realToRpDate, rpElapsedMs } from './state.js';
+import { getRpNow, realToRpDate, rpElapsedMs, phoneRecordElapsedMs } from './state.js';
 import { directConversationMedia, directReplyRoleError } from './direct-context.js';
 import { smsConversationHistory, SMS_CONTINUITY } from './sms-context.js';
 import { parseBirthdayDate, birthdayEvidenceMatches, resolveBirthdayYear } from './birthday-dates.js';
@@ -115,7 +115,7 @@ export function getStories() {
     return s.stories;
 }
 export function activeStories() {
-    return getStories().filter(st => st && rpElapsedMs(st.time) < 24 * 3600 * 1000);
+    return getStories().filter(st => st && phoneRecordElapsedMs(st) < 24 * 3600 * 1000);
 }
 export function addStory({ image = null, imgDesc = '', caption = '', questionPrompt = '', questionAnswer = null }) {
     const stories = getStories();
@@ -134,7 +134,7 @@ export function addStory({ image = null, imgDesc = '', caption = '', questionPro
         ...(questionAnswer?{questionAnswer:{question:String(questionAnswer.question||'').slice(0,400),answer:String(questionAnswer.answer||'').slice(0,1000)}}:{}),
     };
     stories.unshift(story);
-    getSocial().stories = stories.slice(0, 30);
+
     saveMeta();
     return story;
 }
@@ -227,7 +227,7 @@ Format: [{"author":"Имя","photo":"...","caption":"..."}]`;
         });
         added++;
     }
-    s.stories = s.stories.slice(0, 30);
+
     saveMeta();
     return added;
 }
@@ -256,7 +256,7 @@ export function toggleStoryLike(story) {
 export function bumpStoryViews(story) {
     if (!story) return 0;
     const followers = getSocial().socialProfiles?.instagram?.followers || 40;
-    const ageMin = rpElapsedMs(story.time) / 60000;
+    const ageMin = phoneRecordElapsedMs(story) / 60000;
     const target = Math.round(Math.min(followers * 0.65, 2 + followers * 0.65 * Math.min(1, ageMin / 240)));
     if (target > (story.views || 0)) {
         story.views = target;

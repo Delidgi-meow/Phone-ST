@@ -15,7 +15,7 @@ import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.58.22';
+export const GP_VERSION = '2.58.23';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -1029,6 +1029,11 @@ export function phoneRecordDate(record) {
     return Number.isFinite(record?.rpAt) ? new Date(record.rpAt)
         : record?.time instanceof Date ? record.time
         : realToRpDate(parseRealDate(record?.at ?? record?.ts ?? record?.time));
+}
+
+export function phoneRecordElapsedMs(record) {
+    const date=phoneRecordDate(record);
+    return date&&Number.isFinite(date.getTime())?Math.max(0,getRpNow()-date):0;
 }
 
 export function rpElapsedMs(timestamp) {
