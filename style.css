@@ -6070,3 +6070,8 @@ img[data-zoom] { cursor: zoom-in; }
 #gp-phone .gp-css-color-row>input{min-width:0;width:100%;font:12px monospace;color:var(--gp-text);background:var(--gp-glass);border:0;border-radius:8px;padding:8px}
 
 #gp-phone .gp-css-color-row>input[type=color]{width:32px;height:32px;padding:0;flex:0 0 32px;cursor:pointer}
+
+#gp-phone#gp-phone .gp-mms-gen,#gp-phone#gp-phone #gp-st-draw2,#gp-phone#gp-phone .gp-story-reactions-retry{border:0!important;outline:0!important;border-radius:0!important;background:transparent!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+#gp-phone#gp-phone .gp-mms-gen{filter:drop-shadow(0 1px 3px #0009)}
+#gp-phone .gp-story-reactions-retry{color:inherit;padding:4px 8px;cursor:pointer;font-size:14px}
+#gp-phone .gp-story-reactions-retry:disabled{opacity:.5;cursor:wait}

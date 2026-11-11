@@ -1,5 +1,6 @@
 // Labels added after the original English dictionary. RP/user content is not translated.
 export const EXTRA_TRANSLATIONS = {
+    'Повторить реакции на сторис':'Retry story reactions',
     'Затемнение обоев':'Wallpaper dimming',
     'Размер текста сообщений':'Message text size',
     'Скругление пузырей':'Message corner radius',

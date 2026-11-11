@@ -1,3 +1,4 @@
+import { retryStoryReactions, storyReactionPending } from './story-retry.js';
 import { mountCssPalette } from './theme-css-colors.js';
 import { bindSmsReactions, disposeSmsReactions, smsReactionChips, rememberSmsScroll, restoreSmsScroll } from './sms-reaction-ui.js';
 import { bindPhoneViewport, setPhoneViewportCompatibility } from './phone-viewport.js';
@@ -3474,10 +3475,10 @@ function renderIgNewStory(screen) {
             _othersStoriesBusy = true;
             (async () => {
                 try {
-                    const r = await generateStoryReactions(story);
+                    await requestStoryReactions(story);
                     if(getMeta()===owner){
                         if (waitDesc) { logStory(story.imgDesc || ''); applyChatHiding(); }
-                        receiveIgStoryReactions(story,r);
+
                         if (currentScreen.startsWith('ig')) render();
                     }
                 } catch (e) {
@@ -3497,6 +3498,10 @@ function renderIgNewStory(screen) {
             applyChatHiding();
         }
     });
+}
+
+function requestStoryReactions(story){
+    return retryStoryReactions(story,{owner:getMeta,exists:s=>getStories().some(item=>item.id===s.id),generate:generateStoryReactions,receive:receiveIgStoryReactions,emptyError:getSettings().lang==='en'?'No story reactions received. Try again.':'Реакции на сторис не получены. Попробуй ещё раз.'});
 }
 
 function renderIgStory(screen) {
@@ -3537,7 +3542,7 @@ function renderIgStory(screen) {
             <div class="gp-insta-story-footer">
             ${st.caption ? `<div class="gp-igst-caption">${esc(st.caption)}</div>` : ''}
             ${isMine
-                ? `<div class="gp-igst-bottom">${ic('fa-eye')} ${views}${(st.reacts || []).length ? `<span class="gp-igst-reacts">${st.reacts.map(r => `<span class="gp-igst-react">${appleReaction(r.icon || 'heart')} ${esc(r.author)}</span>`).join('')}</span>` : ''}`
+                ? `<div class="gp-igst-bottom">${ic('fa-eye')} ${views}<button type="button" class="gp-story-reactions-retry" id="gp-st-reactions-retry" title="Повторить реакции на сторис" aria-label="Повторить реакции на сторис" ${storyReactionPending(st)?'disabled':''}>${ic(storyReactionPending(st)?'fa-spinner fa-spin':'fa-rotate-right')}</button>${(st.reacts || []).length ? `<span class="gp-igst-reacts">${st.reacts.map(r => `<span class="gp-igst-react">${appleReaction(r.icon || 'heart')} ${esc(r.author)}</span>`).join('')}</span>` : ''}`
                 : `<div class="gp-igst-bottom gp-igst-bottom-other"><form class="gp-insta-story-reply"><input aria-label="Ответить на историю" placeholder="Ответить…" maxlength="1000"><button type="submit" aria-label="Отправить в Direct">Отправить</button></form><button class="gp-igst-like${st.liked ? ' gp-on' : ''}" id="gp-st-like" title="Нравится" aria-label="Нравится">${ic('fa-heart')}</button>`}
             <button type="button" class="gp-insta-story-share" id="gp-st-share" aria-label="Поделиться историей">${bankIcon('Send')}</button></div></div>
             <div class="gp-igst-nav gp-igst-nav-left" id="gp-st-prev"></div>
@@ -3545,6 +3550,12 @@ function renderIgStory(screen) {
             <button class="gp-igst-arrow gp-igst-arrow-left${_storyIdx <= 0 ? ' gp-off' : ''}" id="gp-st-arrow-prev" title="Назад">${ic('fa-chevron-left')}</button>
             <button class="gp-igst-arrow gp-igst-arrow-right${_storyIdx >= stories.length - 1 ? ' gp-off' : ''}" id="gp-st-arrow-next" title="Вперёд">${ic('fa-chevron-right')}</button>
         </div>`;
+    screen.querySelector('#gp-st-reactions-retry')?.addEventListener('click',async event=>{
+        event.stopPropagation();if(storyReactionPending(st))return;
+        const owner=getMeta(),pending=requestStoryReactions(st);render();
+        try{await pending;}catch(error){if(getMeta()===owner)toast(String(error.message||error),'fa-circle-exclamation');}
+        finally{if(getMeta()===owner&&currentScreen==='igstory')render();}
+    });
     screen.querySelector('#gp-st-close')?.addEventListener('click', () => goto('ig'));
     screen.querySelector('#gp-st-share').onclick=event=>{event.stopPropagation();openShareSheet({app:'st',id:st.id,author:st.author,text:st.caption||st.imgDesc,image:st.image});};
     screen.querySelector('.gp-insta-story-reply')?.addEventListener('submit',async event=>{
