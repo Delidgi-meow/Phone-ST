@@ -6060,3 +6060,13 @@ img[data-zoom] { cursor: zoom-in; }
 #gp-phone#gp-phone .gp-photo-bubble>.gp-photo-caption:empty{display:none}
 #gp-phone#gp-phone .gp-photo-bubble>.gp-react-chip{margin:0 13px 9px}
 #gp-phone#gp-phone .gp-photo-bubble>.gp-bubble-sender{padding:7px 13px}
+
+/* Shared borderless chat treatment across built-in themes. */
+#gp-phone#gp-phone #gp-msgs .gp-bubble{border:0!important;outline:0!important;box-shadow:none!important}
+#gp-phone#gp-phone .gp-thread-name-pill{border:0!important;outline:0!important;background:transparent!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+#gp-phone :is(.gp-wallpaper,.gp-chat-wallpaper):after{content:"";position:absolute;inset:0;background:rgba(0,0,0,var(--gp-wallpaper-darkness,0));pointer-events:none}
+#gp-phone .gp-css-color-row{display:flex;align-items:center;gap:10px;margin:8px 0}
+#gp-phone .gp-css-color-row>span{width:28px;height:28px;border-radius:8px;flex-shrink:0}
+#gp-phone .gp-css-color-row>input{min-width:0;width:100%;font:12px monospace;color:var(--gp-text);background:var(--gp-glass);border:0;border-radius:8px;padding:8px}
+
+#gp-phone .gp-css-color-row>input[type=color]{width:32px;height:32px;padding:0;flex:0 0 32px;cursor:pointer}

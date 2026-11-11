@@ -1,5 +1,8 @@
 // Labels added after the original English dictionary. RP/user content is not translated.
 export const EXTRA_TRANSLATIONS = {
+    'Затемнение обоев':'Wallpaper dimming',
+    'Размер текста сообщений':'Message text size',
+    'Скругление пузырей':'Message corner radius',
     'Язык / Language':'Language',
     'Чат изменился во время подготовки контекста.':'The chat changed while preparing context.','Запрос телефона отменён':'Phone request cancelled',
     'Модель вернула некорректные голоса. Попробуй ещё раз.':'The model returned invalid votes. Try again.','Пустая анонимка':'Anonymous post is empty','Пост не найден':'Post not found','Это твой собственный пост':'This is your own post',

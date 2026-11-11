@@ -1,3 +1,4 @@
+import { mountCssPalette } from './theme-css-colors.js';
 import { bindSmsReactions, disposeSmsReactions, smsReactionChips, rememberSmsScroll, restoreSmsScroll } from './sms-reaction-ui.js';
 import { bindPhoneViewport, setPhoneViewportCompatibility } from './phone-viewport.js';
 import { stampPhoneText, phoneEventTime, phoneTimeTag } from './phone-clock.js';
@@ -511,6 +512,9 @@ function normalizedThemeCustom(value = getSettings().themeCustom) {
         font: (v.font in THEME_FONTS) ? v.font : '',
         radius: Math.max(2, Math.min(30, Number(v.radius) || 18)),
         transparency: Math.max(3, Math.min(28, Number(v.transparency) || 10)),
+        messageSize: v.messageSize==null?null:Math.max(11,Math.min(22,Number(v.messageSize)||14)),
+        bubbleRadius: v.bubbleRadius==null?null:Math.max(0,Math.min(32,Number(v.bubbleRadius)||0)),
+        wallpaperDarkness: Math.max(0,Math.min(90,Number(v.wallpaperDarkness)||0)),
         iconScale: Math.max(80, Math.min(115, Number(v.iconScale) || 100)),
     };
 }
@@ -601,6 +605,10 @@ export function applySkin() {
         document.head.appendChild(styleEl);
     }
     styleEl.textContent = getSettings().customCss || '';
+    const custom=normalizedThemeCustom();
+    if(custom.messageSize!==null)styleEl.textContent+='\n#gp-phone#gp-phone .gp-bubble{font-size:'+custom.messageSize+'px!important}';
+    if(custom.bubbleRadius!==null)styleEl.textContent+='\n#gp-phone#gp-phone .gp-bubble{border-radius:'+custom.bubbleRadius+'px!important}';
+    ph?.style.setProperty('--gp-wallpaper-darkness',String(custom.wallpaperDarkness/100));
     applyWallpaper();
 }
 
@@ -1388,7 +1396,7 @@ function renderLock(screen) {
     const unlock = () => { goto(lastUnlockedScreen); };
     screen.querySelectorAll('[data-lock-note]').forEach(el => el.addEventListener('click', () => {
         const n = notes[parseInt(el.getAttribute('data-lock-note'))];
-        if (n) n.go(); else unlock();
+        if(n){const root=getMeta();root.lockDismissed=[...new Set([...(root.lockDismissed||[]),n.dismissKey])].slice(-500);saveMeta();el.remove();updateFabBadge();n.go();}else unlock();
     }));
     screen.querySelector('.gp-lock-hint')?.addEventListener('click', unlock);
 
@@ -1584,6 +1592,7 @@ function renderAppearance(screen) {
                 <h3>Свой CSS</h3>
                 <textarea id="gp-app-css" class="gp-theme-css" rows="10" spellcheck="false" placeholder="/* #gp-phone, .gp-bubble, .gp-tw-card, .gp-app-icon ... */"></textarea>
                 <button class="gp-save-preset" id="gp-app-css-apply" type="button">${ic('fa-check')} Применить CSS</button>
+                <div id="gp-css-palette" data-gp-content></div>
             </section>`;
 
     // Карусель тем живёт своей прокруткой: её позицию тоже надо перенести,
@@ -1610,6 +1619,9 @@ function renderAppearance(screen) {
 
             <section class="gp-theme-section gp-theme-editor">
                 <h3>Настроить</h3>
+                <label class="gp-theme-control"><span>Затемнение обоев <output id="gp-wall-dark-out">${custom.wallpaperDarkness}%</output></span><input id="gp-wall-dark" type="range" min="0" max="90" value="${custom.wallpaperDarkness}"></label>
+                <label class="gp-theme-control"><span>Размер текста сообщений <output id="gp-message-size-out">${custom.messageSize??14}px</output></span><input id="gp-message-size" type="range" min="11" max="22" value="${custom.messageSize??14}"></label>
+                <label class="gp-theme-control"><span>Скругление пузырей <output id="gp-bubble-radius-out">${custom.bubbleRadius??19}px</output></span><input id="gp-bubble-radius" type="range" min="0" max="32" value="${custom.bubbleRadius??19}"></label>
                 <label class="gp-theme-control gp-color-control">
                     <span>Акцент</span>
                     <span class="gp-color-pickers">
@@ -1769,6 +1781,9 @@ function renderAppearance(screen) {
             updateCustom({ [key]: Number(el.value) });
         });
     };
+    bindRange('#gp-wall-dark','wallpaperDarkness','#gp-wall-dark-out','%');
+    bindRange('#gp-message-size','messageSize','#gp-message-size-out','px');
+    bindRange('#gp-bubble-radius','bubbleRadius','#gp-bubble-radius-out','px');
     bindRange('#gp-theme-radius', 'radius', '#gp-radius-out', 'px');
     bindRange('#gp-theme-alpha', 'transparency', '#gp-alpha-out', '%');
     bindRange('#gp-theme-icons', 'iconScale', '#gp-icons-out', '%');
@@ -1870,10 +1885,15 @@ function renderAppearance(screen) {
     // ── Свой CSS (перенесён из панели расширения) ──
     const cssArea = screen.querySelector('#gp-app-css');
     if (cssArea) cssArea.value = s.customCss || '';
+    const palette=screen.querySelector('#gp-css-palette');
+    const saveCss=()=>{getSettings().customCss=cssArea?.value||'';saveSettingsDebounced();applySkin();};
+    const refreshPalette=()=>{if(palette&&cssArea)mountCssPalette(palette,cssArea,saveCss,getSettings().lang==='en');};
+    refreshPalette();
     screen.querySelector('#gp-app-css-apply')?.addEventListener('click', () => {
         getSettings().customCss = cssArea?.value || '';
         saveSettingsDebounced();
         applySkin();
+        refreshPalette();
         toast('CSS применён', 'fa-check');
     });
 
@@ -6890,17 +6910,12 @@ export function toast(text, icon = 'fa-comment-dots', threadKey = null, onOpen =
     const older=[...host.querySelectorAll('.gp-toast')];while(older.length>=3)older.shift().remove();
     host.appendChild(el);
     requestAnimationFrame(() => el.classList.add('gp-toast-show'));
-    if (threadKey || onOpen) {
-        el.style.cursor = 'pointer';
-        el.addEventListener('click', () => {
-            if(onOpen)onOpen();else openPhone(threadKey);
-            el.remove();
-        });
-    }
-    setTimeout(() => {
-        el.classList.remove('gp-toast-show');
-        setTimeout(() => el.remove(), 400);
-    }, threadKey ? 6500 : 5000);
+    let timer;
+    const dismiss=()=>{clearTimeout(timer);el.remove();};
+    el.cleanup=()=>clearTimeout(timer);
+    el.style.cursor='pointer';
+    el.addEventListener('click',()=>{dismiss();if(onOpen)onOpen();else if(threadKey)openPhone(threadKey);},{once:true});
+    timer=setTimeout(()=>{el.classList.remove('gp-toast-show');timer=setTimeout(dismiss,400);},threadKey?6500:5000);
     return el;
 }
 
