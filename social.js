@@ -1,3 +1,4 @@
+import { prepareStickerImageSettings } from './sticker-image-settings.js';
 import { applyBotSmsReactions } from './sms-bot-reactions.js';
 import { SMS_REACTIONS } from './sms-reactions.js';
 import { stampPhoneText } from './phone-clock.js';
@@ -3217,7 +3218,7 @@ async function _generatePostImage(post, onStatus = null, signal = null, cancelKe
         requestSettings.overrideAspectRatio = false;
         requestSettings.overrideImageSize = false;
     }
-    if(post.mediaKind==='sticker'){requestSettings.aspectRatio='1:1';requestSettings.novelaiAspectRatio='1:1';requestSettings.overrideAspectRatio=true;}
+    if(post.mediaKind==='sticker')Object.assign(requestSettings,await prepareStickerImageSettings(requestSettings,mod));
     const genOptions = { providerSettings: requestSettings };
     if(!isShop){
         requestSettings.optionalAvatarSending=false;
