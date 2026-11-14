@@ -58,7 +58,7 @@ function buildPrompt() {
         for (const producer of [bankInjectRule, getBankSummaryLine, plansInjectRule, plansInjectLine]) {
             try { const text = producer(); if (text) parts.push(text); } catch (_error) { /* Optional state. */ }
         }
-        if (getSettings().timeTag !== false) parts.push('CLOCK: last line <!--tel:time:HH:MM DD.MM.YYYY--> using story time.');
+        if (getSettings().timeTag !== false) parts.push('PLAYER REACTIONS: never put react/reactions/botReactions fields on a newly written SMS or claim the player reacted to your own message. User reactions come from their UI actions. CLOCK: last line <!--tel:time:HH:MM DD.MM.YYYY--> using story time.');
         return parts.concat('</phone_directive>').join('\n');
     }
     const { contacts, threads } = scanChat();

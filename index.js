@@ -1,3 +1,4 @@
+import { sanitizeGeneratedReactions } from './generated-reactions.js';
 import { stampNewChatMessage } from './phone-clock.js';
 import { registerPhoneSettings } from './phone-settings.js';
 import { generateRoleplayMedia } from './roleplay-media.js';
@@ -576,7 +577,7 @@ jQuery(async () => {
             if (isPhoneOpen()) render();
         };
         eventSource.on(event_types.MESSAGE_RECEIVED, id=>{
-            if(getSettings().isEnabled){const chat=SillyTavern.getContext()?.chat||[];if(stampNewChatMessage(chat[Number.isInteger(id)?id:chat.length-1]))saveChatConditional().catch(console.warn);}
+            if(getSettings().isEnabled){const chat=SillyTavern.getContext()?.chat||[];const message=chat[Number.isInteger(id)?id:chat.length-1],changed=sanitizeGeneratedReactions(message);if(stampNewChatMessage(message)||changed)saveChatConditional().catch(console.warn);}
             onNewMessage();
         });
         // ExtBlocks emits before writing its generated content to storage.

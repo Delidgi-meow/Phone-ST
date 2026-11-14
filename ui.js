@@ -829,7 +829,7 @@ export function render() {
     else if (currentScreen === 'mystream') renderMyStream(screen);
     else if (currentScreen === 'notes') renderNotes(screen);
     else if (currentScreen === 'calendar') renderPlans(screen);
-    else if (currentScreen === 'settings') renderPhoneSettings(screen,{home:()=>goto('home'),appstore:()=>goto('appstore'),appearance:()=>goto('appearance'),lock:()=>editLockAppearance(screen,{render,toast}),values:()=>openUserValues(screen,{render,toast,changed:updatePhoneInjection}),chats:()=>editThreadAppearance(screen,null,{render,toast},{scope:'all'})});
+    else if (currentScreen === 'settings') renderPhoneSettings(screen,{changed:()=>{updatePhoneInjection();render();},home:()=>goto('home'),appstore:()=>goto('appstore'),appearance:()=>goto('appearance'),lock:()=>editLockAppearance(screen,{render,toast}),values:()=>openUserValues(screen,{render,toast,changed:updatePhoneInjection}),chats:()=>editThreadAppearance(screen,null,{render,toast},{scope:'all'})});
     else if (currentScreen === 'appearance') renderAppearance(screen);
     else renderHome(screen);
     // Возвращаем набранный текст: перерисовка (генерация картинки, публикация,

@@ -15,7 +15,7 @@ import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.58.24';
+export const GP_VERSION = '2.58.25';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -711,8 +711,13 @@ export async function offloadMetaImages() {
 // а resolveAuthorKey звал scanChat внутри цикла по тегам, давая O(n²)
 // (чат 1000 сообщений ≈ 400+ мс на событие → заметные фризы).
 // Сигнатура дешёвая: длина чата + хвост последнего сообщения + версия метаданных.
+let phoneTextCache=new WeakMap();
 export function getPhoneMessageText(message) {
-    return readPhoneMessage(message, getSettings().externalBlocks !== false, stripThink);
+    if(!message||message.extra?.phoneHistoryCleared)return '';
+    const enabled=getSettings().externalBlocks!==false,old=phoneTextCache.get(message);
+    const main=message.mes,blocks=message.extra?.extblocks,display=message.extra?.display_text;
+    if(old&&old.main===main&&old.blocks===blocks&&old.display===display&&old.enabled===enabled)return old.text;
+    const text=readPhoneMessage(message,enabled,stripThink);phoneTextCache.set(message,{main,blocks,display,enabled,text});return text;
 }
 
 export function getRoleplaySmsOptions() {
@@ -744,6 +749,7 @@ let _scanCache = null, _scanSig = null;
 let _hiddenCache = null, _hiddenSig = null;
 
 // Принудительный сброс (правки сообщений, смена чата)
+export function clearPhoneCaches(){phoneTextCache=new WeakMap();_scanCache=null;_hiddenCache=null;_rpDateSig=null;invalidateChatCache();}
 export function invalidateChatCache() {
     _scanSig = null; _hiddenSig = null;
     storyTimesSignature = null;
@@ -1083,7 +1089,7 @@ const TIME_TAG_RE = /(?:<!--\s*tel:time:|<-{2,}\s*)\s*(\d{1,2}):([0-5]\d)\s*[-�
 // Время сюжета из метки в тексте сообщения
 export function parseTimeTag(text) {
     if (!text) return null;
-    const m = String(text).match(TIME_TAG_RE);
+    const m = String(text).replace(/[\u00a0\u2007\u202f]/g,' ').match(TIME_TAG_RE);
     if (!m) return null;
     const hours = Number(m[1]), minutes = Number(m[2]);
     const day = Number(m[3]), month = Number(m[4]);
@@ -1188,7 +1194,7 @@ export function parseAnyDateTime(text, base = null) {
             if (dm) { day = parseInt(dm[1]); month = parseInt(dm[2]); year = parseInt(dm[3]); }
             else {
                 dm = t.match(/\b(\d{1,2})[.\/-](\d{1,2})(?![.\/-]\d)\b/);
-                if (dm && base?.year) { day = parseInt(dm[1]); month = parseInt(dm[2]); year = base.year; }
+                if (dm && base?.year && /(?:дата|сегодня|сейчас|date|today|current)[^.!?\n]{0,20}$/i.test(t.slice(0,dm.index)) || dm && base?.year && /^\s*[*#_]*\s*$/.test(t.slice(0,dm.index))) { day = parseInt(dm[1]); month = parseInt(dm[2]); year = base.year; }
             }
         }
     }
