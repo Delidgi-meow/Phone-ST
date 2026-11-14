@@ -1,3 +1,4 @@
+import { promptSpaceText, transformPromptMessages } from './prompt-spaces.js';
 import { prepareStickerImageSettings } from './sticker-image-settings.js';
 import { applyBotSmsReactions } from './sms-bot-reactions.js';
 import { SMS_REACTIONS } from './sms-reactions.js';
@@ -1266,8 +1267,8 @@ async function socialGen(prompt, { maxTokens = 1024, image = null, prefill = '',
     maxTokens = socialTokenLimit(maxTokens);
     const usePrefill = !!(st.usePrefill && prefill) && !_noPrefill.has(profileId || '(current)');
     const useFigureSpaces = !!st.useFigureSpaces;
-    const messages = buildGenerationMessages(prompt, prefill, usePrefill, useFigureSpaces);
-    const fallbackPrompt = legacyPrompt(prompt, prefill, usePrefill, useFigureSpaces);
+    const messages = transformPromptMessages(buildGenerationMessages(prompt, prefill, usePrefill, useFigureSpaces),st);
+    const fallbackPrompt = promptSpaceText(legacyPrompt(prompt, prefill, usePrefill, useFigureSpaces),st);
 
     const finish = (raw) => {
         checkActivity();

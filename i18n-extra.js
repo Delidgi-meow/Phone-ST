@@ -1,5 +1,8 @@
 // Labels added after the original English dictionary. RP/user content is not translated.
 export const EXTRA_TRANSLATIONS = {
+ 'Фигурные пробелы во всём запросе и ответе':'Figure spaces in the whole prompt and response',
+ 'Вернуть обычные пробелы':'Restore normal spaces',
+ 'Меняется отправляемый запрос. История чата сохраняется.':'Only the outgoing prompt changes. Chat history is preserved.',
     'Основное':'General',
     'Данные телефона':'Phone data',
     'Обновить кэш телефона':'Refresh phone cache',

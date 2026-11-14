@@ -605,6 +605,8 @@ export function applySkin() {
     if(custom.bubbleRadius!==null)styleEl.textContent+='\n#gp-phone#gp-phone .gp-bubble{border-radius:'+custom.bubbleRadius+'px!important}';
     ph?.style.setProperty('--gp-wallpaper-darkness',String(custom.wallpaperDarkness/100));
     applyWallpaper();
+    const screen=document.getElementById('gp-screen');
+    if(screen&&isPhoneOpen())applyAppSurface(screen,currentScreen);
 }
 
 // ═══ Обои телефона ═══

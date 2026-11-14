@@ -15,7 +15,7 @@ import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.58.32';
+export const GP_VERSION = '2.58.33';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -45,6 +45,7 @@ const defaultSettings = () => ({
     // Отдельная опция: просить модель использовать U+2007 между словами.
     // На выходе эти пробелы всегда нормализуются обратно в обычные.
     useFigureSpaces: false,
+    normalizePromptSpaces: false,
     // Контекст для генерации соцсетей:
     // 'rich' — карточка бота + персона + триггернутый лорбук + история чата (дефолт)
     // 'lite' — только короткий срез чата (максимальная изоляция)
