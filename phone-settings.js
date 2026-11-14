@@ -8,8 +8,8 @@ const I=n=>'<i class="fa-solid '+n+'" aria-hidden="true"></i>';
 let panel=null,settingsApi=null;
 function mountDataTools(node){
     const host=node.querySelector('[data-settings-behavior] .gp-settings-group-body');if(!host||host.querySelector('.gp-phone-data-group'))return;
-    const tools=document.createElement('details');tools.className='gp-phone-data-group';
-    tools.innerHTML='<summary>'+L('Данные телефона','Phone data')+'</summary><button type="button" class="gp-save-preset" data-phone-cache-clear>'+L('Обновить кэш телефона','Refresh phone cache')+'</button><button type="button" class="gp-save-preset gp-danger" data-phone-history-clear>'+L('Очистить историю телефона','Clear phone history')+'</button><small>'+L('СМС, ленты и сторис этого чата. Контакты, баланс, заметки, стикеры и текст РП сохранятся.','SMS, feeds and stories in this chat. Contacts, balance, notes, stickers and RP text are kept.')+'</small>';
+    const tools=document.createElement('div');tools.className='gp-phone-data-group';
+    tools.innerHTML='<button type="button" class="gp-save-preset" data-phone-cache-clear>'+L('Обновить кэш телефона','Refresh phone cache')+'</button><button type="button" class="gp-save-preset gp-danger" data-phone-history-clear>'+L('Очистить историю телефона','Clear phone history')+'</button><small>'+L('СМС, ленты и сторис этого чата. Контакты, баланс, заметки, стикеры и текст РП сохранятся.','SMS, feeds and stories in this chat. Contacts, balance, notes, stickers and RP text are kept.')+'</small>';
     tools.querySelector('[data-phone-cache-clear]').onclick=()=>{clearPhoneCaches();settingsApi?.changed?.();};
     tools.querySelector('[data-phone-history-clear]').onclick=async event=>{if(!confirm(L('Очистить СМС, ленты, сторис и кэш телефона в этом чате? Текст РП, контакты, баланс, заметки и стикеры сохранятся.','Clear SMS, feeds, stories and phone cache in this chat? RP text, contacts, balance, notes and stickers will be kept.')))return;const button=event.currentTarget;button.disabled=true;try{await clearPhoneHistory();settingsApi?.home();}catch(error){button.disabled=false;alert(String(error.message||error));}};
     host.append(tools);

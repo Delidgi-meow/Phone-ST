@@ -6107,3 +6107,6 @@ body.gp-native-shell #gp-phone#gp-phone>.gp-statusbar{padding-top:22px!important
 #gp-phone .gp-phone-data-group .gp-save-preset{display:block;width:100%;margin:8px 0}
 
 #gp-phone #gp-settings-drawer .gp-phone-data-group>summary{display:block;grid-template-columns:none;padding:12px 0;cursor:pointer;font-weight:600}
+
+/* Behavior actions match the phone data buttons. */
+#gp-phone#gp-phone #gp-settings-drawer [data-settings-behavior] button{display:flex!important;align-items:center;justify-content:center;flex:1 1 100%!important;box-sizing:border-box;width:100%!important;min-height:30px!important;margin:4px 0!important;padding:6px 10px!important;border:1px solid rgba(var(--gp-accent-a-rgb),.35)!important;border-radius:10px!important;background:var(--gp-glass-strong)!important;color:var(--gp-accent-a)!important;font:inherit!important;font-size:10px!important;text-align:center;white-space:normal;box-shadow:none!important;cursor:pointer}
