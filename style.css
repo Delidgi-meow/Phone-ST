@@ -6110,3 +6110,10 @@ body.gp-native-shell #gp-phone#gp-phone>.gp-statusbar{padding-top:22px!important
 
 /* Behavior actions match the phone data buttons. */
 #gp-phone#gp-phone #gp-settings-drawer [data-settings-behavior] button{display:flex!important;align-items:center;justify-content:center;flex:1 1 100%!important;box-sizing:border-box;width:100%!important;min-height:30px!important;margin:4px 0!important;padding:6px 10px!important;border:1px solid rgba(var(--gp-accent-a-rgb),.35)!important;border-radius:10px!important;background:var(--gp-glass-strong)!important;color:var(--gp-accent-a)!important;font:inherit!important;font-size:10px!important;text-align:center;white-space:normal;box-shadow:none!important;cursor:pointer}
+
+/* Shared theme typography and one continuous action column. */
+#gp-phone#gp-phone #gp-settings-drawer{font-family:inherit!important}
+#gp-phone#gp-phone #gp-settings-drawer [data-settings-behavior]>.gp-settings-group-body{display:flex;flex-direction:column;gap:8px}
+#gp-phone#gp-phone #gp-settings-drawer [data-settings-behavior] :is(.gp-settings-actions,.gp-phone-data-group){display:contents!important}
+#gp-phone#gp-phone #gp-settings-drawer [data-settings-behavior] button{flex:0 0 auto!important;margin:0!important;min-height:34px!important;font-family:inherit!important;font-weight:600!important;line-height:1.4!important}
+#gp-phone#gp-phone #gp-settings-drawer [data-settings-behavior] button:is(.gp-danger,.gp-settings-danger){color:var(--gp-danger,#e57378)!important}
