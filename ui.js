@@ -426,7 +426,7 @@ function createPhone() {
     ov.id = 'gp-overlay';
     ov.innerHTML = `
         <div id="gp-phone">
-            <div class="gp-island"></div>
+            <button type="button" class="gp-island" id="gp-close" title="Закрыть телефон" aria-label="Закрыть телефон"><span class="gp-island-close" aria-hidden="true">×</span></button>
             <div class="gp-statusbar">${phoneStatusMarkup(getSettings())}</div>
             <div id="gp-screen"></div>
             <div class="gp-homebar" title="Закрыть"></div>

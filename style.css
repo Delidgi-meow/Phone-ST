@@ -6076,38 +6076,29 @@ img[data-zoom] { cursor: zoom-in; }
 #gp-phone .gp-story-reactions-retry{color:inherit;padding:4px 8px;cursor:pointer;font-size:14px}
 #gp-phone .gp-story-reactions-retry:disabled{opacity:.5;cursor:wait}
 
-/* iPhone-style status row: balanced sides keep RP time at the true center. */
-#gp-phone#gp-phone>.gp-statusbar{display:grid!important;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:8px;padding-inline:12px;font-size:12px;line-height:20px;letter-spacing:0;min-height:24px;box-sizing:border-box}
-#gp-phone#gp-phone .gp-status-left{display:flex;align-items:center;gap:5px;min-width:0;overflow:hidden}
-#gp-phone#gp-phone .gp-carrier{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:400;min-width:0}
-#gp-phone#gp-phone .gp-status-right{justify-self:end;display:flex;align-items:center;gap:4px;opacity:1;font-size:11px;white-space:nowrap}
-#gp-phone#gp-phone #gp-clock{grid-column:2;font-size:13px!important;font-weight:600;visibility:visible;line-height:20px;min-width:38px;text-align:center;font-variant-numeric:tabular-nums}
-#gp-phone#gp-phone #gp-rpdate{display:none!important}
-#gp-phone#gp-phone .gp-statusbar .gp-close{width:18px;height:22px;min-width:18px;padding:0;margin:0;border:0!important;background:none!important;box-shadow:none!important;font-size:13px;opacity:.7;display:grid;place-items:center}
-#gp-phone .gp-cellular{display:flex;align-items:flex-end;gap:2px;height:13px;flex:0 0 20px}
-#gp-phone .gp-cellular i{background:currentColor;width:4px;border-radius:1px;height:4px}
-#gp-phone .gp-cellular i:nth-child(2){height:7px}#gp-phone .gp-cellular i:nth-child(3){height:10px}#gp-phone .gp-cellular i:nth-child(4){height:13px}
-#gp-phone .gp-status-wifi{position:relative;width:16px;height:12px;flex:0 0 16px;overflow:hidden}
-#gp-phone .gp-status-wifi:before,#gp-phone .gp-status-wifi:after{content:"";position:absolute;left:50%;border:2px solid currentColor;border-bottom:0;border-radius:50% 50% 0 0;transform:translateX(-50%);box-sizing:border-box}
-#gp-phone .gp-status-wifi:before{top:0;width:16px;height:9px}#gp-phone .gp-status-wifi:after{top:5px;width:8px;height:5px}
-#gp-phone .gp-status-battery{position:relative;width:24px;height:12px;border:1px solid currentColor;border-radius:3px;box-sizing:border-box;display:inline-block;margin-right:3px;color:inherit}
-#gp-phone .gp-status-battery:after{content:"";position:absolute;width:2px;height:5px;right:-4px;top:2px;border-radius:0 1px 1px 0;background:currentColor;opacity:.7}
-#gp-phone .gp-status-battery>i{position:absolute;inset:2px;background:linear-gradient(to right,currentColor var(--gp-charge,100%),transparent var(--gp-charge,100%));border-radius:1px}
-#gp-phone .gp-status-battery[data-level=medium]>i{background:linear-gradient(to right,#f4cf58 var(--gp-charge,100%),transparent var(--gp-charge,100%))}#gp-phone .gp-status-battery[data-level=low]>i{background:linear-gradient(to right,#ed645e var(--gp-charge,100%),transparent var(--gp-charge,100%))}
+/* Status row: precise, shared geometry independent of theme controls. */
+#gp-phone#gp-phone>.gp-island{position:absolute!important;top:11px!important;left:50%!important;transform:translateX(-50%)!important;margin:0!important;width:116px!important;height:32px!important;min-height:0;padding:0!important;z-index:5;border:0!important;outline:0;border-radius:20px!important;background:#090a0c!important;box-shadow:none!important;cursor:pointer;color:#fff;display:flex;align-items:center;justify-content:center}
+#gp-phone#gp-phone>.gp-island .gp-island-close{font:18px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;opacity:0;transition:opacity .15s}
+#gp-phone#gp-phone>.gp-island:hover .gp-island-close,#gp-phone#gp-phone>.gp-island:focus-visible .gp-island-close{opacity:.65}
+#gp-phone#gp-phone>.gp-island:focus-visible{outline:2px solid var(--gp-text);outline-offset:3px}
+#gp-phone#gp-phone>.gp-statusbar{position:relative;display:flex!important;align-items:center!important;justify-content:space-between;flex:0 0 54px;min-height:54px;height:54px;box-sizing:border-box;padding:0 24px!important;gap:0;line-height:20px;letter-spacing:0;color:var(--gp-app-chrome-ink,var(--gp-text));font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-weight:500}
+#gp-phone#gp-phone .gp-status-left{display:flex;align-items:center;gap:5px;min-width:0;max-width:calc(50% - 68px);overflow:hidden}
+#gp-phone#gp-phone #gp-clock{display:block;visibility:visible!important;flex:0 0 auto;min-width:44px;font-size:15px!important;line-height:20px!important;font-weight:600!important;letter-spacing:-.3px;text-align:center;font-variant-numeric:tabular-nums}
+#gp-phone#gp-phone .gp-carrier{font-size:9px;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;min-width:0}
+#gp-phone#gp-phone .gp-carrier:empty,#gp-phone#gp-phone #gp-rpdate{display:none!important}
+#gp-phone#gp-phone .gp-status-right{display:flex;align-items:center;justify-content:flex-end;gap:5px;font-size:10px;line-height:16px;flex:0 0 auto;opacity:1;color:inherit}
+#gp-phone#gp-phone .gp-status-right svg{display:block;flex:0 0 auto;height:14px;fill:currentColor;color:inherit!important;background:none!important;filter:none!important;mask:none!important;-webkit-mask:none!important;opacity:1}
+#gp-phone#gp-phone .gp-cellular{width:17px}
+#gp-phone#gp-phone .gp-status-wifi{width:17px;overflow:visible}
+#gp-phone#gp-phone .gp-status-wifi path{fill:none!important;stroke:currentColor!important}
+#gp-phone#gp-phone .gp-status-battery{position:relative;width:28px;height:14px;border:1px solid currentColor;border-radius:4px;box-sizing:border-box;display:block;margin-right:3px;color:inherit;opacity:1}
+#gp-phone#gp-phone .gp-status-battery:after{content:"";position:absolute;width:2px;height:4px;right:-4px;top:4px;border-radius:0 1px 1px 0;background:currentColor;opacity:.5}
+#gp-phone#gp-phone .gp-status-battery>i{position:absolute;inset:2px;display:block;border-radius:1px;background:linear-gradient(to right,currentColor var(--gp-charge,100%),color-mix(in srgb,currentColor 65%,transparent) var(--gp-charge,100%));color:inherit!important}
+#gp-phone#gp-phone .gp-status-battery[data-level=low]>i{background:linear-gradient(to right,#f05d5e var(--gp-charge,100%),#f05d5eaa var(--gp-charge,100%))}
+#gp-phone#gp-phone .gp-charge-percent{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font:800 9px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif!important;letter-spacing:-.5px;color:var(--gp-home-sheet-bg,#15151a)!important;background:none;isolation:isolate;text-shadow:0 0 2px var(--gp-text);pointer-events:none}
+#gp-phone#gp-phone .gp-statusbar .gp-quiet-indicator{position:absolute;left:7px;top:19px;min-width:0;width:12px;height:16px;padding:0!important;margin:0!important;font-size:8px;line-height:16px;background:none!important;border:0!important;color:inherit}
+@media(max-width:600px){#gp-phone#gp-phone>.gp-island{display:none!important}#gp-phone#gp-phone>.gp-statusbar{height:calc(44px + env(safe-area-inset-top,0px));min-height:calc(44px + env(safe-area-inset-top,0px));flex-basis:calc(44px + env(safe-area-inset-top,0px));padding:env(safe-area-inset-top,0px) 20px 0!important}#gp-phone#gp-phone .gp-status-left{max-width:calc(100% - 128px)}}
+@media(max-width:600px){#gp-phone#gp-phone>.gp-island#gp-close{display:block!important;position:absolute!important;top:auto!important;bottom:3px!important;left:auto!important;right:8px!important;transform:none!important;width:24px!important;height:24px!important;background:transparent!important;border-radius:0!important;color:var(--gp-text)}#gp-phone#gp-phone>.gp-island#gp-close .gp-island-close{opacity:.45;font-size:16px}}
+body.gp-native-shell #gp-phone#gp-phone>.gp-statusbar{padding-top:22px!important;min-height:66px;flex-basis:66px;height:66px}
 
-#gp-phone .gp-status-wifi{background:repeating-radial-gradient(circle at 50% 100%,currentColor 0 2px,transparent 2px 4px);mask:conic-gradient(from -45deg at 50% 100%,#000 0 90deg,transparent 90deg);-webkit-mask:conic-gradient(from -45deg at 50% 100%,#000 0 90deg,transparent 90deg)}
-#gp-phone .gp-status-wifi:before,#gp-phone .gp-status-wifi:after{display:none}
-
-#gp-phone .gp-carrier:empty{display:none}
-
-/* Clock and indicators flank the island rather than sitting below it. */
-#gp-phone#gp-phone>.gp-island{position:absolute;top:13px;left:50%;transform:translateX(-50%);margin:0;width:108px;height:26px;z-index:3;pointer-events:none}
-#gp-phone#gp-phone>.gp-statusbar{display:flex!important;justify-content:space-between;min-height:52px;padding-top:14px;padding-bottom:14px;gap:10px}
-#gp-phone#gp-phone .gp-status-left{flex:0 1 auto;max-width:calc(50% - 66px);gap:7px}
-#gp-phone#gp-phone #gp-clock{flex-shrink:0;text-align:left;min-width:36px}
-#gp-phone#gp-phone .gp-status-right{flex:0 0 auto;gap:4px;font-size:10px}
-#gp-phone#gp-phone .gp-status-right .gp-cellular{flex-basis:17px;gap:1px}
-#gp-phone#gp-phone .gp-status-right .gp-cellular i{width:3px}
-#gp-phone#gp-phone .gp-status-right .gp-quiet-indicator{width:16px;height:20px;padding:0;font-size:10px}
-@media(max-width:600px){#gp-phone#gp-phone>.gp-statusbar{min-height:44px;padding-top:calc(10px + env(safe-area-inset-top,0px));padding-bottom:10px}#gp-phone#gp-phone .gp-status-left{max-width:calc(100% - 138px)}}
-body.gp-native-shell #gp-phone#gp-phone>.gp-statusbar{padding-top:34px}
+#gp-phone#gp-phone .gp-status-battery[data-level=low] .gp-charge-percent{color:#fff!important;text-shadow:0 1px 1px #0005}
