@@ -1,3 +1,4 @@
+import { refreshPhoneStatus } from './phone-status.js';
 import { clearPhoneHistory } from './phone-cleanup.js';
 import { clearPhoneCaches } from './state.js';
 import { lang } from './i18n.js';
@@ -41,6 +42,12 @@ export function renderPhoneSettings(screen,api){
     screen.querySelector('[data-settings-open="lock"]').onclick=api.lock;
     screen.querySelector('[data-settings-open="chats"]').onclick=api.chats;
     const values=document.createElement('button');values.type='button';values.innerHTML=I('fa-sliders')+'<span><b>'+L('Баланс и подписчики','Balance and followers')+'</b><small>'+L('Вручную или по сюжету: банк, Telegram, Instagram, Twitter и OnlyFans','Manual or story-based: bank, Telegram, Instagram, Twitter and OnlyFans')+'</small></span>'+I('fa-chevron-right');values.onclick=api.values;screen.querySelector('.gp-phone-settings-links').prepend(values);
+    const status=document.createElement('section');status.className='gp-theme-section';
+    status.innerHTML='<h3>'+L('Строка состояния','Status bar')+'</h3><label class="gp-theme-control"><span>'+L('Подпись слева','Left label')+'</span><input type="text" maxlength="40" data-status-label></label><label class="gp-theme-control"><span>'+L('Заряд, если браузер его не передаёт','Battery when unavailable from browser')+'</span><input type="number" min="0" max="100" data-status-battery></label>';
+    const label=status.querySelector('[data-status-label]'),battery=status.querySelector('[data-status-battery]');label.value=getSettings().statusLabel||'';label.placeholder=SillyTavern.getContext()?.name2||'Phone';battery.value=getSettings().statusBattery??100;
+    const updateStatus=()=>{saveSettingsDebounced();refreshPhoneStatus(document.getElementById('gp-phone'),getSettings(),SillyTavern.getContext()?.name2);};
+    label.oninput=()=>{getSettings().statusLabel=label.value.slice(0,40);updateStatus();};battery.onchange=()=>{getSettings().statusBattery=Math.max(0,Math.min(100,Number(battery.value)||0));battery.value=getSettings().statusBattery;updateStatus();};
+    screen.querySelector('.gp-phone-settings-mount').before(status);
     const tools=document.createElement('section');tools.className='gp-theme-section';
     tools.innerHTML='<h3>'+L('Данные телефона','Phone data')+'</h3><button type="button" class="gp-save-preset" data-phone-cache-clear>'+L('Обновить кэш телефона','Refresh phone cache')+'</button><button type="button" class="gp-save-preset gp-danger" data-phone-history-clear>'+L('Очистить историю телефона','Clear phone history')+'</button><small>'+L('СМС, ленты и сторис этого чата. Контакты, баланс, заметки, стикеры и текст РП сохранятся.','SMS, feeds and stories in this chat. Contacts, balance, notes, stickers and RP text are kept.')+'</small>';
     tools.querySelector('[data-phone-cache-clear]').onclick=()=>{clearPhoneCaches();api.changed?.();};

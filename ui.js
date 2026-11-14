@@ -1,3 +1,4 @@
+import { phoneStatusMarkup, refreshPhoneStatus, bindPhoneBattery } from './phone-status.js';
 import { retryStoryReactions, storyReactionPending } from './story-retry.js';
 import { mountCssPalette } from './theme-css-colors.js';
 import { bindSmsReactions, disposeSmsReactions, smsReactionChips, rememberSmsScroll, restoreSmsScroll } from './sms-reaction-ui.js';
@@ -426,20 +427,14 @@ function createPhone() {
     ov.innerHTML = `
         <div id="gp-phone">
             <div class="gp-island"></div>
-            <div class="gp-statusbar">
-                <span id="gp-clock">--:--</span>
-                <span class="gp-status-right">
-                    <span id="gp-rpdate" class="gp-rpdate"></span>
-                    <button type="button" class="gp-quiet-indicator" id="gp-quiet-indicator" title="Без звука" aria-label="Без звука" ${getSettings().quietMode ? '' : 'hidden'}>${ic('fa-bell-slash')}</button>
-                    ${ic('fa-signal')}${ic('fa-wifi')}${ic('fa-battery-three-quarters')}
-                    <button class="gp-close" id="gp-close" title="Закрыть">${ic('fa-xmark')}</button>
-                </span>
-            </div>
+            <div class="gp-statusbar">${phoneStatusMarkup(getSettings(),SillyTavern.getContext()?.name2)}</div>
             <div id="gp-screen"></div>
             <div class="gp-homebar" title="Закрыть"></div>
         </div>`;
     document.body.appendChild(ov);
     bindPhoneViewport(ov);
+    bindPhoneBattery(ov.querySelector('#gp-phone'),getSettings,()=>SillyTavern.getContext()?.name2);
+    refreshPhoneStatus(ov.querySelector('#gp-phone'),getSettings(),SillyTavern.getContext()?.name2);
     setPhoneViewportCompatibility(ov,getSettings().mobileViewportCompatibility);
     watchPhoneTranslations(ov);
     ov.addEventListener('pointerdown', (e) => {
@@ -728,6 +723,7 @@ function togglePhone() {
 }
 
 function tickClock() {
+    refreshPhoneStatus(document.getElementById('gp-phone'),getSettings(),SillyTavern.getContext()?.name2);
     const rpDt = getRpDateTime();
     const el = document.getElementById('gp-clock');
     if (el) {
