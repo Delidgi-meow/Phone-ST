@@ -2,7 +2,7 @@ import { phoneStatusMarkup, refreshPhoneStatus, bindPhoneBattery } from './phone
 import { retryStoryReactions, storyReactionPending } from './story-retry.js';
 import { mountCssPalette } from './theme-css-colors.js';
 import { bindSmsReactions, disposeSmsReactions, smsReactionChips, rememberSmsScroll, restoreSmsScroll } from './sms-reaction-ui.js';
-import { bindPhoneViewport, setPhoneViewportCompatibility } from './phone-viewport.js';
+import { bindPhoneViewport } from './phone-viewport.js';
 import { stampPhoneText, phoneEventTime, phoneTimeTag } from './phone-clock.js';
 import { smsQueue, enqueueSms, takeSmsQueue } from './sms-batch.js';
 import { smsReactions, preserveSmsMedia, appleReaction } from './sms-reactions.js';
@@ -435,7 +435,6 @@ function createPhone() {
     bindPhoneViewport(ov);
     bindPhoneBattery(ov.querySelector('#gp-phone'),getSettings);
     refreshPhoneStatus(ov.querySelector('#gp-phone'),getSettings());
-    setPhoneViewportCompatibility(ov,getSettings().mobileViewportCompatibility);
     watchPhoneTranslations(ov);
     ov.addEventListener('pointerdown', (e) => {
         if (e.target === ov) closePhone();

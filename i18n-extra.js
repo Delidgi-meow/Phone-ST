@@ -1,5 +1,9 @@
 // Labels added after the original English dictionary. RP/user content is not translated.
 export const EXTRA_TRANSLATIONS = {
+    'Основное':'General',
+    'Данные телефона':'Phone data',
+    'Обновить кэш телефона':'Refresh phone cache',
+    'Очистить историю телефона':'Clear phone history',
     'Повторить реакции на сторис':'Retry story reactions',
     'Затемнение обоев':'Wallpaper dimming',
     'Размер текста сообщений':'Message text size',

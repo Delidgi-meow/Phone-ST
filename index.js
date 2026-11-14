@@ -53,12 +53,12 @@ function setupSettingsPanel() {
         
     </div>
     <div class="gp-settings-body">
-        <div class="gp-settings-quick">
+        <details class="gp-settings-group"><summary><i class="fa-solid fa-toggle-on"></i><span><b>Основное</b></span><i class="fa-solid fa-chevron-down gp-settings-chevron"></i></summary><div class="gp-settings-quick">
             <label><input type="checkbox" id="gp-set-enabled" ${s.isEnabled ? 'checked' : ''}><span>Включено</span></label>
             <label><input type="checkbox" id="gp-set-fab" ${s.showFab ? 'checked' : ''}><span>Плавающая кнопка</span></label>
             <label><input type="checkbox" id="gp-set-inject" ${s.injectPrompt ? 'checked' : ''}><span>Инструкции для модели</span></label>
             <label><input type="checkbox" id="gp-set-quiet" ${s.quietMode ? 'checked' : ''}><span>Без звука<small class="gp-quiet-hint">Пауза входящих · банк и календарь работают</small></span></label>
-        </div>
+        </div></details>
 
         <details class="gp-settings-group">
             <summary><i class="fa-solid fa-layer-group"></i><span><b>Модель и контекст</b><small>Профиль, история и параметры ответа</small></span><i class="fa-solid fa-chevron-down gp-settings-chevron"></i></summary>
@@ -101,7 +101,7 @@ function setupSettingsPanel() {
             </div>
         </details>
 
-        <details class="gp-settings-group">
+        <details class="gp-settings-group" data-settings-behavior>
             <summary><i class="fa-solid fa-sliders"></i><span><b>Поведение</b><small>Журнал, инжект и плавающая кнопка</small></span><i class="fa-solid fa-chevron-down gp-settings-chevron"></i></summary>
             <div class="gp-settings-group-body">
                 <div class="gp-settings-checks">

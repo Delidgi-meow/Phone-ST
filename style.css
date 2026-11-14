@@ -591,10 +591,6 @@
 #gp-phone#gp-phone .gp-live-call .gp-call-hangup{display:inline-flex;align-items:center;justify-content:center;gap:9px;width:auto!important;height:auto!important;min-height:40px;padding:8px 20px!important;margin:8px 0 0!important;border:0!important;border-radius:13px!important;background:rgba(201,89,105,.15)!important;color:#e8919d!important;box-shadow:none!important;font:500 13px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 #gp-phone#gp-phone .gp-live-call .gp-call-hangup i{font-size:18px}
 /* Mobile browser chrome/keyboard may shrink the visible viewport independently. */
-/* Opt-in: reserve browser toolbar space even when its reported viewport is larger. */
-@media(max-width:600px){@supports(height:100svh){
-    #gp-overlay#gp-overlay.gp-viewport-compatible{height:min(var(--gp-visible-height,100svh),100svh)!important}
-}}
 @media(max-width:600px){
     #gp-overlay#gp-overlay{top:var(--gp-visible-top,0px)!important;left:var(--gp-visible-left,0px)!important;right:auto!important;bottom:auto!important;width:var(--gp-visible-width,100vw)!important;height:var(--gp-visible-height,100dvh)!important;box-sizing:border-box}
     #gp-overlay#gp-overlay>#gp-phone{box-sizing:border-box;min-height:0;max-height:100%!important}
@@ -6106,3 +6102,8 @@ body.gp-native-shell #gp-phone#gp-phone>.gp-statusbar{padding-top:22px!important
 /* Home editing actions use bare glyphs while retaining their touch targets. */
 #gp-phone#gp-phone :is(.gp-home-tools button,.gp-widget-edit,.gp-widget-remove){border:0!important;border-radius:0!important;outline:0;background:transparent!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
 #gp-phone#gp-phone :is(.gp-home-tools button,.gp-widget-edit,.gp-widget-remove):focus-visible{outline:2px solid currentColor;outline-offset:2px}
+
+#gp-phone .gp-phone-extra-group>summary,#gp-phone .gp-phone-data-group>summary{padding:12px 0;cursor:pointer;font-weight:600;color:var(--gp-text)}
+#gp-phone .gp-phone-data-group .gp-save-preset{display:block;width:100%;margin:8px 0}
+
+#gp-phone #gp-settings-drawer .gp-phone-data-group>summary{display:block;grid-template-columns:none;padding:12px 0;cursor:pointer;font-weight:600}
