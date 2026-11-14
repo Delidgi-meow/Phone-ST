@@ -1,6 +1,6 @@
 import { bindPromptSpaces } from './prompt-spaces.js';
 import { sanitizeGeneratedReactions } from './generated-reactions.js';
-import { stampNewChatMessage } from './phone-clock.js';
+import { stampNewChatMessage, stampExternalClockMessage } from './phone-clock.js';
 import { registerPhoneSettings } from './phone-settings.js';
 import { generateRoleplayMedia } from './roleplay-media.js';
 
@@ -588,7 +588,7 @@ jQuery(async () => {
         });
         // ExtBlocks emits before writing its generated content to storage.
         // Defer one turn so background blocks are visible to the harvesters.
-        onExternalBlocksChanged = () => setTimeout(onNewMessage, 0);
+        onExternalBlocksChanged = () => setTimeout(()=>{const message=(SillyTavern.getContext()?.chat||[]).findLast(item=>!item.is_user&&!item.is_system&&!/<!--\s*tel:(?:priv|log)\s*-->/i.test(item.mes||''));if(getSettings().isEnabled&&stampExternalClockMessage(message))saveChatConditional().catch(console.warn);onNewMessage();},0);
         eventSource.on('/extblocks/generated', () => onExternalBlocksChanged());
         eventSource.on('/fatpresets/change/extblocks', () => refreshPhoneImageBlocks());
         eventSource.on('/fatpresets/import/extblocks', () => refreshPhoneImageBlocks());

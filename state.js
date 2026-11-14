@@ -1,3 +1,4 @@
+import { externalStoryClock, externalClockRevision } from './external-story-clock.js';
 import { smsReactions } from './sms-reactions.js';
 import { storyDate, storyTimeline, storyClockText } from './rp-time.js';
 import { normalizePhoneSpaces, parsePhoneJson } from './phone-text.js';
@@ -15,7 +16,7 @@ import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.58.33';
+export const GP_VERSION = '2.58.34';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -1278,14 +1279,22 @@ export function getRpDateTime() {
             chatSig += m.length + '|' + m.slice(0, 50) + '|' + m.slice(-50) + '|';
         }
         const phoneClock=getMeta().phoneClock;
-        const sig = `${chat.length}|${phoneClock?.at||''}|${phoneClock?.anchor||''}|${calText.length}|${calText.slice(0, 100)}|${calText.slice(-100)}|${chatSig}`;
+        const sig = `${externalClockRevision(chat)}|${chat.length}|${phoneClock?.at||''}|${phoneClock?.anchor||''}|${calText.length}|${calText.slice(0, 100)}|${calText.slice(-100)}|${chatSig}`;
         if (sig === _rpDateSig) return _rpDateCache;
         _rpDateSig = sig;
 
         // Метка времени бьёт все остальные источники: её ставит сама модель,
         // зная, сколько времени прошло в сюжете.
         for (let i = chat.length - 1; i >= 0; i--) {
+            const block=externalStoryClock(chat[i],parseAnyDateTime);
+            if(block){
+                const key=JSON.stringify(block);
+                const clock=phoneClock?.sceneKey===key&&Number.isFinite(phoneClock.at)&&phoneClock.at>=storyDate(block).getTime()?new Date(phoneClock.at):null;
+                const effective=clock?{year:clock.getFullYear(),month:clock.getMonth()+1,day:clock.getDate(),hours:clock.getHours(),minutes:clock.getMinutes()}:block;
+                _rpDateCache={...effective,clockSourceKey:key,label:String(effective.day).padStart(2,'0')+'.'+String(effective.month).padStart(2,'0')};return _rpDateCache;
+            }
             const mes = chat[i]?.mes;
+            if(/<!--\s*tel:(?:log|priv)\s*-->/i.test(mes||''))continue;
             if (!mes) continue;
             // A newer scene without a tag must be read before an older phone tag.
             const narrative=storyClockText(chat[i],stripThink(mes));
