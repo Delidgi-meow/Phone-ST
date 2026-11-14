@@ -427,14 +427,14 @@ function createPhone() {
     ov.innerHTML = `
         <div id="gp-phone">
             <div class="gp-island"></div>
-            <div class="gp-statusbar">${phoneStatusMarkup(getSettings(),SillyTavern.getContext()?.name2)}</div>
+            <div class="gp-statusbar">${phoneStatusMarkup(getSettings())}</div>
             <div id="gp-screen"></div>
             <div class="gp-homebar" title="Закрыть"></div>
         </div>`;
     document.body.appendChild(ov);
     bindPhoneViewport(ov);
-    bindPhoneBattery(ov.querySelector('#gp-phone'),getSettings,()=>SillyTavern.getContext()?.name2);
-    refreshPhoneStatus(ov.querySelector('#gp-phone'),getSettings(),SillyTavern.getContext()?.name2);
+    bindPhoneBattery(ov.querySelector('#gp-phone'),getSettings);
+    refreshPhoneStatus(ov.querySelector('#gp-phone'),getSettings());
     setPhoneViewportCompatibility(ov,getSettings().mobileViewportCompatibility);
     watchPhoneTranslations(ov);
     ov.addEventListener('pointerdown', (e) => {
@@ -723,7 +723,7 @@ function togglePhone() {
 }
 
 function tickClock() {
-    refreshPhoneStatus(document.getElementById('gp-phone'),getSettings(),SillyTavern.getContext()?.name2);
+    refreshPhoneStatus(document.getElementById('gp-phone'),getSettings());
     const rpDt = getRpDateTime();
     const el = document.getElementById('gp-clock');
     if (el) {
