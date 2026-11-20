@@ -11,7 +11,3 @@ export function transformPromptMessages(messages,settings){
  }
  return messages;
 }
-export function bindPromptSpaces(events,types,settings){
- if(types.CHAT_COMPLETION_PROMPT_READY)events.on(types.CHAT_COMPLETION_PROMPT_READY,event=>{const s=settings();if(!s.isEnabled)return;transformPromptMessages(event.chat,s);});
- if(types.GENERATE_AFTER_COMBINE_PROMPTS)events.on(types.GENERATE_AFTER_COMBINE_PROMPTS,event=>{const s=settings();if(!s.isEnabled)return;event.prompt=promptSpaceText(event.prompt,s);});
-}

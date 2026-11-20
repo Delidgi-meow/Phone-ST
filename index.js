@@ -1,4 +1,3 @@
-import { bindPromptSpaces } from './prompt-spaces.js';
 import { sanitizeGeneratedReactions } from './generated-reactions.js';
 import { stampNewChatMessage, stampExternalClockMessage } from './phone-clock.js';
 import { registerPhoneSettings } from './phone-settings.js';
@@ -23,7 +22,6 @@ import { trDom, watchPhoneTranslations } from './i18n.js';
 import { buildReport, clearLog } from './debug-log.js';
 import { listPhoneImageBlocks } from './external-image-blocks.js';
 
-bindPromptSpaces(eventSource,event_types,getSettings);
 
 // ── CSS ──
 const cssId = 'glassphone-css';
@@ -77,7 +75,7 @@ function setupSettingsPanel() {
                     <label><input type="checkbox" id="gp-set-scam" ${s.scamEnabled !== false ? 'checked' : ''}><span>Спам и мошенники в смс</span></label>
                     <label><input type="checkbox" id="gp-set-anon" ${s.anonChannel !== false ? 'checked' : ''}><span>Анонимка «Подслушано» в каналах</span></label>
                     <label><input type="checkbox" id="gp-set-prefill" ${s.usePrefill ? 'checked' : ''}><span>Префилл ответа</span></label>
-                    <label><input type="checkbox" id="gp-set-figspaces" ${s.useFigureSpaces ? 'checked' : ''}><span>Фигурные пробелы во всём запросе и ответе</span></label><label><input type="checkbox" id="gp-reset-spaces" ${s.normalizePromptSpaces ? 'checked' : ''}><span>Вернуть обычные пробелы</span></label>
+                    <label><input type="checkbox" id="gp-set-figspaces" ${s.useFigureSpaces ? 'checked' : ''}><span>Фигурные пробелы в запросах и ответах телефона</span></label><label><input type="checkbox" id="gp-reset-spaces" ${s.normalizePromptSpaces ? 'checked' : ''}><span>Вернуть обычные пробелы</span></label>
                 </div>
             </div>
         </details>
