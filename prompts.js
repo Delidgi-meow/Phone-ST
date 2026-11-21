@@ -2,6 +2,7 @@ import { isPhoneAppInstalled } from './state.js';
 import { DEVICE_DIRECTIVE } from './device-actions.js';
 import { CHAT_MEDIA_DIRECTIVE } from './chat-media.js';
 import { smsRoleplayMemory } from './sms-context.js';
+import { shopOrdersContext } from './shop-context.js';
 
 import { setExtensionPrompt, extension_prompt_types, extension_prompt_roles } from '../../../../script.js';
 import { getSettings, getMeta, scanChat, getBlockedSmsKeys, keyOf, EXT_NAME, getRoleplaySmsOptions, contactIdentityPrompt } from './state.js';
@@ -147,6 +148,7 @@ function buildPrompt() {
     add(instagramInjectLine);
     add(plansInjectLine);
     add(notesInjectBlock);
+    if(isPhoneAppInstalled('shop'))add(()=>shopOrdersContext(getMeta()));
     add(twitchInjectLine);
     add(anonInjectLine);
     add(() => tinderInjectLine(phoneTurn !== null));

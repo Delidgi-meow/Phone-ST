@@ -3615,7 +3615,7 @@ async function _generateViaBuiltin(post, { prompt, wantChar, isUserPost, scene =
 // Сам снимок в чат НЕ уходит: он уже есть в телефоне, а вторым вложением в
 // истории он бы дублировался. Модели достаётся готовое описание — его составляет
 // vision-запрос, который и так идёт на каждый пост и сторис.
-export async function logSocialToChat(text, { marker = '', priv = false, context = null, rpAt = null, advance = true } = {}) {
+export async function logSocialToChat(text, { marker = '', priv = false, context = null, rpAt = null, advance = true, maxLength = 1500 } = {}) {
     if (getSettings().socialLogToChat === false) return;
     try {
         const ctx = SillyTavern.getContext();
@@ -3636,7 +3636,7 @@ export async function logSocialToChat(text, { marker = '', priv = false, context
             // tel:priv — то, что произошло в телефоне наедине: переписка,
             // Тиндер, закрытая страница, заметки. Ролевая это видит, а вот
             // генераторы «что говорит город» такие строки не получают.
-            mes: `<!--tel:log-->${priv ? '<!--tel:priv-->' : ''}${marker ? `<!--tel:mark:${String(marker).slice(0, 40)}-->` : ''}${context ? `<!--tel:context:${JSON.stringify(context).replace(/</g, '\\u003c')}-->` : ''}\n[Событие мира — соцсети/телефон] ${String(text).slice(0, 1500)}\n${clock.text.trim()}`,
+            mes: `<!--tel:log-->${priv ? '<!--tel:priv-->' : ''}${marker ? `<!--tel:mark:${String(marker).slice(0, 40)}-->` : ''}${context ? `<!--tel:context:${JSON.stringify(context).replace(/</g, '\\u003c')}-->` : ''}\n[Событие мира — соцсети/телефон] ${maxLength===null?String(text):String(text).slice(0, maxLength)}\n${clock.text.trim()}`,
             extra: {
                 phoneRpTime:clock.at,
                 type: 'comment',

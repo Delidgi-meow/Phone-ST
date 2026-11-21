@@ -23,6 +23,7 @@ export function addNote(text, drawing = null) {
     return note;
 }
 
+const pendingNoteJournals=new WeakMap();
 export function updateNote(id, text, drawing) {
     const n = getNotes().find(x => x.id === id);
     if (!n) return false;
@@ -32,8 +33,14 @@ export function updateNote(id, text, drawing) {
     saveMeta();
     // Открытую заметку правим и в истории: старая строка журнала устарела
     if (n.shared) {
-        removeJournalEntry(noteMarker(n.id));
-        journalNote(n, 'правит');
+        clearTimeout(pendingNoteJournals.get(n));
+        const owner=getMeta();
+        pendingNoteJournals.set(n,setTimeout(async()=>{
+            pendingNoteJournals.delete(n);
+            if(getMeta()!==owner||!n.shared||!getNotes().includes(n))return;
+            await removeJournalEntry(noteMarker(n.id));
+            if(getMeta()===owner&&n.shared&&getNotes().includes(n))journalNote(n,'правит');
+        },400));
     }
     return true;
 }

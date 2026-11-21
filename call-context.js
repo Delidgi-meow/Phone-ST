@@ -1,4 +1,5 @@
 import { normalizePhoneSpaces } from './phone-text.js';
+import { shopOrdersContext } from './shop-context.js';
 import { getMeta, getThread, getSettings, isPhoneAppInstalled, phoneActivityAllowed, stripThink, resolveContactKey, contactOriginalName, getRpDateTime } from './state.js';
 import { birthdayMemoryLine } from './birthday-dates.js';
 import { logReq } from './debug-log.js';
@@ -125,6 +126,9 @@ export async function buildPhoneConversationContext(contact,{medium='call',trans
             'CONTACT IDENTITY: canonical character '+JSON.stringify(original)+'; permanent key '+JSON.stringify(key)+'; saved by the user as '+JSON.stringify(label)+'. The saved name is their personal label for the same person, not a new identity. Know how the user named this contact.',
         cards.map(({item,fields})=>formatCard(fields,item.recipient)).join('\n\n')
     ];
+    if(!publicOnly&&['call','sms','direct'].includes(medium)&&isPhoneAppInstalled('shop')){
+        const purchases=shopOrdersContext(root);if(purchases)blocks.push(purchases);
+    }
     if(persona)blocks.push('=== USER PERSONA ===\n'+clip(persona,4000));
     if(summary)blocks.push('=== EXISTING STORY SUMMARY / MEMORY ===\n'+summary);
     if(history.text)blocks.push('=== RECENT ROLEPLAY HISTORY — chronological, up to 40 messages ===\n'+history.text);

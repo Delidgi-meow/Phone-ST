@@ -296,7 +296,7 @@ export function enhancePhoneHome(screen,api){
     const h=layout(templates);existing.className='gp-home gp-home-os';
     const home=existing;let gridRows=4;
     function resizeGrid(){
-        const cell=Math.max(40,(home.clientWidth-34)/4);home.style.setProperty('--gp-home-cell',cell+'px');
+        const cell=Math.max(40,(home.clientWidth-34)/4),value=cell+'px';if(home.style.getPropertyValue('--gp-home-cell')!==value)home.style.setProperty('--gp-home-cell',value);
         const stage=home.querySelector('.gp-home-stage'),grid=home.querySelector('.gp-home-grid');
         if(!stage||!grid)return;
         const gap=parseFloat(getComputedStyle(grid).rowGap)||0;

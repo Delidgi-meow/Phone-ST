@@ -1,7 +1,7 @@
 import { getNotes, addNote, updateNote, deleteNote, toggleNoteShared } from './notes.js';
 
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let active=null;
+let active=null,changeTimer=null;
 const colors=['#242424','#777777','#ffffff','#e34b4b','#ef9b32','#edcf45','#46a36a','#418ee6','#8864c7','#dc78a5'];
 
 export function renderNotesApp(screen,{onHome,onChange,icon}){
@@ -24,7 +24,8 @@ export function renderNotesApp(screen,{onHome,onChange,icon}){
     function save(){
         if(draft.id)updateNote(draft.id,draft.text,draft.drawing);
         else {const n=addNote(draft.text,draft.drawing);if(n){draft.id=n.id;if(draft.shared)toggleNoteShared(n.id);}}
-        onChange();
+        clearTimeout(changeTimer);
+        changeTimer=setTimeout(()=>{if(getNotes()===draft.owner)onChange();},250);
     }
     screen.innerHTML=`<section class="gp-ios-notes gp-ios-note-editor"><header><button data-list>${icon('fa-chevron-left')} Заметки</button><div><button data-share aria-label="${draft.shared?'Скрыть от модели':'Показать модели'}" title="${draft.shared?'Видна модели':'Личная заметка'}">${icon(draft.shared?'fa-eye':'fa-eye-slash')}</button><button data-delete aria-label="Удалить заметку">${icon('fa-trash-can')}</button><button data-done>Готово</button></div></header><div class="gp-ios-note-paper"><textarea data-note-text maxlength="20000" placeholder="Заголовок&#10;Начни писать…" aria-label="Текст заметки"></textarea><div class="gp-note-sketch" ${draft.drawing.strokes.length?'':'hidden'}><canvas aria-label="Рисунок в заметке"></canvas></div></div><div class="gp-note-art-tools" hidden><div class="gp-note-pens"><button data-tool="brush" title="Кисть" aria-label="Кисть">${icon('fa-paintbrush')}<small>Кисть</small></button><button data-tool="pencil" title="Карандаш" aria-label="Карандаш">${icon('fa-pencil')}<small>Карандаш</small></button><button data-tool="eraser" title="Ластик" aria-label="Ластик">${icon('fa-eraser')}<small>Ластик</small></button><label title="Толщина"> <input data-width type="range" min="1" max="24" value="6" aria-label="Толщина линии"></label><button data-undo aria-label="Отменить штрих">${icon('fa-rotate-left')}</button></div><div class="gp-note-palette">${colors.map(c=>`<button data-color="${c}" style="--ink:${c}" aria-label="Цвет ${c}"></button>`).join('')}<label title="Палитра"><input type="color" value="#242424" aria-label="Выбрать цвет"></label></div></div><footer><button data-draw aria-label="Рисовать">${icon('fa-pen-nib')}</button><span data-save-status>Сохраняется автоматически</span><button data-check title="Добавить пункт списка" aria-label="Добавить пункт списка">${icon('fa-list-check')}</button></footer></section>`;
     const area=screen.querySelector('[data-note-text]');area.value=draft.text;

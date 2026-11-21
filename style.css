@@ -6117,3 +6117,6 @@ body.gp-native-shell #gp-phone#gp-phone>.gp-statusbar{padding-top:22px!important
 #gp-phone#gp-phone #gp-settings-drawer [data-settings-behavior] :is(.gp-settings-actions,.gp-phone-data-group){display:contents!important}
 #gp-phone#gp-phone #gp-settings-drawer [data-settings-behavior] button{flex:0 0 auto!important;margin:0!important;min-height:34px!important;font-family:inherit!important;font-weight:600!important;line-height:1.4!important}
 #gp-phone#gp-phone #gp-settings-drawer [data-settings-behavior] button:is(.gp-danger,.gp-settings-danger){color:var(--gp-danger,#e57378)!important}
+
+/* Keep contact search rows mounted without overriding their hidden state. */
+#gp-phone .gp-book-list [data-book-contact][hidden] { display: none; }

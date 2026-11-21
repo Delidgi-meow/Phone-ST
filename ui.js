@@ -749,7 +749,22 @@ function tickClock() {
 // только мешают.
 const BLEED_SCREENS = new Set(['appstore','discord', 'dchannel', 'twitch', 'stream', 'mystream', 'igstory', 'ig', 'igview', 'ignew', 'ignewstory', 'igdms', 'igdm', 'igactivity', 'lock', 'browser', 'maps', 'phone', 'contacts', 'thread', 'bank', 'banktx', 'bankloan', 'bankmortgage', 'bankrec', 'chans', 'chan', 'chanpost', 'notes', 'shop', 'shopcat']);
 
+let refreshFrame=0, refreshAfterInput=false;
+export function requestPhoneRefresh(){
+    if(refreshFrame)return;
+    refreshFrame=requestAnimationFrame(()=>{
+        refreshFrame=0;
+        const screen=document.getElementById('gp-screen'),field=document.activeElement;
+        if(screen?.contains(field)&&field.matches('input:not([type=range]):not([type=checkbox]):not([type=radio]):not([type=color]),textarea,[contenteditable=true]')){
+            if(!refreshAfterInput){refreshAfterInput=true;field.addEventListener('blur',()=>{if(refreshAfterInput){refreshAfterInput=false;requestPhoneRefresh();}},{once:true});}
+            return;
+        }
+        render();
+    });
+}
 export function render() {
+    if(refreshFrame){cancelAnimationFrame(refreshFrame);refreshFrame=0;}
+    refreshAfterInput=false;
     const screen = document.getElementById('gp-screen');
     if (!screen || !isPhoneOpen()) return;
     syncPhoneViewOwner();
@@ -2362,12 +2377,16 @@ function renderThread(screen) {
 
     const input = screen.querySelector('#gp-input');
     const sendBtn = screen.querySelector('#gp-send');
+    let growFrame=0;
     const autoGrow = () => {
-        input.style.height = 'auto';
-        input.style.height = Math.min(110, input.scrollHeight) + 'px';
+        if(growFrame)return;
+        growFrame=requestAnimationFrame(()=>{
+            growFrame=0;if(!input.isConnected)return;
+            input.style.height='auto';input.style.height=Math.min(110,input.scrollHeight)+'px';
+        });
     };
     input?.addEventListener('input', autoGrow);
-    const updateSendLabel=()=>{const label=input.value.trim()||getSmsAttachment(t.key)?.image?'Добавить сообщение в серию':smsQueue(t.key).length?'Отправить всю серию и получить ответ':'Отправить';sendBtn.title=label;sendBtn.setAttribute('aria-label',label);};
+    const updateSendLabel=()=>{const label=input.value.trim()||getSmsAttachment(t.key)?.image?'Добавить сообщение в серию':smsQueue(t.key).length?'Отправить всю серию и получить ответ':'Отправить';if(sendBtn.title!==label)sendBtn.title=label;if(sendBtn.getAttribute('aria-label')!==label)sendBtn.setAttribute('aria-label',label);};
     input?.addEventListener('input',updateSendLabel);
     updateSendLabel();
     input?.addEventListener('keydown', (e) => {
@@ -4075,9 +4094,13 @@ function renderShopCat(screen) {
     screen.querySelectorAll('[data-buy]').forEach(btn => btn.addEventListener('click', () => {
         const [storeId, itemId] = btn.getAttribute('data-buy').split('|');
         const owner=getMeta();
-        const shade=openPhoneSheet(screen,'Оформление заказа','<form class="gp-group-composer"><label>Доставить через<select name="eta"><option value="30">30 минут</option><option value="60" selected>1 час</option><option value="120">2 часа</option><option value="1440">1 день</option><option value="4320">3 дня</option><option value="10080">7 дней</option></select></label><button type="submit" class="gp-web-primary">Оформить заказ</button></form>',currentScreen);
+        const recipients=getThreadList().filter(contact=>!contact.isGroup);
+        const deliveryField=['hotels','travel'].includes(cat.id)?'':'<label>'+ (lang()==='en'?'Deliver to':'Доставка на адрес к:')+'<select name="recipient"><option value="">'+(lang()==='en'?'Myself':'Себе')+'</option>'+recipients.map((contact,index)=>'<option value="'+index+'">'+esc(contact.name)+'</option>').join('')+'</select></label>';
+        const shade=openPhoneSheet(screen,'Оформление заказа','<form class="gp-group-composer">'+deliveryField+'<label>Доставить через<select name="eta"><option value="30">30 минут</option><option value="60" selected>1 час</option><option value="120">2 часа</option><option value="1440">1 день</option><option value="4320">3 дня</option><option value="10080">7 дней</option></select></label><button type="submit" class="gp-web-primary">Оформить заказ</button></form>',currentScreen);
         shade.querySelector('form').onsubmit=event=>{event.preventDefault();if(getMeta()!==owner)return;const minutes=Number(event.target.elements.eta.value);
-        const order = buyItem(cat.id, storeId, itemId, minutes);closePhoneSheet(shade);
+        const recipientIndex=event.target.elements.recipient?.value;
+        const recipient=recipientIndex!==undefined&&recipientIndex!==''?recipients[Number(recipientIndex)]:null;
+        const order = buyItem(cat.id, storeId, itemId, minutes,recipient?{key:recipient.key,name:recipient.originalName||recipient.name}:null);closePhoneSheet(shade);
         if (order) {
             updatePhoneInjection();
             render();
@@ -4199,6 +4222,7 @@ function renderShopOrders(screen) {
                                 ? `<span class="gp-bank-tx-cat">${esc(orderItems(o).slice(1).map(x => x.name).join(', '))}</span>` : ''}
                             <span class="gp-bank-tx-cat">${esc(o.store)} · ${esc(timeAgo(o.time,o.rpAt))}</span>
                             ${o.payer && o.payer !== 'user' ? `<span class="gp-bank-tx-cat">${esc(lang() === 'en' ? 'Paid by: ' : 'Плательщик: ')}${esc(o.payer)}</span>` : ''}
+                            ${o.eta ? '<span class="gp-bank-tx-cat">'+esc(lang()==='en'?'Delivery to: ':'Доставка к: ')+esc(o.recipient&&o.recipient!=='user'?o.recipient:(lang()==='en'?'Myself':'Себе'))+'</span>' : ''}
                             ${orderStatusHtml(o)}
                         </span>
                         <span class="gp-bank-tx-amt ${!o.payer || o.payer === 'user' ? 'gp-neg' : ''}">${esc(fmtMoney(o.price))}</span>

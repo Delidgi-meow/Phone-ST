@@ -6,7 +6,7 @@ import { generateRoleplayMedia } from './roleplay-media.js';
 import { eventSource, event_types, saveSettingsDebounced, saveChatConditional } from '../../../../script.js';
 import { getSettings, getMeta, GP_VERSION, invalidateChatCache, factoryReset, wipePhoneTraces, captureRoleplayOutgoing, setPhoneQuietMode } from './state.js';
 import { updatePhoneInjection } from './prompts.js';
-import { initUI, checkNewIncoming, resetIncomingCounters, updateFabBadge, render, isPhoneOpen, closePhone, applySkin, applyWallpaper, applyChatHiding, toast, notifyBankReminders, notifyDeliveries, deliverScamSms } from './ui.js';
+import { initUI, checkNewIncoming, resetIncomingCounters, updateFabBadge, requestPhoneRefresh as render, isPhoneOpen, closePhone, applySkin, applyWallpaper, applyChatHiding, toast, notifyBankReminders, notifyDeliveries, deliverScamSms } from './ui.js';
 import { harvestSocialTags, setUserHandle, getUserHandle, listIigProfiles, listIigStyles, listImageBuckets, currentExtModel, stripFakeJournal } from './social.js';
 import { harvestBankTags } from './bank.js';
 import { harvestPlanTags } from './plans.js';

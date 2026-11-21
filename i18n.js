@@ -693,8 +693,8 @@ export function trDom(root) {
     if (!root) return;
     const en = lang() === 'en';
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-    let node;
-    while ((node = walker.nextNode())) {
+    let node = root.nodeType === 3 ? root : walker.nextNode();
+    for (; node; node = walker.nextNode()) {
         const parent = node.parentElement;
         if (!parent || parent.tagName === 'SCRIPT' || parent.tagName === 'STYLE' || parent.tagName === 'TEXTAREA'||parent.closest('[data-gp-content],[translate="no"]')) continue;
         if(node.__gpOut!==undefined&&node.nodeValue!==node.__gpOut){delete node.__gpRu;delete node.__gpOut;}
@@ -707,7 +707,7 @@ export function trDom(root) {
         if(node.nodeValue!==output)node.nodeValue=output;
         node.__gpOut=output;
     }
-    const els = [root, ...root.querySelectorAll('*')];
+    const els = [root, ...(root.querySelectorAll?.('*') || [])];
     for (const el of els) {
         if (!el.getAttribute||el.closest('[data-gp-content],[translate="no"]')) continue;
         for (const attr of ATTRS) {
@@ -730,14 +730,24 @@ export function trDom(root) {
 const translationObservers=new WeakMap();
 export function watchPhoneTranslations(root){
     if(!root||translationObservers.has(root))return;
-    let queued=false;
-    const config={subtree:true,childList:true,characterData:true,attributes:true,attributeFilter:ATTRS};
-    const observer=new MutationObserver(()=>{
-        if(queued)return;queued=true;
-        queueMicrotask(()=>{
-            queued=false;observer.disconnect();
-            try{trDom(root);}finally{if(root.isConnected)observer.observe(root,config);}
-        });
-    });
+    let frame=0;
+    const dirty=new Set();
+    const config={subtree:true,childList:true,characterData:true,attributes:true,attributeOldValue:true,attributeFilter:ATTRS};
+    const collect=records=>{
+        for(const record of records){
+            if(record.type==='childList')for(const node of record.addedNodes)dirty.add(node);
+            else if(record.type!=='attributes'||record.oldValue!==record.target.getAttribute(record.attributeName))dirty.add(record.target);
+        }
+        if(dirty.size&&!frame)frame=requestAnimationFrame(flush);
+    };
+    const flush=()=>{
+        collect(observer.takeRecords());frame=0;
+        const nodes=[...dirty].filter(node=>root.contains(node));dirty.clear();
+        observer.disconnect();
+        // Translate only changed subtrees; never rescan the entire chat on typing.
+        try{for(const node of nodes)if(!nodes.some(parent=>parent!==node&&parent.contains(node)))trDom(node);}
+        finally{if(root.isConnected)observer.observe(root,config);}
+    };
+    const observer=new MutationObserver(collect);
     translationObservers.set(root,observer);trDom(root);observer.observe(root,config);
 }

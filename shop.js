@@ -4,6 +4,7 @@ import { generateShopContent, logSocialToChat, getUserName } from './social.js';
 import { addTransaction, getBank, fmtMoney, roundMoney } from './bank.js';
 import { lang } from './i18n.js';
 import { paymentPayer } from './bank-protocol.js';
+import { shopOrderSnapshot } from './shop-context.js';
 
 function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -108,9 +109,9 @@ async function _generateCategory(catId, onStatus) {
         name: String(st.store || 'Магазин').slice(0, 50),
         items: (Array.isArray(st.items) ? st.items : []).filter(it => it && it.name).slice(0, 10).map(it => ({
             id: genId(),
-            name: String(it.name).slice(0, 70),
+            name: String(it.name).slice(0, 200),
             price: Math.max(0, roundMoney(it.price)),
-            desc: String(it.desc || '').slice(0, 160),
+            desc: String(it.desc || '').slice(0, 2000),
         })),
     })).filter(st => st.items.length > 0);
     if (stores.length === 0) throw new Error('Пустой каталог');
@@ -122,12 +123,14 @@ async function _generateCategory(catId, onStatus) {
 const searchText=value=>String(value||'').normalize('NFC').toLowerCase().replace(/ё/g,'е').replace(/\s+/g,' ').trim();
 export function findShopProducts(query=''){
     const terms=searchText(query).split(' ').filter(Boolean), results=[], seen=new Set();
-    const catalogs=Object.entries(getShop().cats).sort((a,b)=>(b[1]?.at||0)-(a[1]?.at||0));
+    const shop=getShop(), matchedSearchIds=new Set(shop.searchQueries.filter(c=>searchText(c.query)===searchText(query)).map(c=>c.id));
+    const catalogs=Object.entries(shop.cats).sort((a,b)=>(b[1]?.at||0)-(a[1]?.at||0));
     for(const [catId,data] of catalogs){
         for(const store of data?.stores||[])for(const item of store?.items||[]){
             if(!item?.name)continue;
             const title=searchText(item.name), text=searchText(item.name+' '+item.desc+' '+store.name);
-            if(terms.length&&!terms.every(term=>text.includes(term)))continue;
+            // Search catalogs match the request even if the model corrects its spelling.
+            if(terms.length&&!matchedSearchIds.has(catId)&&!terms.every(term=>text.includes(term)))continue;
             const key=searchText(store.name)+'|'+title+'|'+item.price;if(seen.has(key))continue;seen.add(key);
             results.push({catId,storeId:store.id,storeName:store.name,item,score:terms.filter(term=>title.includes(term)).length});
         }
@@ -154,7 +157,7 @@ export async function searchShopProducts(query){
 
 // The chosen payer is recorded before the order: sponsored purchases never
 // create a temporary debit/refund on the owner's account.
-export function buyItem(catId, storeId, itemId, deliveryMinutes = null) {
+export function buyItem(catId, storeId, itemId, deliveryMinutes = null, deliveryTo = null) {
     const s = getShop();
     const cat = s.cats[catId];
     if (!cat) return null;
@@ -163,6 +166,8 @@ export function buyItem(catId, storeId, itemId, deliveryMinutes = null) {
     const item = store.items.find(x => x.id === itemId);
     if (!item) return null;
 
+    const recipientKey=deliveryTo?.key?resolveContactKey(deliveryTo.key):'';
+    const recipient=recipientKey?contactOriginalName(recipientKey,deliveryTo.name):'user';
     const payment = getShopPayer();
     addTransaction({ amount: -item.price, label: item.name, category: 'покупки', payer:payment.payer, appPurchase:true });
 
@@ -172,19 +177,20 @@ export function buyItem(catId, storeId, itemId, deliveryMinutes = null) {
     const open = s.orders.find(o => o.stage === 'placed' && o.cat === catId && o.store === store.name
         && (deliveryMinutes == null || o.eta === deliveryMinutes)
         && (o.payer || 'user') === payment.payer
+        && (o.recipient || 'user') === recipient && (o.recipientKey || '') === recipientKey
         && (o.placedTurn === chatLen() || Date.now() - (o.time || 0) < 15 * 60 * 1000));
     if (open) {
         if (!Array.isArray(open.items)) open.items = [{ name: open.item, price: open.price }];
-        open.items.push({ name: item.name, price: item.price });
+        open.items.push({ name: item.name, price: item.price, desc:item.desc });
         open.price += item.price;
         saveMeta();
         try {
-            logSocialToChat(`${getUserName()} добавляет «${item.name}» (${store.name}) к заказу за ${fmtMoney(item.price)}.${payment.payer === 'user' ? ' Оплачено со счёта владельца телефона; уже учтено банком.' : ` Напрямую магазину платит ${payment.payer} своими деньгами; счёт ${getUserName()} не меняется. Оплата уже учтена.`}`);
+            logSocialToChat(`${getUserName()} добавляет товар к подтвержденному заказу: ${JSON.stringify(shopOrderSnapshot(getMeta(),open))}. Оплата уже учтена банком; не списывать повторно.`,{maxLength:null});
         } catch (e) { /* ignore */ }
         return { ...open, merged: true };
     }
 
-    const order = { id: genId(), item: item.name, price: item.price, store: store.name, cat: catId, time: Date.now(), payer:payment.payer, payerKey:payment.key, items: [{ name: item.name, price: item.price }] };
+    const order = { id: genId(), item: item.name, price: item.price, store: store.name, cat: catId, time: Date.now(), payer:payment.payer, payerKey:payment.key, items: [{ name: item.name, price: item.price, desc:item.desc }], recipient, recipientKey, currency:getBank().currency };
     if (BOOKING_CATS.has(catId)) {
         order.stage = 'booked';
     } else {
@@ -201,7 +207,7 @@ export function buyItem(catId, storeId, itemId, deliveryMinutes = null) {
     // Событие для ролевой (скрытая строка в чат, уважает настройку журнала)
     try {
         const verb = catId === 'hotels' ? 'бронирует' : (catId === 'travel' ? 'оформляет тур' : 'заказывает');
-        logSocialToChat(`${getUserName()} ${verb} «${item.name}» (${store.name}) за ${fmtMoney(item.price)}.${payment.payer === 'user' ? ' Оплачено со счёта владельца телефона; уже учтено банком.' : ` Напрямую продавцу платит ${payment.payer} своими деньгами; счёт ${getUserName()} не меняется. Оплата уже учтена.`}`);
+        logSocialToChat(`${getUserName()} ${verb}. Подтвержденный заказ: ${JSON.stringify(shopOrderSnapshot(getMeta(),order))}. Оплата уже учтена банком; не списывать повторно.`,{maxLength:null});
     } catch (e) { /* ignore */ }
     return order;
 }
@@ -324,7 +330,7 @@ export function advanceOrders() {
         if (next === 'done') {
             try {
                 const who = 'Магазин';
-                logSocialToChat(`${who} доставил ${getUserName()} заказ «${o.item}» (${o.store})`);
+                logSocialToChat(`${who} доставил заказ «${o.item}» (${o.store}) по адресу получателя: ${o.recipient && o.recipient!=='user'?o.recipient:getUserName()}`);
             } catch (e) { /* ignore */ }
         }
     }

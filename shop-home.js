@@ -19,10 +19,9 @@ function custom(host,api){
 
 export function renderShopHome(host,api){
     const owner=getMeta(),s=state(),bank=getBank(),orders=getOrders();
-    const previous=host.querySelector('[data-market-query]'),focused=previous===document.activeElement,caret=previous?.selectionStart;
     const top=host.querySelector('.gp-market-scroll')?.scrollTop||0;
     const results=findShopProducts(s.query), shown=results.slice(0,s.query?80:6), categories=[...SHOP_CATS,...getCustomCats()];
-    host.innerHTML=`<div class="gp-market-home"><header class="gp-market-header"><button type="button" data-market-home aria-label="${L('Назад','Back')}">${icon('ChevronLeft')}</button><h2>${L('Магазин','Shop')}</h2><button type="button" data-market-orders aria-label="${L('Мои заказы','My orders')}">${icon('Package')}${orders.length?`<span>${orders.length>9?'9+':orders.length}</span>`:''}</button></header>
+    const markup=`<div class="gp-market-home"><header class="gp-market-header"><button type="button" data-market-home aria-label="${L('Назад','Back')}">${icon('ChevronLeft')}</button><h2>${L('Магазин','Shop')}</h2><button type="button" data-market-orders aria-label="${L('Мои заказы','My orders')}">${icon('Package')}${orders.length?`<span>${orders.length>9?'9+':orders.length}</span>`:''}</button></header>
         <form class="gp-market-search" data-market-search>${icon('Search')}<input type="search" data-market-query value="${esc(s.query)}" placeholder="${L('Найти товар','Find a product')}" aria-label="${L('Поиск товара','Product search')}" maxlength="100" autocomplete="off"><button type="submit" ${s.busy?'disabled':''} aria-label="${L('Найти','Search')}">${icon(s.busy?'LoaderCircle':'ArrowRight')}</button></form>
         <div class="gp-market-balance"><span>${L('На счёте','Available')}</span><b>${esc(fmtMoney(bank.balance))}</b></div>
         <div class="gp-market-scroll">
@@ -31,9 +30,25 @@ export function renderShopHome(host,api){
         ${shown.length?`<div class="gp-market-section"><h3>${s.query?L('Найденные товары','Products found'):L('Из каталогов','From your catalogs')}</h3><span>${s.query?results.length:''}</span></div><div class="gp-market-products">${shown.map((hit,index)=>`<button type="button" class="gp-market-product" data-market-product="${index}"><span class="gp-market-product-image">${hit.item.image?`<img src="${esc(hit.item.image)}" alt="">`:shopCategoryIcon(hit.catId)}</span><strong>${esc(fmtMoney(hit.item.price))}</strong><b>${esc(hit.item.name)}</b><small>${esc(hit.storeName)}</small></button>`).join('')}</div>`:s.query&&!s.busy?`<div class="gp-market-empty"><b>${L('Пока нет в каталогах','Not in your catalogs yet')}</b><p>${L('Подберём магазины с нужным товаром?','Find stores selling this product?')}</p></div>`:''}
         ${s.query?`<button type="button" class="gp-market-find" data-market-find ${s.busy?'disabled':''}>${icon('Search')}${shown.length?L('Найти ещё варианты','Find more options'):L('Найти варианты','Find options')}</button>`:`<p class="gp-market-hint">${L('Выбери категорию или найди нужную вещь по названию.','Choose a category or search for a product by name.')}</p>`}
         </div></div>`;
+    if(host.querySelector('.gp-market-home')){
+        const template=document.createElement('template');template.innerHTML=markup;
+        host.querySelector('.gp-market-scroll').replaceWith(template.content.querySelector('.gp-market-scroll'));
+        host.querySelector('.gp-market-balance').innerHTML=template.content.querySelector('.gp-market-balance').innerHTML;
+        const ordersButton=host.querySelector('[data-market-orders]'),ordersMarkup=template.content.querySelector('[data-market-orders]').innerHTML;
+        if(ordersButton.innerHTML!==ordersMarkup)ordersButton.innerHTML=ordersMarkup;
+        const button=host.querySelector('[data-market-search] button');button.disabled=s.busy;
+        button.innerHTML=icon(s.busy?'LoaderCircle':'ArrowRight');
+    }else host.innerHTML=markup;
     const input=host.querySelector('[data-market-query]');
-    input.oninput=()=>{s.query=input.value;api.render();};
-    if(focused){input.focus({preventScroll:true});try{input.setSelectionRange(caret,caret);}catch{}}
+    if(input.value!==s.query)input.value=s.query;
+    let filterTimer;
+    input.oninput=()=>{
+        s.query=input.value;clearTimeout(filterTimer);
+        if(!input.composing)filterTimer=setTimeout(()=>{if(input.isConnected&&getMeta()===owner)renderShopHome(host,api);},120);
+    };
+    input.oncompositionstart=()=>{input.composing=true;clearTimeout(filterTimer);};
+    input.oncompositionend=()=>{input.composing=false;input.oninput();};
+    // Keep the field mounted to preserve keyboard, selection and IME.
     host.querySelector('.gp-market-scroll').scrollTop=top;
     async function search(force){
         const query=s.query.trim();if(!query||s.busy)return;
