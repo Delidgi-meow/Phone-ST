@@ -1,6 +1,5 @@
-import { externalStoryClock } from './external-story-clock.js';
 import { storyClockText, storyDate } from './rp-time.js';
-import { getMeta, saveMeta, getRpNow, getRpDateTime, parseAnyDateTime, parseTimeTag, stripThink, invalidateChatCache } from './state.js';
+import { getMeta, saveMeta, getRpNow, getRpDateTime, parseAnyDateTime, parseTimeTag, stripThink, invalidateChatCache, infoblockClockAt, latestInfoblockIndex } from './state.js';
 
 export function phoneTimeTag(date){
     const p=n=>String(n).padStart(2,'0');
@@ -29,11 +28,15 @@ export function stampPhoneText(text,options={}){
 }
 export function stampNewChatMessage(message){
     if(!message||typeof message.mes!=='string'||message.is_system||/<!--\s*tel:(?:log|silent)\b/i.test(message.mes))return false;
-    if(externalStoryClock(message,parseAnyDateTime))return stampExternalClockMessage(message);
+    const chat=SillyTavern.getContext()?.chat||[];
+    // The infoblock decides the clock; the model's own tag only fills a missing day.
+    if(stampExternalClockMessage(message))return true;
+    if(infoblockClockAt(chat,chat.indexOf(message)))return false;
     if(parseTimeTag(stripThink(message.mes)))return false;
+    // A chat with infoblocks: prose ("let's meet at 19:00") never moves the clock.
+    const narrative=latestInfoblockIndex(chat)<0?storyClockText(message):'';
     const base=getRpDateTime();
-    const narrative=storyClockText(message);
-    const parts=externalStoryClock(message,parseAnyDateTime)||(narrative?parseAnyDateTime(narrative,base):null);
+    const parts=narrative?parseAnyDateTime(narrative,base):null;
     const date=storyDate(parts,base&&!base.timeOnly?storyDate(base):null);
     const stamped=date?{text:message.mes.trim()+'\n'+phoneTimeTag(date),at:date.getTime()}:stampPhoneText(message.mes);
     if(!Number.isFinite(stamped.at))return false;
@@ -42,8 +45,13 @@ export function stampNewChatMessage(message){
     invalidateChatCache();return true;
 }
 
+// Rewrite the message's phone tag to the infoblock clock (day completed from
+// the model's tag or the previous turn when the block shows only the time).
 export function stampExternalClockMessage(message){
- const parts=externalStoryClock(message,parseAnyDateTime),date=storyDate(parts);if(!date||typeof message?.mes!=='string')return false;
+ if(typeof message?.mes!=='string')return false;
+ const chat=SillyTavern.getContext()?.chat||[];
+ const parts=infoblockClockAt(chat,chat.indexOf(message));
+ const date=parts&&!parts.timeOnly?storyDate(parts):null;if(!date)return false;
  const text=message.mes.replace(/<!--\s*tel:time:[\s\S]*?-->/gi,'').trimEnd()+'\n'+phoneTimeTag(date);
  if(text===message.mes)return false;
  message.mes=text;message.extra||={};message.extra.phoneRpTime=date.getTime();message.extra.phoneAutoTime=true;

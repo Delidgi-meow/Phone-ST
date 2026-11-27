@@ -1,4 +1,4 @@
-import { externalStoryClock, externalClockRevision } from './external-story-clock.js';
+import { externalStoryClock, externalClockRevision, resolveInfoblockDate } from './external-story-clock.js';
 import { smsReactions } from './sms-reactions.js';
 import { storyDate, storyTimeline, storyClockText } from './rp-time.js';
 import { normalizePhoneSpaces, parsePhoneJson } from './phone-text.js';
@@ -16,7 +16,7 @@ import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.58.36';
+export const GP_VERSION = '2.58.37';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -1166,12 +1166,16 @@ export function parseAnyDateTime(text, base = null) {
     // 2) Именованный месяц: «15 января 2025» / «January 15, 2025» / «15 January 2025»
     if (day === null) {
         const low = t.toLowerCase();
+        // Только целые слова-месяцы: «майка», «маяк», «мартини», «marker»
+        // раньше давали май/март. Без lookbehind — старый Safari его не знает.
         const findMonth = () => {
-            for (const [stem, num] of [...RU_MONTHS, ...EN_MONTHS]) {
-                const idx = low.indexOf(stem);
-                if (idx !== -1) return { stem, num, idx };
-            }
-            return null;
+            const ru = low.match(/(^|[^а-яёa-z])(январ[ьяею]|феврал[ьяею]|март[аеу]?|апрел[ьяею]|ма[йяе]|июн[ьяею]|июл[ьяею]|август[аеу]?|сентябр[ьяею]|октябр[ьяею]|ноябр[ьяею]|декабр[ьяею])(?![а-яё])/);
+            const en = ru ? null : low.match(/(^|[^a-zа-яё])(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?![a-z])/);
+            const m = ru || en;
+            if (!m) return null;
+            const word = m[2];
+            const num = (ru ? RU_MONTHS : EN_MONTHS).find(([s]) => word.startsWith(s) || (s === 'мая' && /^ма[йяе]$/.test(word)))?.[1];
+            return num ? { stem: word, num, idx: m.index + m[1].length } : null;
         };
         const mo = findMonth();
         if (mo) {
@@ -1265,6 +1269,42 @@ function calendarInjectText() {
     } catch (e) { return ''; }
 }
 
+// ── Инфоблок пресета ──
+// Индекс последнего сообщения с часами в инфоблоке (среди недавних), иначе -1.
+const INFOBLOCK_LOOKBACK = 40;
+export function latestInfoblockIndex(chat) {
+    for (let i = chat.length - 1; i >= 0 && i >= chat.length - INFOBLOCK_LOOKBACK; i--) {
+        if (externalStoryClock(chat[i], parseAnyDateTime)) return i;
+    }
+    return -1;
+}
+
+// Последний известный момент сюжета ДО сообщения i: метка телефона,
+// полная дата инфоблока, сохранённое время, иначе дата из календаря.
+function storyMomentBefore(chat, i, calText) {
+    for (let j = i - 1; j >= 0; j--) {
+        const m = chat[j];
+        if (!m || /<!--\s*tel:(?:log|priv)\s*-->/i.test(m.mes || '')) continue;
+        const tag = parseTimeTag(stripThink(m.mes || ''));
+        if (tag) return storyDate(tag);
+        const block = externalStoryClock(m, parseAnyDateTime);
+        if (block && !block.timeOnly) return storyDate(block);
+        const saved = Number(m.extra?.phoneRpTime);
+        if (Number.isFinite(saved) && saved > 0) return new Date(saved);
+    }
+    const cal = parseAnyDateTime(calText ?? calendarInjectText());
+    return cal && !cal.timeOnly ? storyDate(cal) : null;
+}
+
+// Часы инфоблока сообщения i с достроенным днём. null — инфоблока нет;
+// {timeOnly:true} — время есть, а дня взять неоткуда.
+export function infoblockClockAt(chat, i, calText) {
+    const parts = externalStoryClock(chat[i], parseAnyDateTime);
+    if (!parts || !parts.timeOnly) return parts;
+    const ownTag = parseTimeTag(stripThink(chat[i]?.mes || ''));
+    return resolveInfoblockDate(parts, ownTag, storyMomentBefore(chat, i, calText)) || parts;
+}
+
 // Полный парсинг RP-даты/времени. Лёгкий кэш по сигнатуре (длина чата + первые
 // символы календарь-инжекта), чтобы не парсить на каждый tick.
 let _rpDateCache = null;
@@ -1283,10 +1323,19 @@ export function getRpDateTime() {
         if (sig === _rpDateSig) return _rpDateCache;
         _rpDateSig = sig;
 
-        // Метка времени бьёт все остальные источники: её ставит сама модель,
-        // зная, сколько времени прошло в сюжете.
+        // Инфоблок — главный источник. После последнего инфоблока проза
+        // (реплики юзера, планы «встретимся в 19:00») часы не двигает — только
+        // телефонные метки. Без инфоблоков читаем контекст: метки и прозу.
+        const lastBlock=latestInfoblockIndex(chat);
         for (let i = chat.length - 1; i >= 0; i--) {
-            const block=externalStoryClock(chat[i],parseAnyDateTime);
+            const block=infoblockClockAt(chat,i,calText);
+            if(block?.timeOnly){
+                // Часы из инфоблока есть, а дня нигде нет: день — реальный.
+                const now=new Date();
+                _rpDateCache={day:now.getDate(),month:now.getMonth()+1,year:now.getFullYear(),hours:block.hours,minutes:block.minutes,timeOnly:true,
+                    label:String(now.getDate()).padStart(2,'0')+'.'+String(now.getMonth()+1).padStart(2,'0')};
+                return _rpDateCache;
+            }
             if(block){
                 const key=JSON.stringify(block);
                 const clock=phoneClock?.sceneKey===key&&Number.isFinite(phoneClock.at)&&phoneClock.at>=storyDate(block).getTime()?new Date(phoneClock.at):null;
@@ -1297,7 +1346,7 @@ export function getRpDateTime() {
             if(/<!--\s*tel:(?:log|priv)\s*-->/i.test(mes||''))continue;
             if (!mes) continue;
             // A newer scene without a tag must be read before an older phone tag.
-            const narrative=storyClockText(chat[i],stripThink(mes));
+            const narrative=lastBlock<0?storyClockText(chat[i],stripThink(mes)):'';
             if(narrative&&!parseTimeTag(stripThink(mes))){
                 let base=parseAnyDateTime(calText);
                 if(!base||base.timeOnly){for(let j=i-1;j>=0;j--){base=parseTimeTag(stripThink(chat[j]?.mes||''))||parseAnyDateTime(storyClockText(chat[j]));if(base&&!base.timeOnly)break;}}
