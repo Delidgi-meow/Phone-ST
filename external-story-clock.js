@@ -5,6 +5,7 @@
 
 const CLOCK_LINE_RE=/[\u{1F550}-\u{1F567}⏰⌚⏱\u{1F570}]|(?:^|[^а-яёa-z])(?:время|time|час|clock)\s*[:：]/iu;
 const DATE_LINE_RE=/[\u{1F4C5}\u{1F4C6}\u{1F5D3}]|(?:^|[^а-яёa-z])(?:дата|date)\s*[:：]/iu;
+const INFOBLOCK_TAG_RE=/<(infoblock|info_block|scene|status|sims|rp_status|scene_info)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi;
 const PAIR_DATE_RE=/\b(?:\d{1,2}[./]\d{1,2}[./]\d{4}|\d{4}-\d{1,2}-\d{1,2})\b/g;
 const PAIR_TIME_RE=/\b(?:[01]?\d|2[0-3]):[0-5]\d\b/g;
 
@@ -32,18 +33,25 @@ function blockClock(text,parse){
  for(const line of lines){
   const clockLine=CLOCK_LINE_RE.test(line),dateLine=DATE_LINE_RE.test(line);
   if(!clockLine&&!dateLine)continue;
-  const r=parse(line);
+  const numericDate=dateLine?line.match(PAIR_DATE_RE)?.[0]:null;
+  const r=(numericDate&&parse(numericDate))||parse(line);
+  const clock=clockLine?parse(line.match(PAIR_TIME_RE)?.[0]||line):null;
   if(!r)continue;
   if(!date&&!r.timeOnly)date=r;
-  if(!time&&clockLine&&r.hours!==undefined)time=r;
+  if(!time&&clock?.hours!==undefined)time=clock;
  }
  // 2) Unlabelled header: numeric date with a time close to it.
- if(!date){
+ {
   const dates=[...header.matchAll(PAIR_DATE_RE)],times=[...header.matchAll(PAIR_TIME_RE)];
   for(const d of dates){
    const t=times.filter(x=>Math.abs(x.index-d.index)<220).sort((a,b)=>Math.abs(a.index-d.index)-Math.abs(b.index-d.index))[0];
    const r=parse((t?t[0]+' ':'')+d[0]);
-   if(r&&!r.timeOnly){date=r;if(!time&&r.hours!==undefined)time=r;break;}
+   if(r&&!r.timeOnly){
+    if(date&&(r.day!==date.day||r.month!==date.month||r.year!==date.year))continue;
+    date ||= r;
+    if(!time&&r.hours!==undefined)time=r;
+    break;
+   }
   }
  }
  if(!time&&!date)return null;
@@ -56,23 +64,42 @@ function blockClock(text,parse){
  return {hours:time.hours,minutes:time.minutes,timeOnly:true};
 }
 
-export function externalStoryClock(message,parse){
- if(!message||message.is_system||/<!--\s*tel:(?:priv|log)\s*-->/i.test(message.mes||''))return null;
- const sources=[message.extra?.extblocks,message.extra?.display_text];
- if(/<(?:div|section|header|time)\b/i.test(message.mes||''))sources.push(message.mes);
- let timeOnly=null;
+function readExternalStoryClock(message,parse){
+ if(!message||/<!--\s*tel:(?:priv|log)\s*-->/i.test(message.mes||''))return null;
+ const mes=message.mes||'';
+ const ext=message.extra?.extblocks;
+ const display=message.extra?.display_text;
+ const sources=message.is_system?[ext]:[ext, typeof display==='string'&&mes&&display.startsWith(mes)?display.slice(mes.length):display];
+ const candidates=[];
  for(const source of sources){
   if(typeof source!=='string'||!source.trim())continue;
-  const r=blockClock(clean(source),parse);
-  if(r&&!r.timeOnly)return r;
-  if(r&&!timeOnly)timeOnly=r;
+  candidates.push(...commentBlocks(source),...Array.from(source.matchAll(INFOBLOCK_TAG_RE),m=>m[2]),source);
  }
- for(const body of commentBlocks(message.mes)){
-  const r=blockClock(clean(body),parse);
-  if(r&&!r.timeOnly)return r;
-  if(r&&!timeOnly)timeOnly=r;
+ if(!message.is_system)candidates.push(...commentBlocks(mes));
+ candidates.push(...Array.from(mes.matchAll(INFOBLOCK_TAG_RE),m=>m[2]));
+ if(!message.is_system&&/<(?:div|section|header|time)\b/i.test(mes))candidates.push(mes);
+ let timeOnly=null;
+ for(const source of candidates){
+  const result=blockClock(clean(source),parse);
+  if(result&&!result.timeOnly){
+   if(result.hours===undefined&&timeOnly) return {...result,hours:timeOnly.hours,minutes:timeOnly.minutes};
+   return result;
+  }
+  if(result&&!timeOnly)timeOnly=result;
  }
  return timeOnly;
+}
+
+const parsedBlocks=new WeakMap();
+export function externalStoryClock(message,parse){
+ if(!message)return null;
+ const {mes,is_system:system,extra}=message;
+ const ext=extra?.extblocks,display=extra?.display_text;
+ const cached=parsedBlocks.get(message);
+ if(cached&&cached.mes===mes&&cached.ext===ext&&cached.display===display&&cached.system===system&&cached.parse===parse)return cached.result;
+ const result=readExternalStoryClock(message,parse);
+ parsedBlocks.set(message,{mes,ext,display,system,parse,result});
+ return result;
 }
 
 // Infoblock with only a clock: take the day from the same message's phone tag,

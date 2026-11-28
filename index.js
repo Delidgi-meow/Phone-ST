@@ -586,8 +586,17 @@ jQuery(async () => {
         });
         // ExtBlocks emits before writing its generated content to storage.
         // Defer one turn so background blocks are visible to the harvesters.
-        onExternalBlocksChanged = () => setTimeout(()=>{const message=(SillyTavern.getContext()?.chat||[]).findLast(item=>!item.is_user&&!item.is_system&&!/<!--\s*tel:(?:priv|log)\s*-->/i.test(item.mes||''));if(getSettings().isEnabled&&stampExternalClockMessage(message))saveChatConditional().catch(console.warn);onNewMessage();},0);
-        eventSource.on('/extblocks/generated', () => onExternalBlocksChanged());
+        onExternalBlocksChanged = ({messageId}={}) => {
+            const chat=SillyTavern.getContext()?.chat;
+            setTimeout(()=>{
+                if(SillyTavern.getContext()?.chat!==chat)return;
+                const message=Number.isInteger(messageId)?chat?.[messageId]:chat?.findLast(item=>!item.is_user&&!item.is_system&&!/<!--\s*tel:(?:priv|log)\s*-->/i.test(item.mes||''));
+                invalidateChatCache();
+                if(getSettings().isEnabled&&stampExternalClockMessage(message))saveChatConditional().catch(console.warn);
+                onNewMessage();
+            },0);
+        };
+        eventSource.on('/extblocks/generated', onExternalBlocksChanged);
         eventSource.on('/fatpresets/change/extblocks', () => refreshPhoneImageBlocks());
         eventSource.on('/fatpresets/import/extblocks', () => refreshPhoneImageBlocks());
         if (event_types.GENERATION_ENDED) {

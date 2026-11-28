@@ -16,7 +16,7 @@ import { cleanContactName, contactNameKey, redirectedContactKey, resolveIdentity
 export const EXT_NAME = 'glassphone';
 // Версия для сверки инстансов (ПК ↔ айфон): видна в настройках и в консоли.
 // БАМПАТЬ при каждом коммите вместе с manifest.json!
-export const GP_VERSION = '2.58.37';
+export const GP_VERSION = '2.58.38';
 const META_KEY = 'glassphone';
 
 // ── Глобальные настройки ──
@@ -1270,10 +1270,9 @@ function calendarInjectText() {
 }
 
 // ── Инфоблок пресета ──
-// Индекс последнего сообщения с часами в инфоблоке (среди недавних), иначе -1.
-const INFOBLOCK_LOOKBACK = 40;
+// Дата сцены остаётся актуальной, даже если после инфоблока накопился длинный диалог.
 export function latestInfoblockIndex(chat) {
-    for (let i = chat.length - 1; i >= 0 && i >= chat.length - INFOBLOCK_LOOKBACK; i--) {
+    for (let i = chat.length - 1; i >= 0; i--) {
         if (externalStoryClock(chat[i], parseAnyDateTime)) return i;
     }
     return -1;
@@ -1285,12 +1284,16 @@ function storyMomentBefore(chat, i, calText) {
     for (let j = i - 1; j >= 0; j--) {
         const m = chat[j];
         if (!m || /<!--\s*tel:(?:log|priv)\s*-->/i.test(m.mes || '')) continue;
-        const tag = parseTimeTag(stripThink(m.mes || ''));
-        if (tag) return storyDate(tag);
         const block = externalStoryClock(m, parseAnyDateTime);
         if (block && !block.timeOnly) return storyDate(block);
+    }
+    for (let j = i - 1; j >= 0; j--) {
+        const m = chat[j];
+        if (!m || m.is_system || /<!--\s*tel:(?:log|priv)\s*-->/i.test(m.mes || '')) continue;
+        const tag = parseTimeTag(stripThink(m.mes || ''));
+        if (tag && !m.extra?.phoneAutoTime) return storyDate(tag);
         const saved = Number(m.extra?.phoneRpTime);
-        if (Number.isFinite(saved) && saved > 0) return new Date(saved);
+        if (!m.extra?.phoneAutoTime && Number.isFinite(saved) && saved > 0) return new Date(saved);
     }
     const cal = parseAnyDateTime(calText ?? calendarInjectText());
     return cal && !cal.timeOnly ? storyDate(cal) : null;
@@ -1301,8 +1304,9 @@ function storyMomentBefore(chat, i, calText) {
 export function infoblockClockAt(chat, i, calText) {
     const parts = externalStoryClock(chat[i], parseAnyDateTime);
     if (!parts || !parts.timeOnly) return parts;
-    const ownTag = parseTimeTag(stripThink(chat[i]?.mes || ''));
-    return resolveInfoblockDate(parts, ownTag, storyMomentBefore(chat, i, calText)) || parts;
+    const previous = storyMomentBefore(chat, i, calText);
+    const ownTag = chat[i]?.extra?.phoneAutoTime ? null : parseTimeTag(stripThink(chat[i]?.mes || ''));
+    return resolveInfoblockDate(parts, previous ? null : ownTag, previous) || parts;
 }
 
 // Полный парсинг RP-даты/времени. Лёгкий кэш по сигнатуре (длина чата + первые
@@ -1327,8 +1331,8 @@ export function getRpDateTime() {
         // (реплики юзера, планы «встретимся в 19:00») часы не двигает — только
         // телефонные метки. Без инфоблоков читаем контекст: метки и прозу.
         const lastBlock=latestInfoblockIndex(chat);
-        for (let i = chat.length - 1; i >= 0; i--) {
-            const block=infoblockClockAt(chat,i,calText);
+        for (let i = lastBlock >= 0 ? lastBlock : chat.length - 1; i >= 0; i--) {
+            const block=i===lastBlock?infoblockClockAt(chat,i,calText):null;
             if(block?.timeOnly){
                 // Часы из инфоблока есть, а дня нигде нет: день — реальный.
                 const now=new Date();
